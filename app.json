@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Vouch",
+    "slug": "vouch-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "vouch",
+    "backgroundColor": "#0F0F0F",
+    "splash": {
+      "backgroundColor": "#0F0F0F"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.vouch.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0F0F0F"
+      },
+      "package": "com.vouch.mobile"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-system-ui",
+        {
+          "style": "dark"
+        }
+      ],
+      "expo-asset",
+      "expo-font",
+      "@react-native-community/datetimepicker"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

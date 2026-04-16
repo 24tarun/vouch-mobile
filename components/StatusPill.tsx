@@ -145,14 +145,14 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 1,
     borderRadius: radius.full,
     borderWidth: 1,
   },
   label: {
-    fontSize: typography.xs,
+    fontSize: 10,
     fontWeight: '600',
-    letterSpacing: 0.3,
+    letterSpacing: 0.4,
   },
 });

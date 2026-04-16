@@ -7,18 +7,32 @@
     "userInterfaceStyle": "dark",
     "scheme": "vouch",
     "backgroundColor": "#0F0F0F",
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
       "backgroundColor": "#0F0F0F"
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.vouch.mobile"
+      "bundleIdentifier": "com.vouch.mobile",
+      "icon": "./assets/icon.png",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0F0F0F"
       },
-      "package": "com.vouch.mobile"
+      "package": "com.tarun.vouch",
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -35,10 +49,34 @@
       ],
       "expo-asset",
       "expo-font",
-      "@react-native-community/datetimepicker"
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Vouch to access your photos and videos so you can attach proof.",
+          "cameraPermission": "Allow Vouch to use your camera to capture photo or video proof.",
+          "microphonePermission": "Allow Vouch to record audio while capturing video proof."
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "color": "#F59E0B",
+          "sounds": [],
+          "mode": "development"
+        }
+      ],
+      "expo-video"
     ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "0063197e-8f6b-47f7-90cb-f16274429e00"
+      }
+    },
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "owner": "tarun2k01-organization"
   }
 }

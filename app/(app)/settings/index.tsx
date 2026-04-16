@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Switch,
   Text,
@@ -12,9 +14,11 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { File, Paths } from 'expo-file-system';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
+import { unregisterForPushNotificationsAsync } from '@/lib/notifications';
 import { useAuth } from '@/hooks/useAuth';
 import { colors, radius, spacing, typography } from '@/lib/theme';
 import { Currency } from '@/lib/types';
@@ -47,6 +51,13 @@ interface IncomingFriendRequest {
   sender: UserSummary;
 }
 
+interface OutgoingFriendRequest {
+  id: string;
+  receiver_id: string;
+  created_at: string;
+  receiver: UserSummary;
+}
+
 interface SearchCandidate {
   id: string;
   email: string;
@@ -62,10 +73,26 @@ interface BlockedUserOption {
   email: string;
 }
 
-type RelationshipAction = 'send' | 'accept' | 'reject' | 'remove' | 'block';
+interface ActiveVoucherTask {
+  id: string;
+  title: string;
+  ownerUsername: string;
+}
+
+type RelationshipAction = 'send' | 'accept' | 'reject' | 'remove' | 'block' | 'withdraw';
 
 const POMO_MIN_MINUTES = 1;
 const POMO_MAX_MINUTES = 120;
+const ACCOUNT_DELETE_FALLBACK_URL = 'https://tas.tarunh.com/settings';
+const ACTIVE_VOUCHER_TASK_STATUSES = [
+  'ACTIVE',
+  'POSTPONED',
+  'MARKED_COMPLETE',
+  'AWAITING_VOUCHER',
+  'AWAITING_ORCA',
+  'AWAITING_USER',
+  'ESCALATED',
+] as const;
 const CURRENCY_OPTIONS: PickerOption[] = [
   { label: 'USD', value: 'USD' },
   { label: 'EUR', value: 'EUR' },
@@ -108,12 +135,109 @@ function buildUserSummary(profile: { id?: string; username?: string | null; emai
   };
 }
 
+async function fetchRelationshipsData(userId: string): Promise<{
+  friends: UserSummary[];
+  incomingRequests: IncomingFriendRequest[];
+  outgoingRequests: OutgoingFriendRequest[];
+  error: string | null;
+}> {
+  const empty = { friends: [], incomingRequests: [], outgoingRequests: [] };
+
+  const [friendsRes, incomingRequestsRes, outgoingRequestsRes] = await Promise.all([
+    supabase
+      .from('friendships')
+      .select(`
+        friend:profiles!friendships_friend_id_fkey(
+          id,
+          username,
+          email
+        )
+      `)
+      .eq('user_id', userId),
+    supabase
+      .from('friend_requests')
+      .select(`
+        id,
+        sender_id,
+        created_at,
+        sender:profiles!friend_requests_sender_id_fkey(
+          id,
+          username,
+          email
+        )
+      `)
+      .eq('receiver_id', userId)
+      .eq('status', 'PENDING')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('friend_requests')
+      .select(`
+        id,
+        receiver_id,
+        created_at,
+        receiver:profiles!friend_requests_receiver_id_fkey(
+          id,
+          username,
+          email
+        )
+      `)
+      .eq('sender_id', userId)
+      .eq('status', 'PENDING')
+      .order('created_at', { ascending: false }),
+  ]);
+
+  if (friendsRes.error || incomingRequestsRes.error || outgoingRequestsRes.error) {
+    return {
+      ...empty,
+      error:
+        friendsRes.error?.message
+        || incomingRequestsRes.error?.message
+        || outgoingRequestsRes.error?.message
+        || 'Failed to load friends',
+    };
+  }
+
+  const friends = ((friendsRes.data ?? []) as any[])
+    .map((row) => buildUserSummary(row.friend as { id?: string; username?: string | null; email?: string | null } | null))
+    .filter((entry): entry is UserSummary => Boolean(entry))
+    .sort((a, b) => a.username.localeCompare(b.username));
+
+  const incomingRequests = ((incomingRequestsRes.data ?? []) as any[])
+    .map((row) => {
+      const sender = buildUserSummary(row.sender as { id?: string; username?: string | null; email?: string | null } | null);
+      if (!sender || !row.id || !row.sender_id) return null;
+      return {
+        id: row.id as string,
+        sender_id: row.sender_id as string,
+        created_at: row.created_at as string,
+        sender,
+      } satisfies IncomingFriendRequest;
+    })
+    .filter((entry): entry is IncomingFriendRequest => Boolean(entry));
+
+  const outgoingRequests = ((outgoingRequestsRes.data ?? []) as any[])
+    .map((row) => {
+      const receiver = buildUserSummary(row.receiver as { id?: string; username?: string | null; email?: string | null } | null);
+      if (!receiver || !row.id || !row.receiver_id) return null;
+      return {
+        id: row.id as string,
+        receiver_id: row.receiver_id as string,
+        created_at: row.created_at as string,
+        receiver,
+      } satisfies OutgoingFriendRequest;
+    })
+    .filter((entry): entry is OutgoingFriendRequest => Boolean(entry));
+
+  return { friends, incomingRequests, outgoingRequests, error: null };
+}
+
 interface RowProps {
   icon: React.ComponentProps<typeof Feather>['name'];
   label: string;
   onPress: () => void;
   destructive?: boolean;
   trailingText?: string;
+  tinted?: boolean;
 }
 
 function SettingsRow({
@@ -122,11 +246,12 @@ function SettingsRow({
   onPress,
   destructive = false,
   trailingText,
+  tinted = false,
 }: RowProps) {
   const tint = destructive ? colors.destructive : colors.text;
   return (
     <TouchableOpacity
-      style={styles.row}
+      style={[styles.row, tinted && styles.rowTinted]}
       onPress={onPress}
       activeOpacity={0.7}
       accessibilityRole="button"
@@ -179,6 +304,7 @@ export default function SettingsScreen() {
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [friends, setFriends] = useState<UserSummary[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<IncomingFriendRequest[]>([]);
+  const [outgoingRequests, setOutgoingRequests] = useState<OutgoingFriendRequest[]>([]);
   const [relationshipsLoading, setRelationshipsLoading] = useState(false);
   const [relationshipsError, setRelationshipsError] = useState<string | null>(null);
   const [relationshipInFlight, setRelationshipInFlight] = useState<Record<string, RelationshipAction | null>>({});
@@ -190,6 +316,11 @@ export default function SettingsScreen() {
   const [blockedUsersLoading, setBlockedUsersLoading] = useState(false);
   const [blockedUsersError, setBlockedUsersError] = useState<string | null>(null);
   const [unblockingUserId, setUnblockingUserId] = useState<string | null>(null);
+  const [isCheckingDeleteConflicts, setIsCheckingDeleteConflicts] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
+  const [deleteAccountSuccess, setDeleteAccountSuccess] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
   const [defaultsSuccess, setDefaultsSuccess] = useState<string | null>(null);
@@ -249,6 +380,8 @@ export default function SettingsScreen() {
     setDefaultsSuccess(null);
     setAiFeaturesError(null);
     setAiFeaturesSuccess(null);
+    setDeleteAccountError(null);
+    setDeleteAccountSuccess(false);
   }, [profile, user]);
 
   useEffect(() => {
@@ -258,30 +391,42 @@ export default function SettingsScreen() {
       if (!user) return;
       setVoucherLoading(true);
 
-      const { data, error } = await supabase
-        .from('friendships')
-        .select(`
-          friend_id,
-          friend:profiles!friendships_friend_id_fkey(
-            id,
-            username
-          )
-        `)
-        .eq('user_id', user.id);
+      const [friendsRes, blockedRes] = await Promise.all([
+        supabase
+          .from('friendships')
+          .select(`
+            friend_id,
+            friend:profiles!friendships_friend_id_fkey(
+              id,
+              username
+            )
+          `)
+          .eq('user_id', user.id),
+        supabase
+          .from('user_blocks')
+          .select('blocked_id')
+          .eq('blocker_id', user.id),
+      ]);
 
       if (!mounted) return;
 
-      if (error) {
+      if (friendsRes.error || blockedRes.error) {
         setVoucherOptions([{ id: user.id, username: 'Me' }]);
         setVoucherLoading(false);
         return;
       }
 
+      const blockedIds = new Set(
+        ((blockedRes.data ?? []) as Array<{ blocked_id?: string | null }>)
+          .map((row) => row.blocked_id)
+          .filter((id): id is string => Boolean(id)),
+      );
       const base = [{ id: user.id, username: 'Me' }];
-      const fromFriends = ((data ?? []) as any[])
+      const fromFriends = ((friendsRes.data ?? []) as any[])
         .map((row) => {
           const friend = row?.friend as { id?: string; username?: string } | null;
           if (!friend?.id) return null;
+          if (blockedIds.has(friend.id)) return null;
           return { id: friend.id, username: friend.username ?? 'Friend' };
         })
         .filter((item): item is VoucherOption => Boolean(item?.id));
@@ -300,6 +445,44 @@ export default function SettingsScreen() {
   }, [user]);
 
   useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`settings-relationships-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'friend_requests',
+          filter: `sender_id=eq.${user.id}`,
+        },
+        () => {
+          void refreshRelationshipsAndSearch();
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'friend_requests',
+          filter: `receiver_id=eq.${user.id}`,
+        },
+        () => {
+          void refreshRelationshipsAndSearch();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  // refreshRelationshipsAndSearch intentionally omitted to avoid resubscribing every render
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  useEffect(() => {
     let mounted = true;
 
     async function loadRelationships() {
@@ -307,6 +490,7 @@ export default function SettingsScreen() {
         if (mounted) {
           setFriends([]);
           setIncomingRequests([]);
+          setOutgoingRequests([]);
           setRelationshipsLoading(false);
         }
         return;
@@ -315,68 +499,22 @@ export default function SettingsScreen() {
       setRelationshipsLoading(true);
       setRelationshipsError(null);
 
-      const [friendsRes, requestsRes] = await Promise.all([
-        supabase
-          .from('friendships')
-          .select(`
-            friend:profiles!friendships_friend_id_fkey(
-              id,
-              username,
-              email
-            )
-          `)
-          .eq('user_id', user.id),
-        supabase
-          .from('friend_requests')
-          .select(`
-            id,
-            sender_id,
-            created_at,
-            sender:profiles!friend_requests_sender_id_fkey(
-              id,
-              username,
-              email
-            )
-          `)
-          .eq('receiver_id', user.id)
-          .eq('status', 'PENDING')
-          .order('created_at', { ascending: false }),
-      ]);
+      const result = await fetchRelationshipsData(user.id);
 
       if (!mounted) return;
 
-      if (friendsRes.error || requestsRes.error) {
+      if (result.error) {
         setFriends([]);
         setIncomingRequests([]);
-        setRelationshipsError(
-          friendsRes.error?.message
-            || requestsRes.error?.message
-            || 'Failed to load friends',
-        );
+        setOutgoingRequests([]);
+        setRelationshipsError(result.error);
         setRelationshipsLoading(false);
         return;
       }
 
-      const nextFriends = ((friendsRes.data ?? []) as any[])
-        .map((row) => buildUserSummary(row.friend as { id?: string; username?: string | null; email?: string | null } | null))
-        .filter((entry): entry is UserSummary => Boolean(entry))
-        .sort((a, b) => a.username.localeCompare(b.username));
-
-      const nextIncomingRequests = ((requestsRes.data ?? []) as any[])
-        .map((row) => {
-          const sender = buildUserSummary(row.sender as { id?: string; username?: string | null; email?: string | null } | null);
-          if (!sender || !row.id || !row.sender_id) return null;
-          return {
-            id: row.id as string,
-            sender_id: row.sender_id as string,
-            created_at: row.created_at as string,
-            sender,
-          } satisfies IncomingFriendRequest;
-        })
-        .filter((entry): entry is IncomingFriendRequest => Boolean(entry));
-
-      setFriends(nextFriends);
-      setIncomingRequests(nextIncomingRequests);
+      setFriends(result.friends);
+      setIncomingRequests(result.incomingRequests);
+      setOutgoingRequests(result.outgoingRequests);
       setRelationshipsLoading(false);
     }
 
@@ -412,7 +550,11 @@ export default function SettingsScreen() {
         return;
       }
 
-      setFriendSearchResults(((data ?? []) as SearchCandidate[]).sort((a, b) => a.username.localeCompare(b.username)));
+      setFriendSearchResults(
+        ((data ?? []) as SearchCandidate[])
+          .filter((c) => !c.already_friends)
+          .sort((a, b) => a.username.localeCompare(b.username)),
+      );
       setFriendSearchError(null);
       setFriendSearchLoading(false);
     }, 250);
@@ -483,35 +625,277 @@ export default function SettingsScreen() {
     };
   }, [user]);
 
+  async function handleExportData() {
+    if (!user || isExporting) return;
+    setIsExporting(true);
+    try {
+      const [
+        tasksRes,
+        subtasksRes,
+        remindersRes,
+        taskEventsRes,
+        ledgerRes,
+        recurrenceRulesRes,
+        pomoRes,
+        commitmentsRes,
+        friendshipsRes,
+      ] = await Promise.all([
+        supabase.from('tasks' as any).select('id, title, description, failure_cost_cents, deadline, status, postponed_at, marked_completed_at, recurrence_rule_id, iteration_number, start_at, is_strict, required_pomo_minutes, requires_proof, has_proof, resubmit_count, created_at, updated_at').eq('user_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('task_subtasks' as any).select('id, parent_task_id, title, is_completed, completed_at, created_at').eq('user_id', user.id),
+        supabase.from('task_reminders' as any).select('id, parent_task_id, reminder_at, source, notified_at, created_at').eq('user_id', user.id),
+        supabase.from('task_events' as any).select('id, task_id, event_type, from_status, to_status, created_at').eq('user_id', user.id).order('created_at', { ascending: true }),
+        supabase.from('ledger_entries' as any).select('id, task_id, period, amount_cents, entry_type, created_at').eq('user_id', user.id).order('created_at', { ascending: true }),
+        supabase.from('recurrence_rules' as any).select('id, title, description, failure_cost_cents, required_pomo_minutes, requires_proof, rule_config, timezone, latest_iteration, created_at, updated_at').eq('user_id', user.id),
+        supabase.from('pomo_sessions' as any).select('id, task_id, duration_minutes, elapsed_seconds, is_strict, status, started_at, completed_at, created_at').eq('user_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('commitments' as any).select('id, name, description, start_date, end_date, status, created_at, updated_at').eq('user_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('friendships' as any).select('id, created_at, friend:profiles!friendships_friend_id_fkey(username, email)').eq('user_id', user.id),
+      ]);
+
+      const exportQueryError =
+        tasksRes.error?.message
+        || subtasksRes.error?.message
+        || remindersRes.error?.message
+        || taskEventsRes.error?.message
+        || ledgerRes.error?.message
+        || recurrenceRulesRes.error?.message
+        || pomoRes.error?.message
+        || commitmentsRes.error?.message
+        || friendshipsRes.error?.message;
+
+      if (exportQueryError) {
+        Alert.alert('Export failed', exportQueryError);
+        return;
+      }
+
+      const subtasksByTask: Record<string, unknown[]> = {};
+      const remindersByTask: Record<string, unknown[]> = {};
+      for (const s of (subtasksRes.data ?? []) as any[]) {
+        if (!subtasksByTask[s.parent_task_id]) subtasksByTask[s.parent_task_id] = [];
+        subtasksByTask[s.parent_task_id].push(s);
+      }
+      for (const r of (remindersRes.data ?? []) as any[]) {
+        if (!remindersByTask[r.parent_task_id]) remindersByTask[r.parent_task_id] = [];
+        remindersByTask[r.parent_task_id].push(r);
+      }
+
+      const exportPayload = {
+        exported_at: new Date().toISOString(),
+        profile: {
+          id: user.id,
+          email: user.email,
+          username: profile?.username,
+          currency: profile?.currency,
+          created_at: profile?.created_at,
+        },
+        tasks: ((tasksRes.data ?? []) as any[]).map((t: any) => ({
+          ...t,
+          subtasks: subtasksByTask[t.id] ?? [],
+          reminders: remindersByTask[t.id] ?? [],
+        })),
+        task_events: taskEventsRes.data ?? [],
+        ledger_entries: ledgerRes.data ?? [],
+        recurrence_rules: recurrenceRulesRes.data ?? [],
+        pomo_sessions: pomoRes.data ?? [],
+        commitments: commitmentsRes.data ?? [],
+        friends: ((friendshipsRes.data ?? []) as any[]).map((f: any) => ({
+          username: f.friend?.username ?? null,
+          email: f.friend?.email ?? null,
+          friends_since: f.created_at,
+        })),
+      };
+
+      const json = JSON.stringify(exportPayload, null, 2);
+      const filename = `vouch-export-${new Date().toISOString().slice(0, 10)}.json`;
+      const file = new File(Paths.cache, filename);
+      file.write(json);
+      await Share.share({ url: file.uri, title: filename });
+    } catch {
+      Alert.alert('Export failed', 'Could not export your data. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   async function handleSignOut() {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Sign Out',
         style: 'destructive',
-        onPress: () => supabase.auth.signOut(),
+        onPress: async () => {
+          if (user?.id) {
+            await unregisterForPushNotificationsAsync(user.id);
+          }
+
+          const { error } = await supabase.auth.signOut();
+          if (error) {
+            Alert.alert('Sign out failed', error.message);
+          }
+        },
       },
     ]);
   }
 
-  function handleDeleteAccount() {
-    Alert.alert(
-      'Delete account permanently',
-      'This will permanently remove your account and associated data. Continue?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              'Not available yet',
-              'Permanent account deletion is not wired in mobile yet.',
-            );
-          },
-        },
-      ],
+  function isMissingDeleteEndpoint(message: string) {
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes('does not exist')
+      || normalized.includes('could not find the function')
+      || normalized.includes('function delete_account')
+      || normalized.includes('404')
+      || normalized.includes('not found')
     );
+  }
+
+  function readDeletePayloadError(payload: unknown): string | null {
+    if (!payload || typeof payload !== 'object') return null;
+    const maybeError = (payload as { error?: unknown }).error;
+    return typeof maybeError === 'string' && maybeError.trim().length > 0
+      ? maybeError
+      : null;
+  }
+
+  async function getActiveVoucherTasksForDeleteCheck(): Promise<{ tasks: ActiveVoucherTask[]; error: string | null }> {
+    if (!user) return { tasks: [], error: 'Not authenticated' };
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .select(`
+        id,
+        title,
+        owner:profiles!tasks_user_id_fkey(
+          username
+        )
+      `)
+      .eq('voucher_id', user.id)
+      .in('status', [...ACTIVE_VOUCHER_TASK_STATUSES] as any);
+
+    if (error) {
+      return { tasks: [], error: error.message };
+    }
+
+    const tasks = ((data ?? []) as any[])
+      .map((row) => ({
+        id: String(row.id ?? ''),
+        title: String(row.title ?? 'Untitled task').trim() || 'Untitled task',
+        ownerUsername: String(row.owner?.username ?? 'unknown').trim() || 'unknown',
+      }))
+      .filter((row) => row.id.length > 0);
+
+    return { tasks, error: null };
+  }
+
+  function buildDeleteAccountConfirmationMessage(tasks: ActiveVoucherTask[]): string {
+    if (tasks.length === 0) {
+      return 'This will permanently remove your account and associated data. This action cannot be undone.';
+    }
+
+    return 'You are still an active voucher for pending tasks or have other active dependencies. Continue anyway?';
+  }
+
+  async function runDeleteAccount(): Promise<{ error: string | null; backendUnavailable: boolean }> {
+    const edgeResult = await supabase.functions.invoke('delete-account');
+    if (!edgeResult.error) {
+      const payloadError = readDeletePayloadError(edgeResult.data);
+      return { error: payloadError, backendUnavailable: false };
+    }
+
+    const rpcResult = await supabase.rpc('delete_account');
+    if (!rpcResult.error) {
+      const payloadError = readDeletePayloadError(rpcResult.data);
+      return { error: payloadError, backendUnavailable: false };
+    }
+
+    const edgeMessage = edgeResult.error.message || 'Delete endpoint failed';
+    const rpcMessage = rpcResult.error.message || 'Delete RPC failed';
+    const backendUnavailable = isMissingDeleteEndpoint(edgeMessage) && isMissingDeleteEndpoint(rpcMessage);
+
+    if (backendUnavailable) {
+      return {
+        error: 'Account deletion is not configured for mobile yet. You can finish this from web settings.',
+        backendUnavailable: true,
+      };
+    }
+
+    return {
+      error: rpcMessage,
+      backendUnavailable: false,
+    };
+  }
+
+  async function performAccountDeletion() {
+    if (isDeletingAccount || deleteAccountSuccess) return;
+
+    setIsDeletingAccount(true);
+    setDeleteAccountError(null);
+
+    try {
+      const result = await runDeleteAccount();
+      if (result.error) {
+        setDeleteAccountError(result.error);
+        if (result.backendUnavailable) {
+          Alert.alert(
+            'Continue on web',
+            'Account deletion is currently handled on vouch-web. Open web settings now?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Open Web Settings',
+                onPress: () => { void Linking.openURL(ACCOUNT_DELETE_FALLBACK_URL); },
+              },
+            ],
+          );
+        }
+        return;
+      }
+
+      setDeleteAccountSuccess(true);
+      if (user?.id) {
+        await unregisterForPushNotificationsAsync(user.id);
+      }
+
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) {
+        // Keep the flow successful even if local token cleanup fails.
+        console.warn('Account deleted, but sign-out cleanup failed:', signOutError.message);
+      }
+    } catch {
+      setDeleteAccountError('Failed to delete account.');
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  }
+
+  async function handleDeleteAccount() {
+    if (!user || isCheckingDeleteConflicts || isDeletingAccount || deleteAccountSuccess) return;
+
+    setIsCheckingDeleteConflicts(true);
+    setDeleteAccountError(null);
+
+    try {
+      const { tasks, error } = await getActiveVoucherTasksForDeleteCheck();
+      if (error) {
+        setDeleteAccountError(error);
+        return;
+      }
+
+      Alert.alert(
+        tasks.length > 0 ? 'You are an active voucher' : 'Delete account permanently',
+        buildDeleteAccountConfirmationMessage(tasks),
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: tasks.length > 0 ? 'Delete anyway' : 'Delete',
+            style: 'destructive',
+            onPress: () => { void performAccountDeletion(); },
+          },
+        ],
+      );
+    } catch {
+      setDeleteAccountError('Failed to check active voucher tasks.');
+    } finally {
+      setIsCheckingDeleteConflicts(false);
+    }
   }
 
   async function handleUnblockUser(blockedUser: BlockedUserOption) {
@@ -544,64 +928,17 @@ export default function SettingsScreen() {
     setRelationshipsLoading(true);
     setRelationshipsError(null);
 
-    const [friendsRes, requestsRes] = await Promise.all([
-      supabase
-        .from('friendships')
-        .select(`
-          friend:profiles!friendships_friend_id_fkey(
-            id,
-            username,
-            email
-          )
-        `)
-        .eq('user_id', user.id),
-      supabase
-        .from('friend_requests')
-        .select(`
-          id,
-          sender_id,
-          created_at,
-          sender:profiles!friend_requests_sender_id_fkey(
-            id,
-            username,
-            email
-          )
-        `)
-        .eq('receiver_id', user.id)
-        .eq('status', 'PENDING')
-        .order('created_at', { ascending: false }),
-    ]);
+    const result = await fetchRelationshipsData(user.id);
 
-    if (friendsRes.error || requestsRes.error) {
-      setRelationshipsError(
-        friendsRes.error?.message
-          || requestsRes.error?.message
-          || 'Failed to load friends',
-      );
+    if (result.error) {
+      setRelationshipsError(result.error);
       setRelationshipsLoading(false);
       return;
     }
 
-    const nextFriends = ((friendsRes.data ?? []) as any[])
-      .map((row) => buildUserSummary(row.friend as { id?: string; username?: string | null; email?: string | null } | null))
-      .filter((entry): entry is UserSummary => Boolean(entry))
-      .sort((a, b) => a.username.localeCompare(b.username));
-
-    const nextIncomingRequests = ((requestsRes.data ?? []) as any[])
-      .map((row) => {
-        const sender = buildUserSummary(row.sender as { id?: string; username?: string | null; email?: string | null } | null);
-        if (!sender || !row.id || !row.sender_id) return null;
-        return {
-          id: row.id as string,
-          sender_id: row.sender_id as string,
-          created_at: row.created_at as string,
-          sender,
-        } satisfies IncomingFriendRequest;
-      })
-      .filter((entry): entry is IncomingFriendRequest => Boolean(entry));
-
-    setFriends(nextFriends);
-    setIncomingRequests(nextIncomingRequests);
+    setFriends(result.friends);
+    setIncomingRequests(result.incomingRequests);
+    setOutgoingRequests(result.outgoingRequests);
     setRelationshipsLoading(false);
 
     if (friendSearchQuery.trim()) {
@@ -616,7 +953,11 @@ export default function SettingsScreen() {
         return;
       }
 
-      setFriendSearchResults(((data ?? []) as SearchCandidate[]).sort((a, b) => a.username.localeCompare(b.username)));
+      setFriendSearchResults(
+        ((data ?? []) as SearchCandidate[])
+          .filter((c) => !c.already_friends)
+          .sort((a, b) => a.username.localeCompare(b.username)),
+      );
       setFriendSearchError(null);
     }
   }
@@ -669,6 +1010,29 @@ export default function SettingsScreen() {
 
       if (error) {
         Alert.alert('Could not reject request', error.message);
+        return;
+      }
+
+      await refreshRelationshipsAndSearch();
+    } finally {
+      updateRelationshipInFlight(key, null);
+    }
+  }
+
+  async function handleWithdrawFriendRequest(request: OutgoingFriendRequest) {
+    const key = `outgoing:${request.id}:withdraw`;
+    updateRelationshipInFlight(key, 'withdraw');
+    try {
+      const { error } = await supabase.rpc('withdraw_friend_request', {
+        p_request_id: request.id,
+      });
+
+      if (error) {
+        if (error.message?.toLowerCase().includes('no longer pending')) {
+          await refreshRelationshipsAndSearch();
+          return;
+        }
+        Alert.alert('Could not withdraw request', error.message);
         return;
       }
 
@@ -996,6 +1360,55 @@ export default function SettingsScreen() {
         <StatsOverview />
 
         <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Account</Text>
+          <View style={styles.card}>
+            <View style={styles.accountContent}>
+              <View style={styles.accountIdentityRow}>
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{avatarInitial}</Text>
+                </View>
+                <View style={styles.accountIdentityMeta}>
+                  <Text style={styles.accountIdentityTitle}>Account Info</Text>
+                  <Text style={styles.accountIdentitySub} numberOfLines={1} ellipsizeMode="clip">
+                    {profile?.email ?? ''}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.defaultsField}>
+                <View style={styles.usernameInlineField}>
+                  <Text style={styles.usernameInlineLabel}>Username</Text>
+                  <TextInput
+                    style={styles.usernameInlineInput}
+                    placeholder="username"
+                    placeholderTextColor={colors.textSubtle}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    value={usernameDraft}
+                    onChangeText={(value) => {
+                      setUsernameDraft(value);
+                      setUsernameError(null);
+                      setUsernameSuccess(null);
+                    }}
+                  />
+                </View>
+              </View>
+
+              {savingUsername ? <Text style={styles.savingText}>Saving username...</Text> : null}
+              {usernameError ? <Text style={styles.errorText}>{usernameError}</Text> : null}
+              {usernameSuccess ? <Text style={styles.successText}>{usernameSuccess}</Text> : null}
+            </View>
+            <SettingsRow
+              icon="log-out"
+              label="Sign out from all sessions"
+              onPress={handleSignOut}
+              destructive
+              tinted
+            />
+          </View>
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionLabel}>Friends</Text>
           <View style={styles.card}>
             <View style={styles.defaultsContent}>
@@ -1039,8 +1452,8 @@ export default function SettingsScreen() {
                               <Text style={styles.friendAvatarText}>{candidate.username?.[0]?.toUpperCase() || '?'}</Text>
                             </View>
                             <View style={styles.friendText}>
-                              <Text style={styles.friendName}>{candidate.username}</Text>
-                              <Text style={styles.friendEmail}>{candidate.email}</Text>
+                              <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{candidate.username}</Text>
+                              <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{candidate.email}</Text>
                             </View>
                           </View>
                           <View style={styles.friendActions}>
@@ -1088,14 +1501,14 @@ export default function SettingsScreen() {
                 </View>
               ) : null}
 
-              {relationshipsError ? <Text style={styles.errorText}>{relationshipsError}</Text> : null}
-              {relationshipsLoading ? <Text style={styles.savingText}>Loading friends...</Text> : null}
+              {!friendSearchQuery.trim() && relationshipsError ? <Text style={styles.errorText}>{relationshipsError}</Text> : null}
+              {!friendSearchQuery.trim() && relationshipsLoading ? <Text style={styles.savingText}>Loading friends...</Text> : null}
 
-              {!relationshipsLoading && incomingRequests.length === 0 && friends.length === 0 ? (
+              {!friendSearchQuery.trim() && !relationshipsLoading && incomingRequests.length === 0 && outgoingRequests.length === 0 && friends.length === 0 ? (
                 <Text style={styles.toggleSub}>No friends yet.</Text>
               ) : null}
 
-              {!relationshipsLoading ? (
+              {!friendSearchQuery.trim() && !relationshipsLoading ? (
                 <View style={styles.friendsList}>
                   {incomingRequests.map((request) => {
                     const acceptKey = `request:${request.id}:accept`;
@@ -1114,8 +1527,8 @@ export default function SettingsScreen() {
                             <Text style={styles.friendAvatarText}>{request.sender.initial}</Text>
                           </View>
                           <View style={styles.friendText}>
-                            <Text style={styles.friendName}>{request.sender.username}</Text>
-                            <Text style={styles.friendEmail}>{request.sender.email}</Text>
+                            <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{request.sender.username}</Text>
+                            <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{request.sender.email}</Text>
                           </View>
                         </View>
                         <View style={styles.friendIconActions}>
@@ -1144,15 +1557,62 @@ export default function SettingsScreen() {
                             )}
                           </TouchableOpacity>
                           <TouchableOpacity
-                            style={[styles.circleActionButton, { backgroundColor: '#3B2712' }, busy && styles.friendButtonDisabled]}
+                            style={[styles.circleActionButton, { backgroundColor: colors.destructiveMuted }, busy && styles.friendButtonDisabled]}
                             onPress={() => { void handleBlockRelationshipUser(request.sender, blockKey); }}
                             activeOpacity={0.75}
                             disabled={busy}
                           >
                             {relationshipInFlight[blockKey] === 'block' ? (
+                              <ActivityIndicator size="small" color={colors.destructive} />
+                            ) : (
+                              <Feather name="slash" size={16} color={colors.destructive} />
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {outgoingRequests.map((request) => {
+                    const withdrawKey = `outgoing:${request.id}:withdraw`;
+                    const blockKey = `sent-request:${request.id}:block`;
+                    const isWithdrawing = relationshipInFlight[withdrawKey] === 'withdraw';
+                    const isBlocking = relationshipInFlight[blockKey] === 'block';
+                    const busy = isWithdrawing || isBlocking;
+                    return (
+                      <View key={request.id} style={styles.friendRow}>
+                        <View style={styles.friendMeta}>
+                          <View style={styles.friendAvatar}>
+                            <Text style={styles.friendAvatarText}>{request.receiver.initial}</Text>
+                          </View>
+                          <View style={styles.friendText}>
+                            <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{request.receiver.username}</Text>
+                            <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{request.receiver.email}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.friendIconActions}>
+                          <TouchableOpacity
+                            style={[styles.circleActionButton, { backgroundColor: '#3B2712' }, busy && styles.friendButtonDisabled]}
+                            onPress={() => { void handleWithdrawFriendRequest(request); }}
+                            activeOpacity={0.75}
+                            disabled={busy}
+                          >
+                            {isWithdrawing ? (
                               <ActivityIndicator size="small" color={colors.warning} />
                             ) : (
-                              <Feather name="slash" size={16} color={colors.warning} />
+                              <Feather name="user-x" size={16} color={colors.warning} />
+                            )}
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.circleActionButton, { backgroundColor: colors.destructiveMuted }, busy && styles.friendButtonDisabled]}
+                            onPress={() => { void handleBlockRelationshipUser(request.receiver, blockKey); }}
+                            activeOpacity={0.75}
+                            disabled={busy}
+                          >
+                            {isBlocking ? (
+                              <ActivityIndicator size="small" color={colors.destructive} />
+                            ) : (
+                              <Feather name="slash" size={16} color={colors.destructive} />
                             )}
                           </TouchableOpacity>
                         </View>
@@ -1174,33 +1634,33 @@ export default function SettingsScreen() {
                             <Text style={styles.friendAvatarText}>{friend.initial}</Text>
                           </View>
                           <View style={styles.friendText}>
-                            <Text style={styles.friendName}>{friend.username}</Text>
-                            <Text style={styles.friendEmail}>{friend.email}</Text>
+                            <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{friend.username}</Text>
+                            <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{friend.email}</Text>
                           </View>
                         </View>
                         <View style={styles.friendActions}>
                           <TouchableOpacity
-                            style={[styles.friendButton, busy && styles.friendButtonDisabled]}
+                            style={[styles.circleActionButton, { backgroundColor: '#3B2712' }, busy && styles.friendButtonDisabled]}
                             onPress={() => { void handleRemoveFriend(friend); }}
-                            activeOpacity={0.8}
+                            activeOpacity={0.75}
                             disabled={busy}
                           >
                             {isRemoving ? (
-                              <ActivityIndicator size="small" color={colors.text} />
+                              <ActivityIndicator size="small" color={colors.warning} />
                             ) : (
-                              <Text style={styles.friendButtonText}>Remove</Text>
+                              <Feather name="user-minus" size={16} color={colors.warning} />
                             )}
                           </TouchableOpacity>
                           <TouchableOpacity
-                            style={[styles.friendButton, styles.friendButtonDestructive, busy && styles.friendButtonDisabled]}
+                            style={[styles.circleActionButton, { backgroundColor: colors.destructiveMuted }, busy && styles.friendButtonDisabled]}
                             onPress={() => { void handleBlockRelationshipUser(friend, blockKey); }}
-                            activeOpacity={0.8}
+                            activeOpacity={0.75}
                             disabled={busy}
                           >
                             {isBlocking ? (
                               <ActivityIndicator size="small" color={colors.destructive} />
                             ) : (
-                              <Text style={[styles.friendButtonText, styles.friendButtonTextDestructive]}>Block</Text>
+                              <Feather name="slash" size={16} color={colors.destructive} />
                             )}
                           </TouchableOpacity>
                         </View>
@@ -1210,56 +1670,6 @@ export default function SettingsScreen() {
                 </View>
               ) : null}
             </View>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Account</Text>
-          <View style={styles.card}>
-            <View style={styles.accountContent}>
-              <View style={styles.accountIdentityRow}>
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{avatarInitial}</Text>
-                </View>
-                <View style={styles.accountIdentityMeta}>
-                  <Text style={styles.accountIdentityTitle}>Account Info</Text>
-                </View>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>Email</Text>
-                <View style={styles.readOnlyField}>
-                  <Text style={styles.readOnlyFieldText}>{profile?.email ?? ''}</Text>
-                </View>
-              </View>
-              <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>Username</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="username"
-                  placeholderTextColor={colors.textSubtle}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  value={usernameDraft}
-                  onChangeText={(value) => {
-                    setUsernameDraft(value);
-                    setUsernameError(null);
-                    setUsernameSuccess(null);
-                  }}
-                />
-              </View>
-
-              {savingUsername ? <Text style={styles.savingText}>Saving username...</Text> : null}
-              {usernameError ? <Text style={styles.errorText}>{usernameError}</Text> : null}
-              {usernameSuccess ? <Text style={styles.successText}>{usernameSuccess}</Text> : null}
-            </View>
-            <View style={styles.cardDivider} />
-            <SettingsRow
-              icon="log-out"
-              label="Sign out from all sessions"
-              onPress={handleSignOut}
-              destructive
-            />
           </View>
         </View>
 
@@ -1413,8 +1823,8 @@ export default function SettingsScreen() {
               {blockedUsers.map((blockedUser) => (
                 <View key={blockedUser.id} style={styles.blockedUserRow}>
                   <View style={styles.blockedUserMeta}>
-                    <Text style={styles.blockedUserName}>{blockedUser.username}</Text>
-                    <Text style={styles.blockedUserEmail}>{blockedUser.email}</Text>
+                    <Text style={styles.blockedUserName} numberOfLines={1} ellipsizeMode="clip">{blockedUser.username}</Text>
+                    <Text style={styles.blockedUserEmail} numberOfLines={1} ellipsizeMode="clip">{blockedUser.email}</Text>
                   </View>
                   <TouchableOpacity
                     style={[
@@ -1440,16 +1850,36 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Session</Text>
           <View style={styles.card}>
+            <SettingsRow
+              icon="download"
+              label={isExporting ? 'Exporting...' : 'Export my data'}
+              onPress={() => { void handleExportData(); }}
+            />
             <TouchableOpacity
-              style={styles.deleteAccountButton}
+              style={[
+                styles.deleteAccountButton,
+                (isDeletingAccount || isCheckingDeleteConflicts || deleteAccountSuccess)
+                  && styles.deleteAccountButtonDisabled,
+              ]}
               onPress={handleDeleteAccount}
               activeOpacity={0.8}
               accessibilityRole="button"
               accessibilityLabel="Delete account permanently"
+              disabled={isDeletingAccount || isCheckingDeleteConflicts || deleteAccountSuccess}
             >
               <Feather name="trash-2" size={18} color={colors.destructive} />
-              <Text style={styles.deleteAccountButtonText}>Delete account permanently</Text>
+              <Text style={styles.deleteAccountButtonText}>
+                {deleteAccountSuccess
+                  ? 'Account deleted'
+                  : isDeletingAccount
+                    ? 'Deleting account...'
+                    : isCheckingDeleteConflicts
+                      ? 'Checking...'
+                      : 'Delete account permanently'}
+              </Text>
             </TouchableOpacity>
+            {deleteAccountError ? <Text style={styles.errorText}>{deleteAccountError}</Text> : null}
+            {deleteAccountSuccess ? <Text style={styles.successText}>Account successfully deleted.</Text> : null}
           </View>
         </View>
       </ScrollView>
@@ -1495,7 +1925,7 @@ const styles = StyleSheet.create({
   },
   body: {
     flex: 1,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
   },
   bodyContent: {
     gap: spacing.lg,
@@ -1505,7 +1935,6 @@ const styles = StyleSheet.create({
 
   // Account card
   accountContent: {
-    padding: spacing.md,
     gap: spacing.md,
   },
   accountIdentityRow: {
@@ -1557,32 +1986,35 @@ const styles = StyleSheet.create({
   // Sections
   section: {
     gap: spacing.sm,
+    paddingTop: spacing.lg,
   },
   sectionLabel: {
-    fontSize: typography.xs,
+    fontSize: typography.base,
     fontWeight: typography.semibold,
     color: colors.textMuted,
-    letterSpacing: 0.8,
+    letterSpacing: 1,
     textTransform: 'uppercase',
-    paddingHorizontal: 4,
   },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-  },
+  card: {},
   cardDivider: {
     height: 1,
     backgroundColor: colors.border,
+    marginVertical: spacing.sm,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingVertical: 10,
+  },
+  rowTinted: {
+    borderWidth: 1,
+    borderColor: '#7F1D1D66',
+    backgroundColor: '#450A0A26',
+    borderRadius: radius.md,
+    marginTop: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingVertical: 14,
+    paddingVertical: spacing.md,
   },
   rowLeft: {
     flexDirection: 'row',
@@ -1603,7 +2035,6 @@ const styles = StyleSheet.create({
     fontWeight: typography.medium,
   },
   defaultsContent: {
-    padding: spacing.md,
     gap: spacing.md,
   },
   defaultsField: {
@@ -1658,6 +2089,30 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: typography.base,
   },
+  usernameInlineField: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: radius.md,
+    backgroundColor: colors.bg,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  usernameInlineLabel: {
+    fontSize: typography.base,
+    color: colors.textMuted,
+    fontWeight: typography.medium,
+  },
+  usernameInlineInput: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.text,
+    fontSize: typography.base,
+    textAlign: 'right',
+    paddingVertical: 0,
+  },
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1697,6 +2152,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
+  deleteAccountButtonDisabled: {
+    opacity: 0.65,
+  },
   deleteAccountButtonText: {
     fontSize: typography.base,
     color: colors.destructive,
@@ -1716,6 +2174,7 @@ const styles = StyleSheet.create({
   },
   blockedUserMeta: {
     flex: 1,
+    minWidth: 0,
     gap: 2,
   },
   blockedUserName: {
@@ -1783,6 +2242,7 @@ const styles = StyleSheet.create({
   },
   friendText: {
     flex: 1,
+    minWidth: 0,
     gap: 2,
   },
   friendName: {

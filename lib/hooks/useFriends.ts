@@ -11,7 +11,14 @@ export interface FriendOption {
 interface UseFriendsResult {
   friends: FriendOption[];
   currentUserId: string | null;
-  profile: Pick<Profile, 'currency' | 'default_failure_cost_cents' | 'default_voucher_id'> | null;
+  profile: Pick<
+    Profile,
+    | 'currency'
+    | 'default_failure_cost_cents'
+    | 'default_voucher_id'
+    | 'deadline_one_hour_warning_enabled'
+    | 'deadline_final_warning_enabled'
+  > | null;
   loading: boolean;
   error: string | null;
 }
@@ -41,14 +48,20 @@ export function useFriends(): UseFriendsResult {
 
         if (!cancelled) setCurrentUserId(userId);
 
-        const [friendsRes, profileRes] = await Promise.all([
+        const [friendsRes, blockedRes, profileRes] = await Promise.all([
           supabase
             .from('friendships')
             .select('friend:profiles!friendships_friend_id_fkey(id, username)')
             .eq('user_id', userId),
           supabase
+            .from('user_blocks')
+            .select('blocked_id')
+            .eq('blocker_id', userId),
+          supabase
             .from('profiles')
-            .select('currency, default_failure_cost_cents, default_voucher_id')
+            .select(
+              'currency, default_failure_cost_cents, default_voucher_id, deadline_one_hour_warning_enabled, deadline_final_warning_enabled',
+            )
             .eq('id', userId)
             .single(),
         ]);
@@ -57,17 +70,26 @@ export function useFriends(): UseFriendsResult {
 
         console.log('[useFriends] friendsRes error:', friendsRes.error?.message ?? 'none');
         console.log('[useFriends] friendsRes data:', JSON.stringify(friendsRes.data));
+        console.log('[useFriends] blockedRes error:', blockedRes.error?.message ?? 'none');
+        console.log('[useFriends] blockedRes data:', JSON.stringify(blockedRes.data));
         console.log('[useFriends] profileRes error:', profileRes.error?.message ?? 'none');
         console.log('[useFriends] profileRes data:', JSON.stringify(profileRes.data));
 
-        if (friendsRes.error) {
-          setError(friendsRes.error.message);
+        if (friendsRes.error || blockedRes.error) {
+          setError(friendsRes.error?.message ?? blockedRes.error?.message ?? 'Failed to load data');
           return;
         }
+
+        const blockedIds = new Set(
+          ((blockedRes.data ?? []) as Array<{ blocked_id?: string | null }>)
+            .map((row) => row.blocked_id)
+            .filter((id): id is string => Boolean(id)),
+        );
 
         const list: FriendOption[] = ((friendsRes.data ?? []) as any[])
           .map((row) => row.friend as Pick<Profile, 'id' | 'username'>)
           .filter(Boolean)
+          .filter((friend) => !blockedIds.has(friend.id))
           .sort((a, b) => a.username.localeCompare(b.username))
           .map((p) => ({
             id: p.id,

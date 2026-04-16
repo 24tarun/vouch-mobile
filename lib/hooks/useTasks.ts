@@ -17,7 +17,6 @@ const PAST_STATUSES = [
   'MISSED',
   'RECTIFIED',
   'SETTLED',
-  'DELETED',
 ] as const;
 
 const PAST_LIMIT = 10;
@@ -38,7 +37,15 @@ export type DashboardSortMode =
   | 'created_asc'
   | 'created_desc';
 
-type RawTask = { id: string; title: string; deadline: string; status: string; created_at: string };
+type RawTask = {
+  id: string;
+  title: string;
+  deadline: string;
+  status: string;
+  created_at: string;
+  postponed_at?: string | null;
+  recurrence_rule_id?: string | null;
+};
 
 function safeTimestamp(value: string): number {
   const ts = new Date(value).getTime();
@@ -77,7 +84,14 @@ function sortActiveTasks(tasks: TaskRowData[], sortMode: DashboardSortMode): Tas
 }
 
 function toPastRowData(row: RawTask): TaskRowData {
-  return { id: row.id, title: row.title, deadline: row.deadline, status: row.status };
+  return {
+    id: row.id,
+    title: row.title,
+    deadline: row.deadline,
+    status: row.status,
+    postponed_at: row.postponed_at ?? null,
+    recurrence_rule_id: row.recurrence_rule_id ?? null,
+  };
 }
 
 export interface TaskBuckets {
@@ -125,13 +139,13 @@ export function useTasks(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskB
         const [activeRes, pastRes] = await Promise.all([
           supabase
             .from('tasks')
-            .select('id, title, deadline, status, created_at')
+            .select('id, title, deadline, status, created_at, postponed_at, recurrence_rule_id')
             .eq('user_id', userId)
             .in('status', ACTIVE_STATUSES as unknown as string[])
             .order('deadline', { ascending: true }),
           supabase
             .from('tasks')
-            .select('id, title, deadline, status, created_at')
+            .select('id, title, deadline, status, created_at, postponed_at, recurrence_rule_id')
             .eq('user_id', userId)
             .in('status', PAST_STATUSES as unknown as string[])
             .order('updated_at', { ascending: false })
@@ -173,6 +187,8 @@ export function useTasks(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskB
             title: row.title,
             deadline: row.deadline,
             status: row.status,
+            postponed_at: row.postponed_at ?? null,
+            recurrence_rule_id: row.recurrence_rule_id ?? null,
             subtaskTotal: counts?.total,
             subtaskCompleted: counts?.completed,
             created_at: row.created_at,
@@ -221,7 +237,7 @@ export function useTasks(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskB
       const offset = pastTasksLenRef.current;
       const { data, error: fetchError } = await supabase
         .from('tasks')
-        .select('id, title, deadline, status, created_at')
+        .select('id, title, deadline, status, created_at, postponed_at, recurrence_rule_id')
         .eq('user_id', userId)
         .in('status', PAST_STATUSES as unknown as string[])
         .order('updated_at', { ascending: false })

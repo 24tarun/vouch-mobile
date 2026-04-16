@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import type { ImagePickerAsset } from 'expo-image-picker';
 import { colors, spacing, typography } from '@/lib/theme';
 import { TaskRow } from '@/components/TaskRow';
 import type { TaskRowData } from '@/components/TaskRow';
@@ -12,6 +13,11 @@ interface CollapsibleSectionProps {
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  onComplete?: (id: string) => void;
+  onProofPicked?: (taskId: string, asset: ImagePickerAsset) => void | Promise<void>;
+  onPostpone?: (task: TaskRowData) => void | Promise<void>;
+  onDelete?: (task: TaskRowData) => void | Promise<void>;
+  defaultPomoDurationMinutes?: number;
 }
 
 export function CollapsibleSection({
@@ -21,6 +27,11 @@ export function CollapsibleSection({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
+  onComplete,
+  onProofPicked,
+  onPostpone,
+  onDelete,
+  defaultPomoDurationMinutes = 25,
 }: CollapsibleSectionProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
@@ -43,15 +54,20 @@ export function CollapsibleSection({
           color={colors.textMuted}
         />
         <Text style={styles.label}>{title}</Text>
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{tasks.length}</Text>
-        </View>
       </TouchableOpacity>
 
       {isOpen && (
         <View style={styles.list}>
           {tasks.map((task) => (
-            <TaskRow key={task.id} task={task} />
+            <TaskRow
+              key={task.id}
+              task={task}
+              onComplete={onComplete}
+              onProofPicked={onProofPicked}
+              onPostpone={onPostpone}
+              onDelete={onDelete}
+              defaultPomoDurationMinutes={defaultPomoDurationMinutes}
+            />
           ))}
 
           {hasMore && (
@@ -78,8 +94,6 @@ export function CollapsibleSection({
 
 const styles = StyleSheet.create({
   container: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
     marginTop: spacing.lg,
   },
   header: {

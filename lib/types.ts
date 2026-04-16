@@ -48,6 +48,26 @@ export type RecurrenceFrequency =
 
 export type CommitmentStatus = 'DRAFT' | 'ACTIVE' | 'COMPLETED' | 'FAILED';
 
+export interface Commitment {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string;
+  status: CommitmentStatus;
+  start_date: string; // YYYY-MM-DD
+  end_date: string;   // YYYY-MM-DD
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommitmentTaskLink {
+  id: string;
+  commitment_id: string;
+  task_id: string | null;
+  recurrence_rule_id: string | null;
+  created_at: string;
+}
+
 // ─── Core entities ────────────────────────────────────────────────────────────
 
 export interface Profile {

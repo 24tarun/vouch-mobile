@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '@/lib/theme';
+import { taskCreatorState } from '@/lib/taskCreatorState';
 
 type FeatherName = React.ComponentProps<typeof Feather>['name'];
 
@@ -13,10 +14,11 @@ interface TabConfig {
 }
 
 const TABS: TabConfig[] = [
-  { name: 'tasks/index',    icon: 'check-circle', title: 'Tasks'    },
-  { name: 'friends/index',  icon: 'users',        title: 'Friends'  },
-  { name: 'ledger/index',   icon: 'credit-card',  title: 'Ledger'   },
-  { name: 'settings/index', icon: 'settings',     title: 'Settings' },
+  { name: 'tasks/index',       icon: 'check-circle', title: 'Tasks'       },
+  { name: 'friends/index',     icon: 'users',        title: 'Friends'     },
+  { name: 'commitments/index', icon: 'target',       title: 'Commitments' },
+  { name: 'ledger/index',      icon: 'credit-card',  title: 'Ledger'      },
+  { name: 'settings/index',    icon: 'settings',     title: 'Settings'    },
 ];
 
 function TabIcon({
@@ -60,13 +62,25 @@ export default function AppLayout() {
               <TabIcon icon={icon} focused={focused} />
             ),
           }}
+          listeners={({ navigation }) => ({
+            tabPress: (e) => {
+              if (taskCreatorState.isExpanded) {
+                taskCreatorState.collapse();
+                // Only block navigation if already on the tasks tab (creator's home).
+                // For all other tabs, let the navigation proceed so the user lands there.
+                if (name === 'tasks/index') {
+                  e.preventDefault();
+                }
+              }
+            },
+          })}
         />
       ))}
 
       {/* Hide routes that exist on disk but shouldn't appear in the tab bar */}
-      <Tabs.Screen name="index"              options={{ href: null }} />
-      <Tabs.Screen name="commitments/index"  options={{ href: null }} />
-      <Tabs.Screen name="tasks/[id]"         options={{ href: null }} />
+      <Tabs.Screen name="index"      options={{ href: null }} />
+      <Tabs.Screen name="tasks/[id]" options={{ href: null }} />
+      <Tabs.Screen name="commitments/[id]" options={{ href: null }} />
     </Tabs>
   );
 }

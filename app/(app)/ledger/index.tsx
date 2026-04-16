@@ -609,9 +609,8 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   entryTitle: {
-    fontSize: 17,
+    fontSize: 18,
     color: colors.text,
-    fontWeight: typography.medium,
     lineHeight: 20,
     flexShrink: 1,
   },
@@ -681,7 +680,6 @@ const styles = StyleSheet.create({
   monthLabel: {
     fontSize: 18,
     color: colors.text,
-    fontWeight: typography.medium,
     lineHeight: 22,
   },
   monthTotal: {

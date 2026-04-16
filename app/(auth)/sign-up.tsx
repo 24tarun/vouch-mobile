@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
@@ -14,16 +17,23 @@ import { Button, TextButton } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { colors, spacing, typography } from '@/lib/theme';
 
+const PRIVACY_POLICY_URL = 'https://tas.tarunh.com/privacy-policy';
+
 export default function SignUpScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
-  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [globalError, setGlobalError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState(false);
+  const [privacyOpened, setPrivacyOpened] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+
+  function deriveUsername(rawEmail: string): string {
+    const prefix = rawEmail.trim().toLowerCase().split('@')[0] ?? '';
+    return prefix.replace(/[^a-z0-9_]/g, '_').slice(0, 30) || 'user';
+  }
 
   function validate(): boolean {
     const errors: Record<string, string> = {};
@@ -31,20 +41,11 @@ export default function SignUpScreen() {
     if (!email.trim()) errors.email = 'Email is required.';
     else if (!/\S+@\S+\.\S+/.test(email)) errors.email = 'Enter a valid email.';
 
-    if (!username.trim()) {
-      errors.username = 'Username is required.';
-    } else if (username.trim().length < 3) {
-      errors.username = 'Username must be at least 3 characters.';
-    } else if (!/^[a-zA-Z0-9_]+$/.test(username.trim())) {
-      errors.username = 'Letters, numbers, and underscores only.';
-    }
-
     if (!password) errors.password = 'Password is required.';
     else if (password.length < 6) errors.password = 'At least 6 characters.';
 
-    if (password !== confirmPassword) {
-      errors.confirmPassword = 'Passwords do not match.';
-    }
+    if (!privacyOpened) errors.privacy = 'Please open the Privacy Policy before signing up.';
+    else if (!privacyAccepted) errors.privacy = 'You must accept the Privacy Policy to create an account.';
 
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
@@ -56,7 +57,6 @@ export default function SignUpScreen() {
     setLoading(true);
     setGlobalError('');
 
-    // Step 1: create auth user
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim().toLowerCase(),
       password,
@@ -75,14 +75,11 @@ export default function SignUpScreen() {
       return;
     }
 
-    // Step 2: create profile row (only possible when session exists, i.e., email
-    // confirmation is disabled. If the project requires email confirmation, this
-    // step will be skipped and the profile must be created after the user verifies.)
     if (data.session) {
       const { error: profileError } = await supabase.from('profiles').insert({
         id: user.id,
         email: user.email ?? email.trim().toLowerCase(),
-        username: username.trim().toLowerCase(),
+        username: deriveUsername(email),
       });
 
       if (profileError) {
@@ -95,14 +92,18 @@ export default function SignUpScreen() {
         return;
       }
     } else {
-      // Email confirmation required — auth state change will handle redirect
       setSuccess(true);
       setLoading(false);
       return;
     }
 
     setLoading(false);
-    // Auth state change triggers redirect to /(app)/tasks automatically
+  }
+
+  function handleOpenPrivacyPolicy() {
+    setPrivacyOpened(true);
+    setFieldErrors((e) => ({ ...e, privacy: '' }));
+    void Linking.openURL(PRIVACY_POLICY_URL);
   }
 
   if (success) {
@@ -159,19 +160,6 @@ export default function SignUpScreen() {
             />
 
             <Input
-              label="Username"
-              placeholder="yourname"
-              value={username}
-              onChangeText={(v) => {
-                setUsername(v);
-                setFieldErrors((e) => ({ ...e, username: '' }));
-              }}
-              autoCapitalize="none"
-              returnKeyType="next"
-              error={fieldErrors.username}
-            />
-
-            <Input
               label="Password"
               placeholder="••••••••"
               value={password}
@@ -182,25 +170,40 @@ export default function SignUpScreen() {
               secureTextEntry
               secureToggle
               textContentType="newPassword"
-              returnKeyType="next"
+              returnKeyType="done"
+              onSubmitEditing={handleSignUp}
               error={fieldErrors.password}
             />
 
-            <Input
-              label="Confirm Password"
-              placeholder="••••••••"
-              value={confirmPassword}
-              onChangeText={(v) => {
-                setConfirmPassword(v);
-                setFieldErrors((e) => ({ ...e, confirmPassword: '' }));
-              }}
-              secureTextEntry
-              secureToggle
-              textContentType="newPassword"
-              returnKeyType="done"
-              onSubmitEditing={handleSignUp}
-              error={fieldErrors.confirmPassword}
-            />
+            {/* Privacy Policy consent */}
+            <View style={styles.consentBox}>
+              <TouchableOpacity onPress={handleOpenPrivacyPolicy} activeOpacity={0.7}>
+                <Text style={styles.consentLink}>Open Privacy Policy</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.consentRow, !privacyOpened && styles.consentRowDisabled]}
+                onPress={() => {
+                  if (!privacyOpened) return;
+                  setPrivacyAccepted((v) => !v);
+                  setFieldErrors((e) => ({ ...e, privacy: '' }));
+                }}
+                activeOpacity={privacyOpened ? 0.7 : 1}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: privacyAccepted, disabled: !privacyOpened }}
+              >
+                <View style={[styles.checkbox, privacyAccepted && styles.checkboxChecked]}>
+                  {privacyAccepted && <Feather name="check" size={12} color={colors.bg} />}
+                </View>
+                <Text style={[styles.consentLabel, !privacyOpened && styles.consentLabelDisabled]}>
+                  I have read and agree to the Privacy Policy
+                </Text>
+              </TouchableOpacity>
+
+              {fieldErrors.privacy ? (
+                <Text style={styles.consentError}>{fieldErrors.privacy}</Text>
+              ) : null}
+            </View>
 
             {globalError ? (
               <Text style={styles.errorBanner}>{globalError}</Text>
@@ -211,6 +214,7 @@ export default function SignUpScreen() {
               onPress={handleSignUp}
               loading={loading}
               style={styles.signUpButton}
+              disabled={!privacyAccepted}
             />
           </View>
 
@@ -220,6 +224,14 @@ export default function SignUpScreen() {
             <TextButton
               label="Sign in"
               onPress={() => router.replace('/(auth)/sign-in')}
+            />
+          </View>
+
+          <View style={styles.onboardingRow}>
+            <TextButton
+              label="View onboarding"
+              onPress={() => router.push('/(auth)/onboarding')}
+              muted
             />
           </View>
         </ScrollView>
@@ -273,6 +285,54 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
 
+  // Privacy consent
+  consentBox: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm + 2,
+    gap: spacing.sm,
+  },
+  consentLink: {
+    fontSize: typography.xs,
+    color: colors.accentCyan,
+    textDecorationLine: 'underline',
+  },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  consentRowDisabled: {
+    opacity: 0.4,
+  },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+    flexShrink: 0,
+  },
+  checkboxChecked: {
+    backgroundColor: colors.text,
+    borderColor: colors.text,
+  },
+  consentLabel: {
+    flex: 1,
+    fontSize: typography.xs,
+    color: colors.textMuted,
+    lineHeight: 18,
+  },
+  consentLabelDisabled: {
+    color: colors.textSubtle,
+  },
+  consentError: {
+    fontSize: typography.xs,
+    color: colors.destructive,
+  },
+
   // Footer
   footer: {
     flexDirection: 'row',
@@ -281,6 +341,10 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 'auto',
     paddingTop: spacing.xl,
+  },
+  onboardingRow: {
+    alignItems: 'center',
+    paddingTop: spacing.xs,
   },
   footerText: {
     fontSize: typography.sm,

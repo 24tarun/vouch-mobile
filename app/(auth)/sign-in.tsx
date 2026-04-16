@@ -113,6 +113,14 @@ export default function SignInScreen() {
               onPress={() => router.replace('/(auth)/sign-up')}
             />
           </View>
+
+          <View style={styles.onboardingRow}>
+            <TextButton
+              label="View onboarding"
+              onPress={() => router.push('/(auth)/onboarding')}
+              muted
+            />
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -172,6 +180,10 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 'auto',
     paddingTop: spacing.xl,
+  },
+  onboardingRow: {
+    alignItems: 'center',
+    paddingTop: spacing.xs,
   },
   footerText: {
     fontSize: typography.sm,

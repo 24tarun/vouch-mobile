@@ -1,0 +1,71 @@
+import type { TaskStatus } from '@/lib/types';
+
+export const TASK_ACTIVE_STATUSES: TaskStatus[] = ['ACTIVE', 'POSTPONED'];
+
+export const TASK_PAST_STATUSES: TaskStatus[] = [
+  'MARKED_COMPLETE',
+  'AWAITING_VOUCHER',
+  'AWAITING_AI',
+  'AWAITING_USER',
+  'ESCALATED',
+  'ACCEPTED',
+  'AUTO_ACCEPTED',
+  'AI_ACCEPTED',
+  'DENIED',
+  'MISSED',
+  'RECTIFIED',
+  'SETTLED',
+];
+
+export const TASK_COMPLETED_LIKE_STATUSES = new Set<TaskStatus>([
+  'MARKED_COMPLETE',
+  'AWAITING_VOUCHER',
+  'AWAITING_AI',
+  'AWAITING_USER',
+  'ESCALATED',
+  'ACCEPTED',
+  'AUTO_ACCEPTED',
+  'AI_ACCEPTED',
+  'DENIED',
+  'MISSED',
+  'RECTIFIED',
+  'SETTLED',
+  'DELETED',
+]);
+
+export const TASK_AWAITING_STATUSES = new Set<TaskStatus>([
+  'AWAITING_VOUCHER',
+  'AWAITING_AI',
+  'AWAITING_USER',
+  'ESCALATED',
+]);
+
+export const VOUCHER_ACTIONABLE_STATUSES: TaskStatus[] = ['AWAITING_VOUCHER', 'MARKED_COMPLETE'];
+export const VOUCHER_ACTIVE_VIEW_STATUSES: TaskStatus[] = ['ACTIVE', 'POSTPONED'];
+export const VOUCHER_VISIBLE_STATUSES: TaskStatus[] = [
+  ...VOUCHER_ACTIVE_VIEW_STATUSES,
+  ...VOUCHER_ACTIONABLE_STATUSES,
+];
+
+export const VOUCHER_HISTORY_STATUSES: TaskStatus[] = [
+  'AWAITING_AI',
+  'AWAITING_USER',
+  'ESCALATED',
+  'ACCEPTED',
+  'AUTO_ACCEPTED',
+  'AI_ACCEPTED',
+  'DENIED',
+  'MISSED',
+  'RECTIFIED',
+  'SETTLED',
+];
+
+export const ACTIVE_VOUCHER_TASK_STATUSES: TaskStatus[] = [
+  'ACTIVE',
+  'POSTPONED',
+  'MARKED_COMPLETE',
+  'AWAITING_VOUCHER',
+  'AWAITING_AI',
+  'AWAITING_USER',
+  'ESCALATED',
+];

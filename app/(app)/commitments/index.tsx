@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -16,14 +15,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { colors, radius, spacing, typography } from '@/lib/theme';
 import {
   useCommitments,
   type CommitmentListItem,
 } from '@/lib/hooks/useCommitments';
-import type { CommitmentStatus, Currency } from '@/lib/types';
+import type { Currency } from '@/lib/types';
 import {
   LinkedTaskRow,
   TaskPickerModal,
@@ -31,27 +30,12 @@ import {
   StatusBadge,
   type LinkedTask,
 } from '@/components/commitments/shared';
+import {
+  toDateOnlyString as toDateOnly,
+  formatDateOnlyDisplay as formatDateDisplay,
+} from '@/lib/utils/date-only';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function toDateOnly(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function parseDateOnly(s: string): Date {
-  const d = new Date(`${s}T00:00:00.000Z`);
-  // Convert to local midnight
-  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-}
-
-function formatDateDisplay(dateOnly: string): string {
-  const d = new Date(`${dateOnly}T00:00:00.000Z`);
-  if (Number.isNaN(d.getTime())) return dateOnly;
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
-}
 
 function defaultStartDate(): Date {
   const d = new Date();
@@ -450,6 +434,9 @@ export default function CommitmentsPage() {
   const { commitments, currency, loading, error, refetch } = useCommitments();
   const [refreshing, setRefreshing] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const { refresh } = useLocalSearchParams<{ refresh?: string }>();
+
+  useState(() => { if (refresh) refetch(); });
 
   async function onRefresh() {
     setRefreshing(true);

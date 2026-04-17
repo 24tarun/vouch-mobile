@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Linking,
   Modal,
   Pressable,
   ScrollView,
   Share,
-  StyleSheet,
   Switch,
   Text,
   TextInput,
@@ -20,10 +18,29 @@ import { Feather } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { unregisterForPushNotificationsAsync } from '@/lib/notifications';
 import { useAuth } from '@/hooks/useAuth';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { colors } from '@/lib/theme';
+import { styles } from './styles';
 import { Currency } from '@/lib/types';
 import { PageHeader } from '@/components/PageHeader';
 import { StatsOverview } from '@/components/StatsOverview';
+import {
+  normalizeAiUsername,
+  normalizeAiEmail,
+} from '@/lib/constants/ai-profile';
+import { getFailureCostBounds } from '@/lib/domain/failure-cost';
+import { ACTIVE_VOUCHER_TASK_STATUSES } from '@/lib/constants/task-status';
+import { FriendsSection } from './components/FriendsSection';
+import { BlockedUsersSection } from './components/BlockedUsersSection';
+import {
+  type BlockedUserOption,
+  type IncomingFriendRequest,
+  type OutgoingFriendRequest,
+  type SearchCandidate,
+  type UserSummary,
+  fetchRelationshipsData,
+  normalizeSearchCandidate,
+  normalizeVoucherOption,
+} from '@/lib/settings/relationships';
 
 type PickerType = 'voucher' | 'currency' | null;
 
@@ -37,42 +54,6 @@ interface VoucherOption {
   username: string;
 }
 
-interface UserSummary {
-  id: string;
-  username: string;
-  email: string;
-  initial: string;
-}
-
-interface IncomingFriendRequest {
-  id: string;
-  sender_id: string;
-  created_at: string;
-  sender: UserSummary;
-}
-
-interface OutgoingFriendRequest {
-  id: string;
-  receiver_id: string;
-  created_at: string;
-  receiver: UserSummary;
-}
-
-interface SearchCandidate {
-  id: string;
-  email: string;
-  username: string;
-  already_friends: boolean;
-  incoming_request_pending: boolean;
-  outgoing_request_pending: boolean;
-}
-
-interface BlockedUserOption {
-  id: string;
-  username: string;
-  email: string;
-}
-
 interface ActiveVoucherTask {
   id: string;
   title: string;
@@ -84,152 +65,11 @@ type RelationshipAction = 'send' | 'accept' | 'reject' | 'remove' | 'block' | 'w
 const POMO_MIN_MINUTES = 1;
 const POMO_MAX_MINUTES = 120;
 const ACCOUNT_DELETE_FALLBACK_URL = 'https://tas.tarunh.com/settings';
-const ACTIVE_VOUCHER_TASK_STATUSES = [
-  'ACTIVE',
-  'POSTPONED',
-  'MARKED_COMPLETE',
-  'AWAITING_VOUCHER',
-  'AWAITING_ORCA',
-  'AWAITING_USER',
-  'ESCALATED',
-] as const;
 const CURRENCY_OPTIONS: PickerOption[] = [
   { label: 'USD', value: 'USD' },
   { label: 'EUR', value: 'EUR' },
   { label: 'INR', value: 'INR' },
 ];
-
-interface FailureCostBounds {
-  minMajor: number;
-  maxMajor: number;
-  minCents: number;
-  maxCents: number;
-}
-
-function getFailureCostBounds(currency: Currency): FailureCostBounds {
-  if (currency === 'INR') {
-    return {
-      minMajor: 50,
-      maxMajor: 1000,
-      minCents: 5000,
-      maxCents: 100000,
-    };
-  }
-
-  return {
-    minMajor: 1,
-    maxMajor: 100,
-    minCents: 100,
-    maxCents: 10000,
-  };
-}
-
-function buildUserSummary(profile: { id?: string; username?: string | null; email?: string | null } | null): UserSummary | null {
-  if (!profile?.id) return null;
-  const username = profile.username?.trim() || 'Friend';
-  return {
-    id: profile.id,
-    username,
-    email: profile.email?.trim().toLowerCase() || '',
-    initial: username[0]?.toUpperCase() || '?',
-  };
-}
-
-async function fetchRelationshipsData(userId: string): Promise<{
-  friends: UserSummary[];
-  incomingRequests: IncomingFriendRequest[];
-  outgoingRequests: OutgoingFriendRequest[];
-  error: string | null;
-}> {
-  const empty = { friends: [], incomingRequests: [], outgoingRequests: [] };
-
-  const [friendsRes, incomingRequestsRes, outgoingRequestsRes] = await Promise.all([
-    supabase
-      .from('friendships')
-      .select(`
-        friend:profiles!friendships_friend_id_fkey(
-          id,
-          username,
-          email
-        )
-      `)
-      .eq('user_id', userId),
-    supabase
-      .from('friend_requests')
-      .select(`
-        id,
-        sender_id,
-        created_at,
-        sender:profiles!friend_requests_sender_id_fkey(
-          id,
-          username,
-          email
-        )
-      `)
-      .eq('receiver_id', userId)
-      .eq('status', 'PENDING')
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('friend_requests')
-      .select(`
-        id,
-        receiver_id,
-        created_at,
-        receiver:profiles!friend_requests_receiver_id_fkey(
-          id,
-          username,
-          email
-        )
-      `)
-      .eq('sender_id', userId)
-      .eq('status', 'PENDING')
-      .order('created_at', { ascending: false }),
-  ]);
-
-  if (friendsRes.error || incomingRequestsRes.error || outgoingRequestsRes.error) {
-    return {
-      ...empty,
-      error:
-        friendsRes.error?.message
-        || incomingRequestsRes.error?.message
-        || outgoingRequestsRes.error?.message
-        || 'Failed to load friends',
-    };
-  }
-
-  const friends = ((friendsRes.data ?? []) as any[])
-    .map((row) => buildUserSummary(row.friend as { id?: string; username?: string | null; email?: string | null } | null))
-    .filter((entry): entry is UserSummary => Boolean(entry))
-    .sort((a, b) => a.username.localeCompare(b.username));
-
-  const incomingRequests = ((incomingRequestsRes.data ?? []) as any[])
-    .map((row) => {
-      const sender = buildUserSummary(row.sender as { id?: string; username?: string | null; email?: string | null } | null);
-      if (!sender || !row.id || !row.sender_id) return null;
-      return {
-        id: row.id as string,
-        sender_id: row.sender_id as string,
-        created_at: row.created_at as string,
-        sender,
-      } satisfies IncomingFriendRequest;
-    })
-    .filter((entry): entry is IncomingFriendRequest => Boolean(entry));
-
-  const outgoingRequests = ((outgoingRequestsRes.data ?? []) as any[])
-    .map((row) => {
-      const receiver = buildUserSummary(row.receiver as { id?: string; username?: string | null; email?: string | null } | null);
-      if (!receiver || !row.id || !row.receiver_id) return null;
-      return {
-        id: row.id as string,
-        receiver_id: row.receiver_id as string,
-        created_at: row.created_at as string,
-        receiver,
-      } satisfies OutgoingFriendRequest;
-    })
-    .filter((entry): entry is OutgoingFriendRequest => Boolean(entry));
-
-  return { friends, incomingRequests, outgoingRequests, error: null };
-}
 
 interface RowProps {
   icon: React.ComponentProps<typeof Feather>['name'];
@@ -238,6 +78,8 @@ interface RowProps {
   destructive?: boolean;
   trailingText?: string;
   tinted?: boolean;
+  disabled?: boolean;
+  accessibilityHint?: string;
 }
 
 function SettingsRow({
@@ -247,22 +89,28 @@ function SettingsRow({
   destructive = false,
   trailingText,
   tinted = false,
+  disabled = false,
+  accessibilityHint,
 }: RowProps) {
   const tint = destructive ? colors.destructive : colors.text;
   return (
     <TouchableOpacity
-      style={[styles.row, tinted && styles.rowTinted]}
+      style={[styles.row, tinted && styles.rowTinted, disabled && styles.rowDisabled]}
       onPress={onPress}
       activeOpacity={0.7}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={
-        destructive
-          ? 'Signs you out of your account'
-          : trailingText
-            ? 'Opens a coming soon message'
-            : 'Opens this setting'
+        accessibilityHint
+        ?? (
+          destructive
+            ? 'Performs a destructive account action'
+            : trailingText
+              ? 'Opens a coming soon message'
+              : 'Opens this setting'
+        )
       }
+      disabled={disabled}
     >
       <View style={styles.rowLeft}>
         <Feather name={icon} size={18} color={tint} />
@@ -282,11 +130,6 @@ function SettingsRow({
 export default function SettingsScreen() {
   const { user, profile } = useAuth();
   const [activePicker, setActivePicker] = useState<PickerType>(null);
-
-  const [emailDraft, setEmailDraft] = useState('');
-  const [savingEmail, setSavingEmail] = useState(false);
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [emailSuccess, setEmailSuccess] = useState<string | null>(null);
 
   const [usernameDraft, setUsernameDraft] = useState('');
   const [savingUsername, setSavingUsername] = useState(false);
@@ -344,9 +187,8 @@ export default function SettingsScreen() {
     const nextCurrency = profile.currency ?? 'USD';
     const nextOneHourReminder = profile.deadline_one_hour_warning_enabled ?? true;
     const nextTenMinuteReminder = profile.deadline_final_warning_enabled ?? true;
-    const nextAiVoucherEnabled = profile.orca_friend_opt_in ?? false;
+    const nextAiVoucherEnabled = profile.ai_friend_opt_in ?? false;
 
-    setEmailDraft(nextEmail);
     setUsernameDraft(nextUsername);
     setDefaultPomoInput(String(nextPomo));
     setDefaultFailureCostInput(
@@ -372,8 +214,6 @@ export default function SettingsScreen() {
     });
     aiFeaturesSavedRef.current = nextAiVoucherEnabled;
 
-    setEmailError(null);
-    setEmailSuccess(null);
     setUsernameError(null);
     setUsernameSuccess(null);
     setDefaultsError(null);
@@ -417,7 +257,7 @@ export default function SettingsScreen() {
       }
 
       const blockedIds = new Set(
-        ((blockedRes.data ?? []) as Array<{ blocked_id?: string | null }>)
+        ((blockedRes.data ?? []) as { blocked_id?: string | null }[])
           .map((row) => row.blocked_id)
           .filter((id): id is string => Boolean(id)),
       );
@@ -427,7 +267,7 @@ export default function SettingsScreen() {
           const friend = row?.friend as { id?: string; username?: string } | null;
           if (!friend?.id) return null;
           if (blockedIds.has(friend.id)) return null;
-          return { id: friend.id, username: friend.username ?? 'Friend' };
+          return normalizeVoucherOption({ id: friend.id, username: friend.username ?? 'Friend' });
         })
         .filter((item): item is VoucherOption => Boolean(item?.id));
 
@@ -552,6 +392,7 @@ export default function SettingsScreen() {
 
       setFriendSearchResults(
         ((data ?? []) as SearchCandidate[])
+          .map((candidate) => normalizeSearchCandidate(candidate))
           .filter((c) => !c.already_friends)
           .sort((a, b) => a.username.localeCompare(b.username)),
       );
@@ -608,8 +449,8 @@ export default function SettingsScreen() {
           if (!blocked?.id) return null;
           return {
             id: blocked.id,
-            username: blocked.username?.trim() || 'Blocked user',
-            email: blocked.email?.trim().toLowerCase() || '',
+            username: normalizeAiUsername(blocked.id, blocked.username, 'Blocked user'),
+            email: normalizeAiEmail(blocked.id, blocked.email, ''),
           } satisfies BlockedUserOption;
         })
         .filter((entry): entry is BlockedUserOption => Boolean(entry))
@@ -727,7 +568,7 @@ export default function SettingsScreen() {
             await unregisterForPushNotificationsAsync(user.id);
           }
 
-          const { error } = await supabase.auth.signOut();
+          const { error } = await supabase.auth.signOut({ scope: 'local' });
           if (error) {
             Alert.alert('Sign out failed', error.message);
           }
@@ -768,7 +609,7 @@ export default function SettingsScreen() {
         )
       `)
       .eq('voucher_id', user.id)
-      .in('status', [...ACTIVE_VOUCHER_TASK_STATUSES] as any);
+      .in('status', ACTIVE_VOUCHER_TASK_STATUSES);
 
     if (error) {
       return { tasks: [], error: error.message };
@@ -955,6 +796,7 @@ export default function SettingsScreen() {
 
       setFriendSearchResults(
         ((data ?? []) as SearchCandidate[])
+          .map((candidate) => normalizeSearchCandidate(candidate))
           .filter((c) => !c.already_friends)
           .sort((a, b) => a.username.localeCompare(b.username)),
       );
@@ -1309,7 +1151,7 @@ export default function SettingsScreen() {
 
       const { error } = await supabase
         .from('profiles')
-        .update({ orca_friend_opt_in: aiVoucherEnabled })
+        .update({ ai_friend_opt_in: aiVoucherEnabled })
         .eq('id', user.id);
 
       setSavingAiFeatures(false);
@@ -1408,270 +1250,25 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Friends</Text>
-          <View style={styles.card}>
-            <View style={styles.defaultsContent}>
-              <View style={styles.friendSearchRow}>
-                <Feather name="search" size={16} color={colors.textMuted} />
-                <TextInput
-                  style={styles.friendSearchInput}
-                  placeholder="Search by email or username"
-                  placeholderTextColor={colors.textSubtle}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  value={friendSearchQuery}
-                  onChangeText={setFriendSearchQuery}
-                />
-                {friendSearchQuery.length > 0 ? (
-                  <TouchableOpacity onPress={() => setFriendSearchQuery('')} hitSlop={8}>
-                    <Feather name="x-circle" size={16} color={colors.textMuted} />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-
-              {friendSearchQuery.trim().length > 0 ? (
-                <View style={styles.friendsList}>
-                  {friendSearchLoading ? (
-                    <Text style={styles.savingText}>Searching...</Text>
-                  ) : friendSearchError ? (
-                    <Text style={styles.errorText}>{friendSearchError}</Text>
-                  ) : friendSearchResults.length === 0 ? (
-                    <Text style={styles.toggleSub}>No matching users found.</Text>
-                  ) : (
-                    friendSearchResults.map((candidate) => {
-                      const sendKey = `send:${candidate.id}`;
-                      const blockKey = `search:${candidate.id}:block`;
-                      const isSending = relationshipInFlight[sendKey] === 'send';
-                      const isBlocking = relationshipInFlight[blockKey] === 'block';
-
-                      return (
-                        <View key={candidate.id} style={styles.friendRow}>
-                          <View style={styles.friendMeta}>
-                            <View style={styles.friendAvatar}>
-                              <Text style={styles.friendAvatarText}>{candidate.username?.[0]?.toUpperCase() || '?'}</Text>
-                            </View>
-                            <View style={styles.friendText}>
-                              <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{candidate.username}</Text>
-                              <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{candidate.email}</Text>
-                            </View>
-                          </View>
-                          <View style={styles.friendActions}>
-                            {candidate.already_friends ? (
-                              <Text style={styles.friendStateLabel}>Friends</Text>
-                            ) : candidate.incoming_request_pending ? (
-                              <Text style={styles.friendStateLabel}>Requested you</Text>
-                            ) : candidate.outgoing_request_pending ? (
-                              <Text style={styles.friendStateLabel}>Requested</Text>
-                            ) : (
-                              <TouchableOpacity
-                                style={[styles.friendButton, (isSending || isBlocking) && styles.friendButtonDisabled]}
-                                onPress={() => { void handleSendFriendRequest(candidate); }}
-                                activeOpacity={0.8}
-                                disabled={isSending || isBlocking}
-                              >
-                                {isSending ? (
-                                  <ActivityIndicator size="small" color={colors.text} />
-                                ) : (
-                                  <Text style={styles.friendButtonText}>Add Friend</Text>
-                                )}
-                              </TouchableOpacity>
-                            )}
-                            <TouchableOpacity
-                              style={[
-                                styles.friendButton,
-                                styles.friendButtonDestructive,
-                                (isSending || isBlocking) && styles.friendButtonDisabled,
-                              ]}
-                              onPress={() => { void handleBlockRelationshipUser(candidate, blockKey); }}
-                              activeOpacity={0.8}
-                              disabled={isSending || isBlocking}
-                            >
-                              {isBlocking ? (
-                                <ActivityIndicator size="small" color={colors.destructive} />
-                              ) : (
-                                <Text style={[styles.friendButtonText, styles.friendButtonTextDestructive]}>Block</Text>
-                              )}
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      );
-                    })
-                  )}
-                </View>
-              ) : null}
-
-              {!friendSearchQuery.trim() && relationshipsError ? <Text style={styles.errorText}>{relationshipsError}</Text> : null}
-              {!friendSearchQuery.trim() && relationshipsLoading ? <Text style={styles.savingText}>Loading friends...</Text> : null}
-
-              {!friendSearchQuery.trim() && !relationshipsLoading && incomingRequests.length === 0 && outgoingRequests.length === 0 && friends.length === 0 ? (
-                <Text style={styles.toggleSub}>No friends yet.</Text>
-              ) : null}
-
-              {!friendSearchQuery.trim() && !relationshipsLoading ? (
-                <View style={styles.friendsList}>
-                  {incomingRequests.map((request) => {
-                    const acceptKey = `request:${request.id}:accept`;
-                    const rejectKey = `request:${request.id}:reject`;
-                    const blockKey = `request:${request.id}:block`;
-                    const busy = Boolean(
-                      relationshipInFlight[acceptKey]
-                      || relationshipInFlight[rejectKey]
-                      || relationshipInFlight[blockKey],
-                    );
-
-                    return (
-                      <View key={request.id} style={styles.friendRow}>
-                        <View style={styles.friendMeta}>
-                          <View style={styles.friendAvatar}>
-                            <Text style={styles.friendAvatarText}>{request.sender.initial}</Text>
-                          </View>
-                          <View style={styles.friendText}>
-                            <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{request.sender.username}</Text>
-                            <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{request.sender.email}</Text>
-                          </View>
-                        </View>
-                        <View style={styles.friendIconActions}>
-                          <TouchableOpacity
-                            style={[styles.circleActionButton, { backgroundColor: colors.successMuted }, busy && styles.friendButtonDisabled]}
-                            onPress={() => { void handleAcceptFriendRequest(request); }}
-                            activeOpacity={0.75}
-                            disabled={busy}
-                          >
-                            {relationshipInFlight[acceptKey] === 'accept' ? (
-                              <ActivityIndicator size="small" color={colors.success} />
-                            ) : (
-                              <Feather name="check" size={16} color={colors.success} />
-                            )}
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.circleActionButton, { backgroundColor: colors.destructiveMuted }, busy && styles.friendButtonDisabled]}
-                            onPress={() => { void handleRejectFriendRequest(request); }}
-                            activeOpacity={0.75}
-                            disabled={busy}
-                          >
-                            {relationshipInFlight[rejectKey] === 'reject' ? (
-                              <ActivityIndicator size="small" color={colors.destructive} />
-                            ) : (
-                              <Feather name="x" size={16} color={colors.destructive} />
-                            )}
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.circleActionButton, { backgroundColor: colors.destructiveMuted }, busy && styles.friendButtonDisabled]}
-                            onPress={() => { void handleBlockRelationshipUser(request.sender, blockKey); }}
-                            activeOpacity={0.75}
-                            disabled={busy}
-                          >
-                            {relationshipInFlight[blockKey] === 'block' ? (
-                              <ActivityIndicator size="small" color={colors.destructive} />
-                            ) : (
-                              <Feather name="slash" size={16} color={colors.destructive} />
-                            )}
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    );
-                  })}
-
-                  {outgoingRequests.map((request) => {
-                    const withdrawKey = `outgoing:${request.id}:withdraw`;
-                    const blockKey = `sent-request:${request.id}:block`;
-                    const isWithdrawing = relationshipInFlight[withdrawKey] === 'withdraw';
-                    const isBlocking = relationshipInFlight[blockKey] === 'block';
-                    const busy = isWithdrawing || isBlocking;
-                    return (
-                      <View key={request.id} style={styles.friendRow}>
-                        <View style={styles.friendMeta}>
-                          <View style={styles.friendAvatar}>
-                            <Text style={styles.friendAvatarText}>{request.receiver.initial}</Text>
-                          </View>
-                          <View style={styles.friendText}>
-                            <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{request.receiver.username}</Text>
-                            <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{request.receiver.email}</Text>
-                          </View>
-                        </View>
-                        <View style={styles.friendIconActions}>
-                          <TouchableOpacity
-                            style={[styles.circleActionButton, { backgroundColor: '#3B2712' }, busy && styles.friendButtonDisabled]}
-                            onPress={() => { void handleWithdrawFriendRequest(request); }}
-                            activeOpacity={0.75}
-                            disabled={busy}
-                          >
-                            {isWithdrawing ? (
-                              <ActivityIndicator size="small" color={colors.warning} />
-                            ) : (
-                              <Feather name="user-x" size={16} color={colors.warning} />
-                            )}
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.circleActionButton, { backgroundColor: colors.destructiveMuted }, busy && styles.friendButtonDisabled]}
-                            onPress={() => { void handleBlockRelationshipUser(request.receiver, blockKey); }}
-                            activeOpacity={0.75}
-                            disabled={busy}
-                          >
-                            {isBlocking ? (
-                              <ActivityIndicator size="small" color={colors.destructive} />
-                            ) : (
-                              <Feather name="slash" size={16} color={colors.destructive} />
-                            )}
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    );
-                  })}
-
-                  {friends.map((friend) => {
-                    const removeKey = `friend:${friend.id}:remove`;
-                    const blockKey = `friend:${friend.id}:block`;
-                    const isRemoving = relationshipInFlight[removeKey] === 'remove';
-                    const isBlocking = relationshipInFlight[blockKey] === 'block';
-                    const busy = isRemoving || isBlocking;
-
-                    return (
-                      <View key={friend.id} style={styles.friendRow}>
-                        <View style={styles.friendMeta}>
-                          <View style={styles.friendAvatar}>
-                            <Text style={styles.friendAvatarText}>{friend.initial}</Text>
-                          </View>
-                          <View style={styles.friendText}>
-                            <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{friend.username}</Text>
-                            <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{friend.email}</Text>
-                          </View>
-                        </View>
-                        <View style={styles.friendActions}>
-                          <TouchableOpacity
-                            style={[styles.circleActionButton, { backgroundColor: '#3B2712' }, busy && styles.friendButtonDisabled]}
-                            onPress={() => { void handleRemoveFriend(friend); }}
-                            activeOpacity={0.75}
-                            disabled={busy}
-                          >
-                            {isRemoving ? (
-                              <ActivityIndicator size="small" color={colors.warning} />
-                            ) : (
-                              <Feather name="user-minus" size={16} color={colors.warning} />
-                            )}
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[styles.circleActionButton, { backgroundColor: colors.destructiveMuted }, busy && styles.friendButtonDisabled]}
-                            onPress={() => { void handleBlockRelationshipUser(friend, blockKey); }}
-                            activeOpacity={0.75}
-                            disabled={busy}
-                          >
-                            {isBlocking ? (
-                              <ActivityIndicator size="small" color={colors.destructive} />
-                            ) : (
-                              <Feather name="slash" size={16} color={colors.destructive} />
-                            )}
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-              ) : null}
-            </View>
-          </View>
-        </View>
+        <FriendsSection
+          friendSearchQuery={friendSearchQuery}
+          setFriendSearchQuery={setFriendSearchQuery}
+          friendSearchLoading={friendSearchLoading}
+          friendSearchError={friendSearchError}
+          friendSearchResults={friendSearchResults}
+          relationshipsError={relationshipsError}
+          relationshipsLoading={relationshipsLoading}
+          incomingRequests={incomingRequests}
+          outgoingRequests={outgoingRequests}
+          friends={friends}
+          relationshipInFlight={relationshipInFlight}
+          onSendFriendRequest={handleSendFriendRequest}
+          onBlockRelationshipUser={handleBlockRelationshipUser}
+          onAcceptFriendRequest={handleAcceptFriendRequest}
+          onRejectFriendRequest={handleRejectFriendRequest}
+          onWithdrawFriendRequest={handleWithdrawFriendRequest}
+          onRemoveFriend={handleRemoveFriend}
+        />
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Defaults</Text>
@@ -1805,47 +1402,13 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Blocked Users</Text>
-          <View style={styles.card}>
-            <View style={styles.defaultsContent}>
-              <Text style={styles.toggleSub}>
-                Unblock people you previously blocked so they can send friend requests again.
-              </Text>
-
-              {blockedUsersLoading ? <Text style={styles.savingText}>Loading blocked users...</Text> : null}
-              {blockedUsersError ? <Text style={styles.errorText}>{blockedUsersError}</Text> : null}
-
-              {!blockedUsersLoading && blockedUsers.length === 0 ? (
-                <Text style={styles.toggleSub}>No blocked users.</Text>
-              ) : null}
-
-              {blockedUsers.map((blockedUser) => (
-                <View key={blockedUser.id} style={styles.blockedUserRow}>
-                  <View style={styles.blockedUserMeta}>
-                    <Text style={styles.blockedUserName} numberOfLines={1} ellipsizeMode="clip">{blockedUser.username}</Text>
-                    <Text style={styles.blockedUserEmail} numberOfLines={1} ellipsizeMode="clip">{blockedUser.email}</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={[
-                      styles.unblockButton,
-                      unblockingUserId === blockedUser.id && styles.unblockButtonDisabled,
-                    ]}
-                    onPress={() => { void handleUnblockUser(blockedUser); }}
-                    activeOpacity={0.8}
-                    disabled={unblockingUserId === blockedUser.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Unblock ${blockedUser.username}`}
-                  >
-                    <Text style={styles.unblockButtonText}>
-                      {unblockingUserId === blockedUser.id ? 'Unblocking...' : 'Unblock'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          </View>
-        </View>
+        <BlockedUsersSection
+          blockedUsersLoading={blockedUsersLoading}
+          blockedUsersError={blockedUsersError}
+          blockedUsers={blockedUsers}
+          unblockingUserId={unblockingUserId}
+          onUnblockUser={handleUnblockUser}
+        />
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Session</Text>
@@ -1855,29 +1418,22 @@ export default function SettingsScreen() {
               label={isExporting ? 'Exporting...' : 'Export my data'}
               onPress={() => { void handleExportData(); }}
             />
-            <TouchableOpacity
-              style={[
-                styles.deleteAccountButton,
-                (isDeletingAccount || isCheckingDeleteConflicts || deleteAccountSuccess)
-                  && styles.deleteAccountButtonDisabled,
-              ]}
-              onPress={handleDeleteAccount}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Delete account permanently"
-              disabled={isDeletingAccount || isCheckingDeleteConflicts || deleteAccountSuccess}
-            >
-              <Feather name="trash-2" size={18} color={colors.destructive} />
-              <Text style={styles.deleteAccountButtonText}>
-                {deleteAccountSuccess
+            <SettingsRow
+              icon="trash-2"
+              label={
+                deleteAccountSuccess
                   ? 'Account deleted'
                   : isDeletingAccount
                     ? 'Deleting account...'
                     : isCheckingDeleteConflicts
                       ? 'Checking...'
-                      : 'Delete account permanently'}
-              </Text>
-            </TouchableOpacity>
+                      : 'Delete account permanently'
+              }
+              onPress={handleDeleteAccount}
+              destructive
+              disabled={isDeletingAccount || isCheckingDeleteConflicts || deleteAccountSuccess}
+              accessibilityHint="Deletes your account permanently"
+            />
             {deleteAccountError ? <Text style={styles.errorText}>{deleteAccountError}</Text> : null}
             {deleteAccountSuccess ? <Text style={styles.successText}>Account successfully deleted.</Text> : null}
           </View>
@@ -1917,437 +1473,3 @@ export default function SettingsScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  body: {
-    flex: 1,
-    paddingHorizontal: spacing.md,
-  },
-  bodyContent: {
-    gap: spacing.lg,
-    paddingVertical: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-
-  // Account card
-  accountContent: {
-    gap: spacing.md,
-  },
-  accountIdentityRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.md,
-  },
-  accountIdentityMeta: {
-    flex: 1,
-    paddingTop: 2,
-    gap: 4,
-  },
-  accountIdentityTitle: {
-    fontSize: typography.base,
-    color: colors.text,
-    fontWeight: typography.semibold,
-  },
-  accountIdentitySub: {
-    fontSize: typography.sm,
-    color: colors.textMuted,
-  },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.surface2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: typography.md,
-    fontWeight: typography.bold,
-    color: colors.text,
-  },
-  readOnlyField: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-  },
-  readOnlyFieldText: {
-    fontSize: typography.base,
-    color: colors.text,
-  },
-
-  // Sections
-  section: {
-    gap: spacing.sm,
-    paddingTop: spacing.lg,
-  },
-  sectionLabel: {
-    fontSize: typography.base,
-    fontWeight: typography.semibold,
-    color: colors.textMuted,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  card: {},
-  cardDivider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginVertical: spacing.sm,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-  },
-  rowTinted: {
-    borderWidth: 1,
-    borderColor: '#7F1D1D66',
-    backgroundColor: '#450A0A26',
-    borderRadius: radius.md,
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  rowLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  rowLabel: {
-    fontSize: typography.base,
-    color: colors.text,
-    fontWeight: typography.normal,
-  },
-  rowLabelDestructive: {
-    color: colors.destructive,
-  },
-  trailingText: {
-    fontSize: typography.sm,
-    color: colors.textMuted,
-    fontWeight: typography.medium,
-  },
-  defaultsContent: {
-    gap: spacing.md,
-  },
-  defaultsField: {
-    gap: spacing.sm,
-  },
-  friendSearchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.inputBorder,
-    backgroundColor: colors.inputBg,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    minHeight: 46,
-  },
-  friendSearchInput: {
-    flex: 1,
-    color: colors.text,
-    fontSize: typography.base,
-    paddingVertical: 0,
-  },
-  defaultsLabel: {
-    fontSize: typography.sm,
-    color: colors.textMuted,
-    fontWeight: typography.medium,
-  },
-  selectButton: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface2,
-    paddingHorizontal: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  selectLabel: {
-    color: colors.text,
-    fontSize: typography.base,
-    flex: 1,
-    paddingRight: spacing.sm,
-  },
-  textInput: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
-    paddingHorizontal: spacing.md,
-    color: colors.text,
-    fontSize: typography.base,
-  },
-  usernameInlineField: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
-    paddingHorizontal: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  usernameInlineLabel: {
-    fontSize: typography.base,
-    color: colors.textMuted,
-    fontWeight: typography.medium,
-  },
-  usernameInlineInput: {
-    flex: 1,
-    minWidth: 0,
-    color: colors.text,
-    fontSize: typography.base,
-    textAlign: 'right',
-    paddingVertical: 0,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-  },
-  toggleTextWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  toggleTitle: {
-    fontSize: typography.base,
-    color: colors.text,
-    fontWeight: typography.medium,
-  },
-  toggleSub: {
-    fontSize: typography.sm,
-    color: colors.textMuted,
-    lineHeight: 18,
-  },
-  errorText: {
-    fontSize: typography.sm,
-    color: colors.destructive,
-  },
-  savingText: {
-    fontSize: typography.sm,
-    color: colors.textMuted,
-  },
-  successText: {
-    fontSize: typography.sm,
-    color: colors.success,
-  },
-  deleteAccountButton: {
-    minHeight: 52,
-    paddingHorizontal: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  deleteAccountButtonDisabled: {
-    opacity: 0.65,
-  },
-  deleteAccountButtonText: {
-    fontSize: typography.base,
-    color: colors.destructive,
-    fontWeight: typography.semibold,
-  },
-  blockedUserRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  blockedUserMeta: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  blockedUserName: {
-    fontSize: typography.base,
-    color: colors.text,
-    fontWeight: typography.medium,
-  },
-  blockedUserEmail: {
-    fontSize: typography.sm,
-    color: colors.textMuted,
-  },
-  unblockButton: {
-    minHeight: 34,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    backgroundColor: colors.surface2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  unblockButtonDisabled: {
-    opacity: 0.6,
-  },
-  unblockButtonText: {
-    fontSize: typography.sm,
-    color: colors.text,
-    fontWeight: typography.semibold,
-  },
-  friendsList: {
-    gap: spacing.sm,
-  },
-  friendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  friendMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    flex: 1,
-  },
-  friendAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surface2,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-  },
-  friendAvatarText: {
-    color: colors.text,
-    fontSize: typography.sm,
-    fontWeight: typography.semibold,
-  },
-  friendText: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  friendName: {
-    fontSize: typography.base,
-    color: colors.text,
-    fontWeight: typography.medium,
-  },
-  friendEmail: {
-    fontSize: typography.sm,
-    color: colors.textMuted,
-  },
-  friendActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  friendIconActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  },
-  circleActionButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-  },
-  friendButton: {
-    minHeight: 34,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    backgroundColor: colors.surface2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  friendButtonDestructive: {
-    borderColor: '#7F1D1D',
-    backgroundColor: colors.destructiveMuted,
-  },
-  friendButtonDisabled: {
-    opacity: 0.6,
-  },
-  friendButtonText: {
-    fontSize: typography.sm,
-    color: colors.text,
-    fontWeight: typography.semibold,
-  },
-  friendButtonTextDestructive: {
-    color: '#FCA5A5',
-  },
-  friendStateLabel: {
-    fontSize: typography.sm,
-    color: colors.textMuted,
-    fontWeight: typography.medium,
-  },
-  modalBackdrop: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.45)',
-  },
-  backdropTapTarget: {
-    flex: 1,
-  },
-  pickerSheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    borderTopWidth: 1,
-    borderColor: colors.borderStrong,
-    maxHeight: '62%',
-    paddingBottom: spacing.md,
-  },
-  pickerHeader: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  pickerTitle: {
-    fontSize: typography.md,
-    color: colors.text,
-    fontWeight: typography.semibold,
-  },
-  pickerDone: {
-    fontSize: typography.base,
-    color: colors.text,
-    fontWeight: typography.medium,
-  },
-  pickerRow: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  pickerRowLabel: {
-    fontSize: typography.base,
-    color: colors.text,
-  },
-});

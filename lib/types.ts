@@ -8,13 +8,13 @@ export type TaskStatus =
   | 'POSTPONED'
   | 'MARKED_COMPLETE'
   | 'AWAITING_VOUCHER'
-  | 'AWAITING_ORCA'
-  | 'ORCA_DENIED'
+  | 'AWAITING_AI'
+  | 'AI_DENIED'
   | 'AWAITING_USER'
   | 'ESCALATED'
   | 'ACCEPTED'
   | 'AUTO_ACCEPTED'
-  | 'ORCA_ACCEPTED'
+  | 'AI_ACCEPTED'
   | 'DENIED'
   | 'MISSED'
   | 'RECTIFIED'
@@ -89,7 +89,7 @@ export interface Profile {
   display_xp_bar_on_dashboard: boolean;
   display_rp_bar_on_dashboard: boolean;
   abandoned_commitments_count: number;
-  orca_friend_opt_in: boolean;
+  ai_friend_opt_in: boolean;
   created_at: string;
 }
 

@@ -1,6 +1,6 @@
 import type { ImagePickerAsset } from 'expo-image-picker';
 
-export const PROOF_TIMESTAMP_PLACEHOLDER = '??:?? ??/??/??';
+const PROOF_TIMESTAMP_PLACEHOLDER = '??:?? ??/??/??';
 
 const PROOF_TIMESTAMP_REGEX = /^(?:\d{2}:\d{2} \d{2}\/\d{2}\/\d{2}|\?\?:\?\? \?\?\/\?\?\/\?\?)$/;
 const JPEG_SOI = 0xffd8;
@@ -50,7 +50,7 @@ function formatProofTimestampParts(parts: ProofTimestampParts): string {
   return `${pad2(parts.hours)}:${pad2(parts.minutes)} ${pad2(parts.day)}/${pad2(parts.month)}/${pad2(parts.year % 100)}`;
 }
 
-export function normalizeProofTimestampText(value: unknown): string {
+function normalizeProofTimestampText(value: unknown): string {
   if (typeof value !== 'string') return PROOF_TIMESTAMP_PLACEHOLDER;
   const trimmed = value.trim();
   return PROOF_TIMESTAMP_REGEX.test(trimmed) ? trimmed : PROOF_TIMESTAMP_PLACEHOLDER;
@@ -75,7 +75,7 @@ function parseExifDateTime(text: string): ProofTimestampParts | null {
   return hasValidParts(parts) ? parts : null;
 }
 
-export function extractProofTimestampTextFromExifLike(value: unknown): string | null {
+function extractProofTimestampTextFromExifLike(value: unknown): string | null {
   if (!value || typeof value !== 'object') return null;
 
   const queue: unknown[] = [value];

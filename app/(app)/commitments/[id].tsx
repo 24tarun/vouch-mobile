@@ -98,8 +98,7 @@ export default function CommitmentDetailScreen() {
             setActionLoading('delete');
             try {
               await supabase.from('commitments').delete().eq('id', item.id);
-              refetch();
-              router.back();
+              router.replace({ pathname: '/(app)/commitments', params: { refresh: '1' } });
             } finally {
               setActionLoading(null);
             }
@@ -131,7 +130,7 @@ export default function CommitmentDetailScreen() {
 
   const daysAccomplished = item.day_statuses.filter((entry) => entry.status === 'passed').length;
   const isDraft = item.status === 'DRAFT';
-  const isActive = item.derived_status === 'ACTIVE';
+  const isActive = item.derived_status === 'ACTIVE' || item.derived_status === 'FAILED';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

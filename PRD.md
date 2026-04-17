@@ -48,8 +48,8 @@ Canonical status enum (matches DB constraint exactly):
 
 ```
 ACTIVE | POSTPONED | MARKED_COMPLETE | AWAITING_VOUCHER |
-AWAITING_ORCA | ORCA_DENIED | AWAITING_USER | ESCALATED |
-ACCEPTED | AUTO_ACCEPTED | ORCA_ACCEPTED |
+AWAITING_AI | AI_DENIED | AWAITING_USER | ESCALATED |
+ACCEPTED | AUTO_ACCEPTED | AI_ACCEPTED |
 DENIED | MISSED | RECTIFIED | SETTLED | DELETED
 ```
 
@@ -58,7 +58,7 @@ Main runtime transitions:
 - `postpone` → `POSTPONED`
 - `mark complete (self-vouch)` → `MARKED_COMPLETE` → `ACCEPTED`
 - `mark complete (human voucher)` → `MARKED_COMPLETE` → `AWAITING_VOUCHER`
-- `mark complete (AI/Orca voucher)` → `MARKED_COMPLETE` → `AWAITING_ORCA`
+- `mark complete (AI voucher)` → `MARKED_COMPLETE` → `AWAITING_AI`
 - `voucher accept` → `ACCEPTED`
 - `voucher deny` → `DENIED`
 - `system voucher timeout` → `AUTO_ACCEPTED` (+ 30-cent voucher penalty)
@@ -72,7 +72,7 @@ Notes:
 - Voucher timeout auto-accepts and charges voucher 30 cents.
 - Owner hard delete is allowed only for active tasks within 10 minutes of creation.
 - Event tasks use `google_event_end_at` as effective due time for fail logic.
-- ORCA/AI statuses (`AWAITING_ORCA`, `ORCA_DENIED`, `AWAITING_USER`, `ESCALATED`, `ORCA_ACCEPTED`) are part of the AI voucher flow — preserve them in status rendering but their write paths are system-managed.
+- AI statuses (`AWAITING_AI`, `AI_DENIED`, `AWAITING_USER`, `ESCALATED`, `AI_ACCEPTED`) are part of the AI voucher flow — preserve them in status rendering but their write paths are system-managed.
 
 ### 6.2 Financial rules
 
@@ -226,8 +226,8 @@ Mobile MUST preserve all invariants below.
 Valid statuses (DB-canonical):
 ```
 ACTIVE | POSTPONED | MARKED_COMPLETE | AWAITING_VOUCHER |
-AWAITING_ORCA | ORCA_DENIED | AWAITING_USER | ESCALATED |
-ACCEPTED | AUTO_ACCEPTED | ORCA_ACCEPTED |
+AWAITING_AI | AI_DENIED | AWAITING_USER | ESCALATED |
+ACCEPTED | AUTO_ACCEPTED | AI_ACCEPTED |
 DENIED | MISSED | RECTIFIED | SETTLED | DELETED
 ```
 
@@ -433,13 +433,13 @@ export type TaskStatus =
   | "POSTPONED"
   | "MARKED_COMPLETE"
   | "AWAITING_VOUCHER"
-  | "AWAITING_ORCA"
-  | "ORCA_DENIED"
+  | "AWAITING_AI"
+  | "AI_DENIED"
   | "AWAITING_USER"
   | "ESCALATED"
   | "ACCEPTED"
   | "AUTO_ACCEPTED"
-  | "ORCA_ACCEPTED"
+  | "AI_ACCEPTED"
   | "DENIED"
   | "MISSED"
   | "RECTIFIED"
@@ -500,7 +500,7 @@ export interface Profile {
   display_xp_bar_on_dashboard: boolean;
   display_rp_bar_on_dashboard: boolean;
   abandoned_commitments_count: number;
-  orca_friend_opt_in: boolean;
+  ai_friend_opt_in: boolean;
   created_at: string;                           // ISO 8601
 }
 
@@ -598,7 +598,7 @@ export interface TaskEvent {
     | "RECTIFY" | "OVERRIDE" | "DEADLINE_MISSED" | "VOUCHER_TIMEOUT"
     | "POMO_COMPLETED" | "DEADLINE_WARNING_1H" | "DEADLINE_WARNING_5M"
     | "GOOGLE_EVENT_CANCELLED" | "POSTPONE"
-    | "AI_APPROVE" | "AI_DENY" | "ORCA_DENIED_AUTO_HOP"
+    | "AI_APPROVE" | "AI_DENY" | "AI_DENIED_AUTO_HOP"
     | "ESCALATE" | "AI_ESCALATE_TO_HUMAN" | "ACCEPT_DENIAL";
   actor_id: string | null;
   from_status: TaskStatus;

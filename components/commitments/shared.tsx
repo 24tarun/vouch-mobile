@@ -16,6 +16,10 @@ import { supabase } from '@/lib/supabase';
 import { colors, radius, spacing, typography } from '@/lib/theme';
 import { type CommitmentListItem, type DayStatus } from '@/lib/hooks/useCommitments';
 import type { CommitmentStatus, Currency } from '@/lib/types';
+import {
+  toDateOnlyString as toDateOnly,
+  parseDateOnly,
+} from '@/lib/utils/date-only';
 
 export function formatCents(cents: number, currency: Currency): string {
   const major = Math.round(cents / 100);
@@ -25,23 +29,7 @@ export function formatCents(cents: number, currency: Currency): string {
   return `${major}`;
 }
 
-export function toDateOnly(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-export function parseDateOnly(s: string): Date {
-  const d = new Date(`${s}T00:00:00.000Z`);
-  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-}
-
-export function formatDateDisplay(dateOnly: string): string {
-  const d = new Date(`${dateOnly}T00:00:00.000Z`);
-  if (Number.isNaN(d.getTime())) return dateOnly;
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
-}
+export { toDateOnly };
 
 const STATUS_CFG: Record<CommitmentStatus, { label: string; color: string; bg: string }> = {
   ACTIVE: { label: 'Active', color: colors.accentCyan, bg: 'rgba(0,217,255,0.12)' },
@@ -425,7 +413,7 @@ export function TaskPickerModal({
   );
 }
 
-export const sharedCommitmentStyles = StyleSheet.create({
+const sharedCommitmentStyles = StyleSheet.create({
   badge: { borderRadius: radius.full, paddingHorizontal: 8, paddingVertical: 2 },
   badgeText: { fontSize: typography.xs, fontWeight: typography.semibold },
   dayStripWrap: { marginBottom: spacing.md },

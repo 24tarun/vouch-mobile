@@ -17,6 +17,7 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.vouch.mobile",
       "icon": "./assets/icon.png",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "UIBackgroundModes": [
           "remote-notification"
@@ -66,7 +67,9 @@
           "mode": "development"
         }
       ],
-      "expo-video"
+      "expo-video",
+      "expo-web-browser",
+      "expo-apple-authentication"
     ],
     "extra": {
       "router": {},

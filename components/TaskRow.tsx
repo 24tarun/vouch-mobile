@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActionSheetIOS, ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
-import { Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { colors, radius, spacing, typography } from '@/lib/theme';
 import { StatusPill } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
 import { supabase } from '@/lib/supabase';
+import { TASK_COMPLETED_LIKE_STATUSES } from '@/lib/constants/task-status';
+import type { TaskStatus } from '@/lib/types';
 
 interface Subtask {
   id: string;
@@ -41,24 +42,6 @@ interface TaskRowProps {
   defaultPomoDurationMinutes?: number;
 }
 
-// Statuses where the task is fully done (drives circle fill + strikethrough)
-const COMPLETED_STATUSES = new Set([
-  'MARKED_COMPLETE',
-  'AWAITING_VOUCHER',
-  'AWAITING_ORCA',
-  'AWAITING_USER',
-  'ESCALATED',
-  'ACCEPTED',
-  'AUTO_ACCEPTED',
-  'ORCA_ACCEPTED',
-  'DENIED',
-  'MISSED',
-  'RECTIFIED',
-  'SETTLED',
-  'DELETED',
-]);
-
-
 // Format deadline as `HH:MM` for today/past or `HH:MM DD mon` for future
 function formatDeadline(isoString: string, isFuture: boolean = false): string {
   const date = new Date(isoString);
@@ -86,7 +69,7 @@ export function TaskRow({
     startSession,
   } = usePomodoro();
   const isCompleted = task.status
-    ? COMPLETED_STATUSES.has(task.status)
+    ? TASK_COMPLETED_LIKE_STATUSES.has(task.status as TaskStatus)
     : (task.completed ?? false);
 
   // Active rows are tappable to expand the action tray
@@ -228,7 +211,7 @@ export function TaskRow({
   const isUrgent = timeUntilDeadline < 60 * 60 * 1000 && timeUntilDeadline > 0;
 
   // Determine deadline color
-  let deadlineColor = colors.textMuted;
+  let deadlineColor: string = colors.textMuted;
   if (isUrgent) {
     deadlineColor = colors.destructive; // same red as status pills — within 1 hour of deadline
   } else if (isToday) {

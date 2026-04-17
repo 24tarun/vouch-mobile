@@ -14,17 +14,18 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
-import { Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { supabase } from '@/lib/supabase';
 import { uploadTaskProofAsset } from '@/lib/task-proof-upload';
 import { colors, radius, spacing, typography } from '@/lib/theme';
-import { StatusPill, STATUS_COLOR, STATUS_LABEL } from '@/components/StatusPill';
+import { StatusPill, STATUS_COLOR } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
 import type { Task, TaskEvent, TaskReminder } from '@/lib/types';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
+import { AI_PROFILE_ID, AI_PROFILE_USERNAME } from '@/lib/constants/ai-profile';
+import { TASK_AWAITING_STATUSES } from '@/lib/constants/task-status';
 
 // ─── Event labels ─────────────────────────────────────────────────────────────
 
@@ -44,13 +45,14 @@ const EVENT_LABEL: Record<string, string> = {
   DEADLINE_MISSED: 'Deadline missed',
   VOUCHER_TIMEOUT: 'Voucher timed out',
   POMO_COMPLETED: 'Pomodoro completed',
-  DEADLINE_WARNING_1H: '1-hour deadline warning',
-  DEADLINE_WARNING_5M: '5-minute deadline warning',
+  DEADLINE_WARNING_1H: '1h left',
+  DEADLINE_WARNING_5M: '5m left',
+  DEADLINE_WARNING_10M: '10m left',
   GOOGLE_EVENT_CANCELLED: 'Google event cancelled',
   POSTPONE: 'Postponed',
   AI_APPROVE: 'AI approved',
   AI_DENY: 'AI denied',
-  ORCA_DENIED_AUTO_HOP: 'Orca denied — escalated',
+  AI_DENIED_AUTO_HOP: 'AI denied — escalated',
   ESCALATE: 'Escalated',
   AI_ESCALATE_TO_HUMAN: 'Escalated to human voucher',
   ACCEPT_DENIAL: 'Denial accepted',
@@ -133,16 +135,21 @@ function formatCost(cents: number, currency: string): string {
   return `${symbol}${formatted}`;
 }
 
-const AWAITING_STATUSES = new Set(['AWAITING_VOUCHER', 'AWAITING_ORCA', 'AWAITING_USER', 'ESCALATED']);
-const TERMINAL_STATUSES = new Set(['ACCEPTED', 'AUTO_ACCEPTED', 'ORCA_ACCEPTED', 'RECTIFIED', 'SETTLED', 'DELETED']);
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function TaskDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, back } = useLocalSearchParams<{ id: string; back?: string }>();
   const router = useRouter();
+  const handleBack = () => {
+    if (back === 'friends') {
+      router.navigate('/friends' as any);
+    } else {
+      router.back();
+    }
+  };
 
   const [task, setTask] = useState<Task | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [voucherUsername, setVoucherUsername] = useState<string | null>(null);
   const [reminders, setReminders] = useState<TaskReminder[]>([]);
   const [events, setEvents] = useState<TaskEvent[]>([]);
@@ -219,7 +226,12 @@ export default function TaskDetailScreen() {
         }, 0);
 
         setTask(taskData as Task);
-        setVoucherUsername((voucherRes.data as any)?.username ?? null);
+        setUserId(userId);
+        setVoucherUsername(
+          (taskData as Task).voucher_id === AI_PROFILE_ID
+            ? AI_PROFILE_USERNAME
+            : ((voucherRes.data as any)?.username ?? null),
+        );
         setReminders((remindersRes.data ?? []) as TaskReminder[]);
         setEvents((eventsRes.data ?? []) as TaskEvent[]);
         setCurrency((profileRes.data as any)?.currency ?? 'USD');
@@ -500,7 +512,7 @@ export default function TaskDetailScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
+          <TouchableOpacity onPress={handleBack} hitSlop={12}>
             <Feather name="arrow-left" size={22} color={colors.text} />
           </TouchableOpacity>
         </View>
@@ -514,13 +526,13 @@ export default function TaskDetailScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
+          <TouchableOpacity onPress={handleBack} hitSlop={12}>
             <Feather name="arrow-left" size={22} color={colors.text} />
           </TouchableOpacity>
         </View>
         <View style={styles.centered}>
           <Text style={styles.errorText}>{error ?? 'Task not found.'}</Text>
-          <TouchableOpacity onPress={() => router.back()} style={styles.retryBtn}>
+          <TouchableOpacity onPress={handleBack} style={styles.retryBtn}>
             <Text style={styles.retryText}>Go back</Text>
           </TouchableOpacity>
         </View>
@@ -531,13 +543,14 @@ export default function TaskDetailScreen() {
   // ── Allowed flags ──────────────────────────────────────────────────────────
   const s = task.status;
   const isActiveOrPostponed = s === 'ACTIVE' || s === 'POSTPONED';
-  const isAwaiting = AWAITING_STATUSES.has(s);
+  const isAwaiting = TASK_AWAITING_STATUSES.has(s);
   const isMissedOrDenied = s === 'MISSED' || s === 'DENIED';
+  const isOwnTask = task.user_id === userId;
 
-  const canPomo          = isActiveOrPostponed;
-  const canProof         = isActiveOrPostponed || isAwaiting;
-  const canStopRepeating = isActiveOrPostponed && !!task.recurrence_rule_id;
-  const canOverride      = isMissedOrDenied && !isOverriding;
+  const canPomo          = isOwnTask && isActiveOrPostponed;
+  const canProof         = isOwnTask && (isActiveOrPostponed || isAwaiting);
+  const canStopRepeating = isOwnTask && isActiveOrPostponed && !!task.recurrence_rule_id;
+  const canOverride      = isOwnTask && isMissedOrDenied && !isOverriding;
 
   // Per-button deny reasons
   const REASONS = {
@@ -568,10 +581,10 @@ export default function TaskDetailScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12} accessibilityRole="button" accessibilityLabel="Go back">
+        <TouchableOpacity onPress={handleBack} hitSlop={12} accessibilityRole="button" accessibilityLabel="Go back">
           <Feather name="arrow-left" size={22} color={colors.text} />
         </TouchableOpacity>
-        <StatusPill status={task.status} />
+        <StatusPill status={task.status} size="large" />
         <View style={{ width: 22 }} />
       </View>
 
@@ -715,10 +728,11 @@ export default function TaskDetailScreen() {
 
           {/* Reminders toggle */}
           <TouchableOpacity
-            style={[styles.toggleBtn, { backgroundColor: BTN.reminders.bg, borderColor: BTN.reminders.border }]}
+            style={[styles.toggleBtn, { backgroundColor: BTN.reminders.bg, borderColor: BTN.reminders.border }, !isOwnTask && styles.toggleBtnDisabled]}
             onPress={() => setRemindersOpen((v) => !v)}
             activeOpacity={0.75}
             accessibilityLabel={`Reminders, ${reminders.length} set`}
+            disabled={!isOwnTask}
           >
             <Text style={[styles.toggleLabel, { color: BTN.reminders.text }]}>Reminders</Text>
             <Text style={[styles.toggleCount, { color: BTN.reminders.text }]}>{reminders.length}</Text>
@@ -757,12 +771,52 @@ export default function TaskDetailScreen() {
         ) : null}
 
         {/* Event timeline */}
-        {events.length > 0 && (
+        {(() => {
+          // Synthesize ACTIVE and MARK_COMPLETE entries from task fields when
+          // they are absent from task_events (e.g. older tasks or missing logs).
+          const hasActiveEvent = events.some((e) => e.event_type === 'ACTIVE');
+          const hasMarkCompleteEvent = events.some((e) => e.event_type === 'MARK_COMPLETE');
+
+          const synthetic: TaskEvent[] = [];
+
+          if (!hasActiveEvent) {
+            synthetic.push({
+              id: '__synthetic_active__',
+              task_id: task.id,
+              event_type: 'ACTIVE',
+              actor_id: null,
+              from_status: 'ACTIVE',
+              to_status: 'ACTIVE',
+              metadata: null,
+              created_at: task.created_at,
+            });
+          }
+
+          if (!hasMarkCompleteEvent && task.marked_completed_at) {
+            synthetic.push({
+              id: '__synthetic_mark_complete__',
+              task_id: task.id,
+              event_type: 'MARK_COMPLETE',
+              actor_id: null,
+              from_status: 'ACTIVE',
+              to_status: 'MARKED_COMPLETE',
+              metadata: null,
+              created_at: task.marked_completed_at,
+            });
+          }
+
+          const displayEvents = [...synthetic, ...events].sort(
+            (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+          );
+
+          if (displayEvents.length === 0) return null;
+
+          return (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Timeline</Text>
             <View style={styles.timeline}>
-              {events.map((ev, idx) => {
-                const isLast = idx === events.length - 1;
+              {displayEvents.map((ev, idx) => {
+                const isLast = idx === displayEvents.length - 1;
                 const evColor = STATUS_COLOR[ev.to_status] ?? colors.textMuted;
                 return (
                   <View key={ev.id} style={styles.timelineRow}>
@@ -771,27 +825,20 @@ export default function TaskDetailScreen() {
                       {!isLast && <View style={styles.timelineLine} />}
                     </View>
                     <View style={styles.timelineContent}>
-                      <View style={styles.timelineLabelRow}>
-                        <Text style={styles.timelineLabel}>{EVENT_LABEL[ev.event_type] ?? ev.event_type}</Text>
-                        {(ev.event_type === 'DEADLINE_WARNING_1H' || ev.event_type === 'DEADLINE_WARNING_5M') && (
-                          <View style={styles.reminderStatusSent}>
-                            <Text style={[styles.reminderStatusText, { color: '#FBBF24' }]}>Sent</Text>
-                          </View>
-                        )}
-                      </View>
-                      <Text style={styles.timelineTime}>{getEventSecondaryText(ev)}</Text>
-                      {ev.from_status !== ev.to_status && (
-                        <Text style={styles.timelineTransition}>
-                          {STATUS_LABEL[ev.from_status] ?? ev.from_status}{' → '}{STATUS_LABEL[ev.to_status] ?? ev.to_status}
-                        </Text>
-                      )}
+                      <Text style={styles.timelineLabel}>
+                        {EVENT_LABEL[ev.event_type] ?? ev.event_type}
+                        {(ev.event_type === 'DEADLINE_WARNING_1H' || ev.event_type === 'DEADLINE_WARNING_5M') && ' (Sent)'}
+                        {' | '}
+                        {getEventSecondaryText(ev)}
+                      </Text>
                     </View>
                   </View>
                 );
               })}
             </View>
           </View>
-        )}
+          );
+        })()}
 
       </ScrollView>
     </SafeAreaView>
@@ -969,6 +1016,7 @@ const styles = StyleSheet.create({
   actionBtnLabel: { fontSize: typography.sm, fontWeight: typography.semibold },
 
   toggleBtn: { height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: radius.lg, borderWidth: 1, paddingHorizontal: spacing.lg },
+  toggleBtnDisabled: { opacity: 0.5 },
   toggleLabel: { fontSize: typography.sm, fontWeight: typography.semibold },
   toggleCount: { fontSize: typography.sm, fontWeight: typography.semibold },
   toggleBody: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, overflow: 'hidden', marginTop: -spacing.xs },

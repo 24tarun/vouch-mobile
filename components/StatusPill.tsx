@@ -1,19 +1,19 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, radius, typography } from '@/lib/theme';
+import { colors, radius } from '@/lib/theme';
 
 // Labels — match vouch-web's formatTaskStatusLabel exactly
-export const STATUS_LABEL: Record<string, string> = {
+const STATUS_LABEL: Record<string, string> = {
   ACTIVE: 'Active',
   POSTPONED: 'Postponed',
   MARKED_COMPLETE: 'Marked Complete',
   AWAITING_VOUCHER: 'Awaiting Voucher',
-  AWAITING_ORCA: 'Awaiting Orca',
-  ORCA_DENIED: 'Orca Denied',
+  AWAITING_AI: 'Awaiting AI',
+  AI_DENIED: 'AI Denied',
   AWAITING_USER: 'Awaiting User',
   ESCALATED: 'Escalated',
   ACCEPTED: 'Accepted',
   AUTO_ACCEPTED: 'Auto Accepted',
-  ORCA_ACCEPTED: 'Orca Accepted',
+  AI_ACCEPTED: 'AI Accepted',
   DENIED: 'Denied',
   MISSED: 'Missed',
   RECTIFIED: 'Rectified',
@@ -50,12 +50,12 @@ const STATUS_STYLE: Record<string, StatusStyle> = {
     bg: '#FBBF2426',        // amber-400/15
     border: '#FBBF2459',    // amber-400/35
   },
-  AWAITING_ORCA: {
+  AWAITING_AI: {
     text: '#FBBF24',
     bg: '#FBBF2426',
     border: '#FBBF2459',
   },
-  ORCA_DENIED: {
+  AI_DENIED: {
     text: '#EF4444',        // red-500
     bg: '#EF44441A',        // red-500/10
     border: '#EF44444D',    // red-500/30
@@ -80,7 +80,7 @@ const STATUS_STYLE: Record<string, StatusStyle> = {
     bg: '#10B98133',
     border: '#10B9814D',
   },
-  ORCA_ACCEPTED: {
+  AI_ACCEPTED: {
     text: '#6EE7B7',
     bg: '#10B98133',
     border: '#10B9814D',
@@ -119,23 +119,27 @@ export const STATUS_COLOR: Record<string, string> = Object.fromEntries(
 
 interface StatusPillProps {
   status: string;
+  size?: 'small' | 'large';
 }
 
-export function StatusPill({ status }: StatusPillProps) {
-  const style = STATUS_STYLE[status];
-  const label = STATUS_LABEL[status] ?? status;
+export function StatusPill({ status, size = 'small' }: StatusPillProps) {
+  // MARKED_COMPLETE is a transient internal state; surface it as AWAITING_VOUCHER everywhere
+  const resolvedStatus = status === 'MARKED_COMPLETE' ? 'AWAITING_VOUCHER' : status;
+  const style = STATUS_STYLE[resolvedStatus];
+  const label = STATUS_LABEL[resolvedStatus] ?? resolvedStatus;
+  const isLarge = size === 'large';
 
   if (!style) {
     return (
-      <View style={[styles.pill, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
-        <Text style={[styles.label, { color: colors.textMuted }]}>{label}</Text>
+      <View style={[styles.pill, isLarge && styles.pillLarge, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
+        <Text style={[styles.label, isLarge && styles.labelLarge, { color: colors.textMuted }]}>{label}</Text>
       </View>
     );
   }
 
   return (
-    <View style={[styles.pill, { backgroundColor: style.bg, borderColor: style.border }]}>
-      <Text style={[styles.label, { color: style.text }]}>{label}</Text>
+    <View style={[styles.pill, isLarge && styles.pillLarge, { backgroundColor: style.bg, borderColor: style.border }]}>
+      <Text style={[styles.label, isLarge && styles.labelLarge, { color: style.text }]}>{label}</Text>
     </View>
   );
 }
@@ -150,9 +154,16 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     borderWidth: 1,
   },
+  pillLarge: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
   label: {
     fontSize: 10,
     fontWeight: '600',
     letterSpacing: 0.4,
+  },
+  labelLarge: {
+    fontSize: 13,
   },
 });

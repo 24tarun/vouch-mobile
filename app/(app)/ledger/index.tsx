@@ -186,10 +186,10 @@ function LedgerEntryRow({
   return (
     <View style={styles.entryRow}>
       <View style={styles.entryMain}>
-        <View style={styles.entryTop}>
-          <Text style={styles.entryTitle} numberOfLines={1} ellipsizeMode="tail">
-            {entry.title}
-          </Text>
+        <Text style={styles.entryTitle} numberOfLines={1} ellipsizeMode="tail">
+          {entry.title}
+        </Text>
+        <View style={styles.entryMeta}>
           <View style={[styles.entryBadge, { backgroundColor: badge.bg }]}>
             <Text style={[styles.entryBadgeText, { color: badge.fg }]}>{badge.label}</Text>
           </View>
@@ -261,7 +261,7 @@ export default function LedgerScreen() {
           .from('tasks')
           .select('failure_cost_cents')
           .eq('user_id', user.id)
-          .in('status', ['ACCEPTED', 'AUTO_ACCEPTED', 'ORCA_ACCEPTED'])
+          .in('status', ['ACCEPTED', 'AUTO_ACCEPTED', 'AI_ACCEPTED'])
           .gte('deadline', periodStartDate)
           .lt('deadline', periodEndDate),
       ]);
@@ -602,17 +602,16 @@ const styles = StyleSheet.create({
     minWidth: 0,
     gap: spacing.xs,
   },
-  entryTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    minWidth: 0,
-  },
   entryTitle: {
     fontSize: 18,
     color: colors.text,
     lineHeight: 20,
-    flexShrink: 1,
+  },
+  entryMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    alignSelf: 'flex-start',
   },
   entryBadge: {
     borderRadius: 999,

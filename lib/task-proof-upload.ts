@@ -23,7 +23,7 @@ const ATTACHABLE_PROOF_STATUSES = new Set([
   'POSTPONED',
   'MARKED_COMPLETE',
   'AWAITING_VOUCHER',
-  'AWAITING_ORCA',
+  'AWAITING_AI',
   'AWAITING_USER',
   'ESCALATED',
 ]);
@@ -230,7 +230,7 @@ export async function uploadTaskProofAsset(taskId: string, asset: ImagePickerAss
       } as any)
       .eq('id', taskId)
       .eq('user_id', userId)
-      .in('status', ['AWAITING_VOUCHER', 'AWAITING_ORCA', 'MARKED_COMPLETE'] as any);
+      .in('status', ['AWAITING_VOUCHER', 'AWAITING_AI', 'MARKED_COMPLETE'] as any);
 
     await supabase
       .from('task_events')

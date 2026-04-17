@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Profile } from '@/lib/types';
+import { normalizeAiUsername } from '@/lib/constants/ai-profile';
 
 export interface FriendOption {
   id: string;
@@ -39,8 +40,6 @@ export function useFriends(): UseFriendsResult {
         const { data: { session } } = await supabase.auth.getSession();
         const userId = session?.user?.id;
 
-        console.log('[useFriends] session userId:', userId ?? 'none');
-
         if (!userId) {
           if (!cancelled) setLoading(false);
           return;
@@ -68,20 +67,13 @@ export function useFriends(): UseFriendsResult {
 
         if (cancelled) return;
 
-        console.log('[useFriends] friendsRes error:', friendsRes.error?.message ?? 'none');
-        console.log('[useFriends] friendsRes data:', JSON.stringify(friendsRes.data));
-        console.log('[useFriends] blockedRes error:', blockedRes.error?.message ?? 'none');
-        console.log('[useFriends] blockedRes data:', JSON.stringify(blockedRes.data));
-        console.log('[useFriends] profileRes error:', profileRes.error?.message ?? 'none');
-        console.log('[useFriends] profileRes data:', JSON.stringify(profileRes.data));
-
         if (friendsRes.error || blockedRes.error) {
           setError(friendsRes.error?.message ?? blockedRes.error?.message ?? 'Failed to load data');
           return;
         }
 
         const blockedIds = new Set(
-          ((blockedRes.data ?? []) as Array<{ blocked_id?: string | null }>)
+          ((blockedRes.data ?? []) as { blocked_id?: string | null }[])
             .map((row) => row.blocked_id)
             .filter((id): id is string => Boolean(id)),
         );
@@ -90,14 +82,16 @@ export function useFriends(): UseFriendsResult {
           .map((row) => row.friend as Pick<Profile, 'id' | 'username'>)
           .filter(Boolean)
           .filter((friend) => !blockedIds.has(friend.id))
+          .map((friend) => ({
+            ...friend,
+            username: normalizeAiUsername(friend.id, friend.username, 'Friend'),
+          }))
           .sort((a, b) => a.username.localeCompare(b.username))
           .map((p) => ({
             id: p.id,
             username: p.username,
             initial: p.username[0].toUpperCase(),
           }));
-
-        console.log('[useFriends] resolved friends:', list.map(f => f.username));
 
         setFriends(list);
 

@@ -1,23 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { TaskRowData } from '@/components/TaskRow';
-
-const ACTIVE_STATUSES = ['ACTIVE', 'POSTPONED'] as const;
-
-const PAST_STATUSES = [
-  'MARKED_COMPLETE',
-  'AWAITING_VOUCHER',
-  'AWAITING_ORCA',
-  'AWAITING_USER',
-  'ESCALATED',
-  'ACCEPTED',
-  'AUTO_ACCEPTED',
-  'ORCA_ACCEPTED',
-  'DENIED',
-  'MISSED',
-  'RECTIFIED',
-  'SETTLED',
-] as const;
+import { TASK_ACTIVE_STATUSES, TASK_PAST_STATUSES } from '@/lib/constants/task-status';
 
 const PAST_LIMIT = 10;
 const DEFAULT_SORT_MODE = 'deadline_asc' as const;
@@ -141,13 +125,13 @@ export function useTasks(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskB
             .from('tasks')
             .select('id, title, deadline, status, created_at, postponed_at, recurrence_rule_id')
             .eq('user_id', userId)
-            .in('status', ACTIVE_STATUSES as unknown as string[])
+            .in('status', TASK_ACTIVE_STATUSES)
             .order('deadline', { ascending: true }),
           supabase
             .from('tasks')
             .select('id, title, deadline, status, created_at, postponed_at, recurrence_rule_id')
             .eq('user_id', userId)
-            .in('status', PAST_STATUSES as unknown as string[])
+            .in('status', TASK_PAST_STATUSES)
             .order('updated_at', { ascending: false })
             .limit(PAST_LIMIT),
         ]);
@@ -239,7 +223,7 @@ export function useTasks(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskB
         .from('tasks')
         .select('id, title, deadline, status, created_at, postponed_at, recurrence_rule_id')
         .eq('user_id', userId)
-        .in('status', PAST_STATUSES as unknown as string[])
+        .in('status', TASK_PAST_STATUSES)
         .order('updated_at', { ascending: false })
         .range(offset, offset + PAST_LIMIT - 1);
 

@@ -68,7 +68,7 @@ export default function ForgotPasswordScreen() {
             <View style={styles.form}>
               <Text style={styles.heading}>Forgot password?</Text>
               <Text style={styles.body}>
-                Enter your email and we'll send you a reset link.
+                Enter your email and we&apos;ll send you a reset link.
               </Text>
 
               <Input

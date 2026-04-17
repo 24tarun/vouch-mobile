@@ -25,6 +25,12 @@ import { useAuth } from '@/hooks/useAuth';
 import { StatusPill } from '@/components/StatusPill';
 import type { TaskStatus } from '@/lib/types';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
+import {
+  VOUCHER_ACTIONABLE_STATUSES,
+  VOUCHER_ACTIVE_VIEW_STATUSES,
+  VOUCHER_VISIBLE_STATUSES,
+  VOUCHER_HISTORY_STATUSES,
+} from '@/lib/constants/task-status';
 
 type DecisionAction = 'accept' | 'deny' | 'proof';
 
@@ -58,25 +64,6 @@ interface ActionButtonProps {
   onPress: () => void;
 }
 
-const ACTIONABLE_STATUSES: TaskStatus[] = ['AWAITING_VOUCHER'];
-const ACTIVE_VIEW_STATUSES: TaskStatus[] = ['ACTIVE', 'POSTPONED'];
-const VISIBLE_STATUSES: TaskStatus[] = [
-  ...ACTIVE_VIEW_STATUSES,
-  ...ACTIONABLE_STATUSES,
-];
-const HISTORY_STATUSES: TaskStatus[] = [
-  'MARKED_COMPLETE',
-  'AWAITING_ORCA',
-  'AWAITING_USER',
-  'ESCALATED',
-  'ACCEPTED',
-  'AUTO_ACCEPTED',
-  'ORCA_ACCEPTED',
-  'DENIED',
-  'MISSED',
-  'RECTIFIED',
-  'SETTLED',
-];
 const HISTORY_PAGE_SIZE = 10;
 
 interface VouchHistoryTaskRow {
@@ -123,8 +110,8 @@ function ActionButton({
 }
 
 function canVoucherSeeTask(task: VoucherTaskRow): boolean {
-  if (ACTIONABLE_STATUSES.includes(task.status)) return true;
-  if (ACTIVE_VIEW_STATUSES.includes(task.status)) {
+  if (VOUCHER_ACTIONABLE_STATUSES.includes(task.status)) return true;
+  if (VOUCHER_ACTIVE_VIEW_STATUSES.includes(task.status)) {
     return Boolean(task.user?.voucher_can_view_active_tasks);
   }
   return true;
@@ -253,7 +240,7 @@ export default function FriendsScreen() {
 
   const awaitingVoucherTasks = useMemo(
     () => tasks.filter((task) =>
-      task.status === 'AWAITING_VOUCHER' &&
+      VOUCHER_ACTIONABLE_STATUSES.includes(task.status) &&
       (!q || task.title.toLowerCase().includes(q) || (task.user?.username ?? '').toLowerCase().includes(q))
     ),
     [tasks, q],
@@ -399,7 +386,7 @@ export default function FriendsScreen() {
       `)
       .eq('voucher_id', user.id)
       .neq('user_id', user.id)
-      .in('status', VISIBLE_STATUSES)
+      .in('status', VOUCHER_VISIBLE_STATUSES)
       .order('updated_at', { ascending: false });
 
     if (fetchError) {
@@ -492,7 +479,7 @@ export default function FriendsScreen() {
       `)
       .eq('voucher_id', user.id)
       .neq('user_id', user.id)
-      .in('status', HISTORY_STATUSES)
+      .in('status', VOUCHER_HISTORY_STATUSES)
       .order('updated_at', { ascending: false })
       .range(offset, offset + HISTORY_PAGE_SIZE - 1);
 
@@ -528,7 +515,11 @@ export default function FriendsScreen() {
       } satisfies VouchHistoryTaskRow;
     });
 
-    setHistoryTasks((prev) => (shouldReset ? mapped : [...prev, ...mapped]));
+    setHistoryTasks((prev) => {
+      if (shouldReset) return mapped;
+      const existingIds = new Set(prev.map((t) => t.id));
+      return [...prev, ...mapped.filter((t) => !existingIds.has(t.id))];
+    });
     setHistoryHasMore(mapped.length === HISTORY_PAGE_SIZE);
     setHistoryLoading(false);
     setHistoryLoadingMore(false);
@@ -568,7 +559,7 @@ export default function FriendsScreen() {
         })
         .eq('id', task.id)
         .eq('voucher_id', user.id)
-        .in('status', ACTIONABLE_STATUSES)
+        .in('status', VOUCHER_ACTIONABLE_STATUSES)
         .select('id');
 
       if (updateError) {
@@ -616,7 +607,7 @@ export default function FriendsScreen() {
         })
         .eq('id', task.id)
         .eq('voucher_id', user.id)
-        .in('status', ACTIONABLE_STATUSES)
+        .in('status', VOUCHER_ACTIONABLE_STATUSES)
         .select('id');
 
       if (updateError) {
@@ -665,7 +656,7 @@ export default function FriendsScreen() {
         })
         .eq('id', task.id)
         .eq('voucher_id', user.id)
-        .eq('status', 'AWAITING_VOUCHER')
+        .in('status', VOUCHER_ACTIONABLE_STATUSES)
         .select('id');
 
       if (updateError) {
@@ -683,8 +674,8 @@ export default function FriendsScreen() {
         event_type: 'PROOF_REQUESTED',
         actor_id: user.id,
         actor_user_client_instance_id: actorUserClientInstanceId,
-        from_status: 'AWAITING_VOUCHER',
-        to_status: 'AWAITING_VOUCHER',
+        from_status: task.status,
+        to_status: task.status,
       });
 
       if (eventError) {
@@ -839,11 +830,10 @@ export default function FriendsScreen() {
                     )
                   ) : null}
                 </View>
-
                 <View style={styles.actions}>
                   <ActionButton
                     icon="check"
-                    label="Accept task"
+                    label="Accept"
                     color={colors.success}
                     backgroundColor={colors.successMuted}
                     disabled={Boolean(inFlightAction)}
@@ -852,22 +842,24 @@ export default function FriendsScreen() {
                   />
                   <ActionButton
                     icon="x"
-                    label="Deny task"
+                    label="Deny"
                     color={colors.destructive}
                     backgroundColor={colors.destructiveMuted}
                     disabled={Boolean(inFlightAction)}
                     loading={inFlightAction === 'deny'}
                     onPress={() => { void handleDeny(task); }}
                   />
-                  <ActionButton
-                    icon="help-circle"
-                    label="Request proof"
-                    color={colors.warning}
-                    backgroundColor={task.proof_request_open ? '#4A3411' : '#33230C'}
-                    disabled={Boolean(inFlightAction)}
-                    loading={inFlightAction === 'proof'}
-                    onPress={() => { void handleRequestProof(task); }}
-                  />
+                  {VOUCHER_ACTIONABLE_STATUSES.includes(task.status) ? (
+                    <ActionButton
+                      icon="help-circle"
+                      label="Request proof"
+                      color={colors.warning}
+                      backgroundColor={task.proof_request_open ? '#4A3411' : '#33230C'}
+                      disabled={Boolean(inFlightAction)}
+                      loading={inFlightAction === 'proof'}
+                      onPress={() => { void handleRequestProof(task); }}
+                    />
+                  ) : null}
                 </View>
               </View>
             );
@@ -935,7 +927,7 @@ export default function FriendsScreen() {
                           key={task.id}
                           style={styles.taskRow}
                           activeOpacity={0.75}
-                          onPress={() => router.push(`/tasks/${task.id}` as any)}
+                          onPress={() => router.push({ pathname: '/tasks/[id]' as any, params: { id: task.id, back: 'friends' } })}
                           accessibilityRole="button"
                           accessibilityLabel={task.title}
                         >
@@ -1241,7 +1233,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    marginTop: 4,
   },
   actionButton: {
     width: 32,

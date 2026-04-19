@@ -110,6 +110,36 @@ const STATUS_STYLE: Record<string, StatusStyle> = {
     bg: '#A21CAF33',        // fuchsia-700/20
     border: '#A21CAF66',    // fuchsia-700/40
   },
+  SUCCESS: {
+    text: '#6EE7B7',
+    bg: '#10B98133',
+    border: '#10B9814D',
+  },
+  WARNING: {
+    text: '#FBBF24',
+    bg: '#FBBF2426',
+    border: '#FBBF2459',
+  },
+  DANGER: {
+    text: '#EF4444',
+    bg: '#EF44441A',
+    border: '#EF44444D',
+  },
+  INFO: {
+    text: '#93C5FD',
+    bg: '#3B82F633',
+    border: '#3B82F64D',
+  },
+  PROOF: {
+    text: '#F472B6',
+    bg: '#F472B61A',
+    border: '#F472B659',
+  },
+  NEUTRAL: {
+    text: '#CBD5E1',
+    bg: '#47556933',
+    border: '#47556966',
+  },
 };
 
 // Exported so task detail timeline dots can use the text color
@@ -118,28 +148,45 @@ export const STATUS_COLOR: Record<string, string> = Object.fromEntries(
 );
 
 interface StatusPillProps {
-  status: string;
+  status?: string;
+  label?: string;
+  tone?: string;
+  preserveStatus?: boolean;
   size?: 'small' | 'large';
 }
 
-export function StatusPill({ status, size = 'small' }: StatusPillProps) {
+function formatFallbackLabel(value: string): string {
+  return value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+export function StatusPill({
+  status,
+  label,
+  tone,
+  preserveStatus = false,
+  size = 'small',
+}: StatusPillProps) {
   // MARKED_COMPLETE is a transient internal state; surface it as AWAITING_VOUCHER everywhere
-  const resolvedStatus = status === 'MARKED_COMPLETE' ? 'AWAITING_VOUCHER' : status;
-  const style = STATUS_STYLE[resolvedStatus];
-  const label = STATUS_LABEL[resolvedStatus] ?? resolvedStatus;
+  const baseStatus = status ?? tone ?? 'NEUTRAL';
+  const resolvedStatus = preserveStatus
+    ? baseStatus
+    : (baseStatus === 'MARKED_COMPLETE' ? 'AWAITING_VOUCHER' : baseStatus);
+  const styleKey = tone ?? resolvedStatus;
+  const style = STATUS_STYLE[styleKey];
+  const resolvedLabel = label ?? STATUS_LABEL[resolvedStatus] ?? formatFallbackLabel(resolvedStatus);
   const isLarge = size === 'large';
 
   if (!style) {
     return (
       <View style={[styles.pill, isLarge && styles.pillLarge, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
-        <Text style={[styles.label, isLarge && styles.labelLarge, { color: colors.textMuted }]}>{label}</Text>
+        <Text style={[styles.label, isLarge && styles.labelLarge, { color: colors.textMuted }]}>{resolvedLabel}</Text>
       </View>
     );
   }
 
   return (
     <View style={[styles.pill, isLarge && styles.pillLarge, { backgroundColor: style.bg, borderColor: style.border }]}>
-      <Text style={[styles.label, isLarge && styles.labelLarge, { color: style.text }]}>{label}</Text>
+      <Text style={[styles.label, isLarge && styles.labelLarge, { color: style.text }]}>{resolvedLabel}</Text>
     </View>
   );
 }

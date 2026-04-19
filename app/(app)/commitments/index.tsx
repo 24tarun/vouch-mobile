@@ -15,7 +15,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Feather } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { colors, radius, spacing, typography } from '@/lib/theme';
 import {
@@ -34,6 +35,7 @@ import {
   toDateOnlyString as toDateOnly,
   formatDateOnlyDisplay as formatDateDisplay,
 } from '@/lib/utils/date-only';
+import { queryKeys } from '@/lib/query/keys';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -47,6 +49,14 @@ function defaultEndDate(): Date {
   const d = defaultStartDate();
   d.setDate(d.getDate() + 6); // 7-day window
   return d;
+}
+
+function dayDiffFromToday(dateOnly: string): number {
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const target = new Date(`${dateOnly}T00:00:00.000Z`);
+  if (Number.isNaN(target.getTime())) return 0;
+  return Math.floor((target.getTime() - todayUtc) / 86_400_000);
 }
 
 // ─── Commitment card ──────────────────────────────────────────────────────────
@@ -116,12 +126,11 @@ function CommitmentCard({
 function CreateModal({
   currency,
   onClose,
-  onCreated,
 }: {
   currency: Currency;
   onClose: () => void;
-  onCreated: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [startDate, setStartDate] = useState(defaultStartDate());
@@ -219,7 +228,32 @@ function CreateModal({
         }
       }
 
-      onCreated();
+      const nowIso = new Date().toISOString();
+      const optimisticItem: CommitmentListItem = {
+        id: createdCommitment.id,
+        user_id: userId,
+        name: trimmedName,
+        description: trimmedDesc,
+        status,
+        start_date: startOnly,
+        end_date: endOnly,
+        created_at: nowIso,
+        updated_at: nowIso,
+        derived_status: status === 'DRAFT' ? 'DRAFT' : 'ACTIVE',
+        earned_so_far_cents: 0,
+        total_target_cents: pledgeCents,
+        days_total: Math.max(totalDays, 0),
+        days_remaining: Math.max(0, dayDiffFromToday(endOnly)),
+        starts_in_days: dayDiffFromToday(startOnly),
+        day_statuses: [],
+      };
+
+      queryClient.setQueryData<CommitmentListItem[]>(
+        queryKeys.commitments(userId),
+        (current) => [optimisticItem, ...(current ?? []).filter((entry) => entry.id !== createdCommitment.id)],
+      );
+      queryClient.setQueryData(queryKeys.commitmentLinks(createdCommitment.id), linkedTasks);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.commitments(userId) });
       onClose();
     } finally {
       setSavingAction(null);
@@ -434,14 +468,11 @@ export default function CommitmentsPage() {
   const { commitments, currency, loading, error, refetch } = useCommitments();
   const [refreshing, setRefreshing] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const { refresh } = useLocalSearchParams<{ refresh?: string }>();
-
-  useState(() => { if (refresh) refetch(); });
 
   async function onRefresh() {
     setRefreshing(true);
-    refetch();
-    setTimeout(() => setRefreshing(false), 800);
+    await Promise.resolve(refetch());
+    setRefreshing(false);
   }
 
   const activeItems = commitments.filter(
@@ -507,7 +538,6 @@ export default function CommitmentsPage() {
         <CreateModal
           currency={currency}
           onClose={() => setCreateOpen(false)}
-          onCreated={refetch}
         />
       )}
     </SafeAreaView>

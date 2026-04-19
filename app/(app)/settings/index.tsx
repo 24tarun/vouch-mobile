@@ -4,6 +4,7 @@ import {
   Linking,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   Share,
   Switch,
@@ -15,29 +16,34 @@ import {
 import { File, Paths } from 'expo-file-system';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { unregisterForPushNotificationsAsync } from '@/lib/notifications';
 import { useAuth } from '@/hooks/useAuth';
 import { colors } from '@/lib/theme';
-import { styles } from './styles';
+import { styles } from '@/components/settings/styles';
 import { Currency } from '@/lib/types';
 import { PageHeader } from '@/components/PageHeader';
 import { StatsOverview } from '@/components/StatsOverview';
 import {
+  AI_PROFILE_ID,
   normalizeAiUsername,
   normalizeAiEmail,
 } from '@/lib/constants/ai-profile';
 import { getFailureCostBounds } from '@/lib/domain/failure-cost';
 import { ACTIVE_VOUCHER_TASK_STATUSES } from '@/lib/constants/task-status';
-import { FriendsSection } from './components/FriendsSection';
-import { BlockedUsersSection } from './components/BlockedUsersSection';
+import { FriendsSection } from '@/components/settings/FriendsSection';
+import { BlockedUsersSection } from '@/components/settings/BlockedUsersSection';
+import { useRelationships, type RelationshipsData } from '@/lib/hooks/useRelationships';
+import { useBlockedUsers } from '@/lib/hooks/useBlockedUsers';
+import { useSettingsStats } from '@/lib/hooks/useSettingsStats';
+import { queryKeys } from '@/lib/query/keys';
 import {
   type BlockedUserOption,
   type IncomingFriendRequest,
   type OutgoingFriendRequest,
   type SearchCandidate,
   type UserSummary,
-  fetchRelationshipsData,
   normalizeSearchCandidate,
   normalizeVoucherOption,
 } from '@/lib/settings/relationships';
@@ -70,6 +76,16 @@ const CURRENCY_OPTIONS: PickerOption[] = [
   { label: 'EUR', value: 'EUR' },
   { label: 'INR', value: 'INR' },
 ];
+
+function buildUserSummaryFromCandidate(candidate: SearchCandidate): UserSummary {
+  const username = normalizeAiUsername(candidate.id, candidate.username, 'Friend');
+  return {
+    id: candidate.id,
+    username,
+    email: normalizeAiEmail(candidate.id, candidate.email, ''),
+    initial: username[0]?.toUpperCase() || '?',
+  };
+}
 
 interface RowProps {
   icon: React.ComponentProps<typeof Feather>['name'];
@@ -129,6 +145,10 @@ function SettingsRow({
 
 export default function SettingsScreen() {
   const { user, profile } = useAuth();
+  const queryClient = useQueryClient();
+  const relationshipsQuery = useRelationships(user?.id);
+  const blockedUsersQuery = useBlockedUsers(user?.id);
+  const settingsStatsQuery = useSettingsStats(user?.id);
   const [activePicker, setActivePicker] = useState<PickerType>(null);
 
   const [usernameDraft, setUsernameDraft] = useState('');
@@ -143,22 +163,13 @@ export default function SettingsScreen() {
   const [oneHourReminderEnabled, setOneHourReminderEnabled] = useState(true);
   const [tenMinuteReminderEnabled, setTenMinuteReminderEnabled] = useState(true);
 
-  const [voucherOptions, setVoucherOptions] = useState<VoucherOption[]>([]);
-  const [voucherLoading, setVoucherLoading] = useState(false);
-  const [friends, setFriends] = useState<UserSummary[]>([]);
-  const [incomingRequests, setIncomingRequests] = useState<IncomingFriendRequest[]>([]);
-  const [outgoingRequests, setOutgoingRequests] = useState<OutgoingFriendRequest[]>([]);
-  const [relationshipsLoading, setRelationshipsLoading] = useState(false);
-  const [relationshipsError, setRelationshipsError] = useState<string | null>(null);
   const [relationshipInFlight, setRelationshipInFlight] = useState<Record<string, RelationshipAction | null>>({});
   const [friendSearchQuery, setFriendSearchQuery] = useState('');
   const [friendSearchResults, setFriendSearchResults] = useState<SearchCandidate[]>([]);
   const [friendSearchLoading, setFriendSearchLoading] = useState(false);
   const [friendSearchError, setFriendSearchError] = useState<string | null>(null);
-  const [blockedUsers, setBlockedUsers] = useState<BlockedUserOption[]>([]);
-  const [blockedUsersLoading, setBlockedUsersLoading] = useState(false);
-  const [blockedUsersError, setBlockedUsersError] = useState<string | null>(null);
   const [unblockingUserId, setUnblockingUserId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [isCheckingDeleteConflicts, setIsCheckingDeleteConflicts] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
@@ -171,10 +182,39 @@ export default function SettingsScreen() {
   const [savingAiFeatures, setSavingAiFeatures] = useState(false);
   const [aiFeaturesError, setAiFeaturesError] = useState<string | null>(null);
   const [aiFeaturesSuccess, setAiFeaturesSuccess] = useState<string | null>(null);
+  const [voucherCanViewActiveTasks, setVoucherCanViewActiveTasks] = useState(true);
+  const [savingVoucherVisibility, setSavingVoucherVisibility] = useState(false);
+  const [voucherVisibilityError, setVoucherVisibilityError] = useState<string | null>(null);
+  const [voucherVisibilitySuccess, setVoucherVisibilitySuccess] = useState<string | null>(null);
   const emailSavedRef = useRef<string | null>(null);
   const usernameSavedRef = useRef<string | null>(null);
   const defaultsSavedRef = useRef<string | null>(null);
   const aiFeaturesSavedRef = useRef<boolean | null>(null);
+  const voucherVisibilitySavedRef = useRef<boolean | null>(null);
+  const friends = relationshipsQuery.friends;
+  const incomingRequests = relationshipsQuery.incomingRequests;
+  const outgoingRequests = relationshipsQuery.outgoingRequests;
+  const relationshipsLoading = relationshipsQuery.loading;
+  const relationshipsError = relationshipsQuery.error;
+  const blockedUsers = blockedUsersQuery.blockedUsers;
+  const blockedUsersLoading = blockedUsersQuery.loading;
+  const blockedUsersError = blockedUsersQuery.error;
+  const settingsStats = settingsStatsQuery.data;
+  const statsLoading = settingsStatsQuery.loading;
+  const statsError = settingsStatsQuery.error;
+  const voucherLoading = relationshipsLoading || blockedUsersLoading;
+
+  const voucherOptions = useMemo(() => {
+    if (!user) return [];
+    const blockedIds = new Set(blockedUsers.map((blockedUser) => blockedUser.id));
+    const byId = new Map<string, VoucherOption>();
+    byId.set(user.id, { id: user.id, username: 'Me' });
+    for (const friend of friends) {
+      if (blockedIds.has(friend.id)) continue;
+      byId.set(friend.id, normalizeVoucherOption({ id: friend.id, username: friend.username }));
+    }
+    return Array.from(byId.values());
+  }, [blockedUsers, friends, user]);
 
   useEffect(() => {
     if (!profile || !user) return;
@@ -188,6 +228,7 @@ export default function SettingsScreen() {
     const nextOneHourReminder = profile.deadline_one_hour_warning_enabled ?? true;
     const nextTenMinuteReminder = profile.deadline_final_warning_enabled ?? true;
     const nextAiVoucherEnabled = profile.ai_friend_opt_in ?? false;
+    const nextVoucherCanViewActiveTasks = profile.voucher_can_view_active_tasks ?? true;
 
     setUsernameDraft(nextUsername);
     setDefaultPomoInput(String(nextPomo));
@@ -201,6 +242,7 @@ export default function SettingsScreen() {
     setOneHourReminderEnabled(nextOneHourReminder);
     setTenMinuteReminderEnabled(nextTenMinuteReminder);
     setAiVoucherEnabled(nextAiVoucherEnabled);
+    setVoucherCanViewActiveTasks(nextVoucherCanViewActiveTasks);
 
     emailSavedRef.current = nextEmail;
     usernameSavedRef.current = nextUsername;
@@ -213,6 +255,7 @@ export default function SettingsScreen() {
       tenMinuteReminderEnabled: nextTenMinuteReminder,
     });
     aiFeaturesSavedRef.current = nextAiVoucherEnabled;
+    voucherVisibilitySavedRef.current = nextVoucherCanViewActiveTasks;
 
     setUsernameError(null);
     setUsernameSuccess(null);
@@ -220,149 +263,11 @@ export default function SettingsScreen() {
     setDefaultsSuccess(null);
     setAiFeaturesError(null);
     setAiFeaturesSuccess(null);
+    setVoucherVisibilityError(null);
+    setVoucherVisibilitySuccess(null);
     setDeleteAccountError(null);
     setDeleteAccountSuccess(false);
   }, [profile, user]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function loadVoucherOptions() {
-      if (!user) return;
-      setVoucherLoading(true);
-
-      const [friendsRes, blockedRes] = await Promise.all([
-        supabase
-          .from('friendships')
-          .select(`
-            friend_id,
-            friend:profiles!friendships_friend_id_fkey(
-              id,
-              username
-            )
-          `)
-          .eq('user_id', user.id),
-        supabase
-          .from('user_blocks')
-          .select('blocked_id')
-          .eq('blocker_id', user.id),
-      ]);
-
-      if (!mounted) return;
-
-      if (friendsRes.error || blockedRes.error) {
-        setVoucherOptions([{ id: user.id, username: 'Me' }]);
-        setVoucherLoading(false);
-        return;
-      }
-
-      const blockedIds = new Set(
-        ((blockedRes.data ?? []) as { blocked_id?: string | null }[])
-          .map((row) => row.blocked_id)
-          .filter((id): id is string => Boolean(id)),
-      );
-      const base = [{ id: user.id, username: 'Me' }];
-      const fromFriends = ((friendsRes.data ?? []) as any[])
-        .map((row) => {
-          const friend = row?.friend as { id?: string; username?: string } | null;
-          if (!friend?.id) return null;
-          if (blockedIds.has(friend.id)) return null;
-          return normalizeVoucherOption({ id: friend.id, username: friend.username ?? 'Friend' });
-        })
-        .filter((item): item is VoucherOption => Boolean(item?.id));
-
-      const byId = new Map<string, VoucherOption>();
-      [...base, ...fromFriends].forEach((entry) => byId.set(entry.id, entry));
-
-      setVoucherOptions(Array.from(byId.values()));
-      setVoucherLoading(false);
-    }
-
-    loadVoucherOptions();
-    return () => {
-      mounted = false;
-    };
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const channel = supabase
-      .channel(`settings-relationships-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'friend_requests',
-          filter: `sender_id=eq.${user.id}`,
-        },
-        () => {
-          void refreshRelationshipsAndSearch();
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'friend_requests',
-          filter: `receiver_id=eq.${user.id}`,
-        },
-        () => {
-          void refreshRelationshipsAndSearch();
-        },
-      )
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  // refreshRelationshipsAndSearch intentionally omitted to avoid resubscribing every render
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function loadRelationships() {
-      if (!user) {
-        if (mounted) {
-          setFriends([]);
-          setIncomingRequests([]);
-          setOutgoingRequests([]);
-          setRelationshipsLoading(false);
-        }
-        return;
-      }
-
-      setRelationshipsLoading(true);
-      setRelationshipsError(null);
-
-      const result = await fetchRelationshipsData(user.id);
-
-      if (!mounted) return;
-
-      if (result.error) {
-        setFriends([]);
-        setIncomingRequests([]);
-        setOutgoingRequests([]);
-        setRelationshipsError(result.error);
-        setRelationshipsLoading(false);
-        return;
-      }
-
-      setFriends(result.friends);
-      setIncomingRequests(result.incomingRequests);
-      setOutgoingRequests(result.outgoingRequests);
-      setRelationshipsLoading(false);
-    }
-
-    void loadRelationships();
-    return () => {
-      mounted = false;
-    };
-  }, [user]);
 
   useEffect(() => {
     const query = friendSearchQuery.trim();
@@ -405,66 +310,6 @@ export default function SettingsScreen() {
       clearTimeout(timer);
     };
   }, [friendSearchQuery, user]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function loadBlockedUsers() {
-      if (!user) {
-        if (mounted) {
-          setBlockedUsers([]);
-          setBlockedUsersLoading(false);
-        }
-        return;
-      }
-
-      setBlockedUsersLoading(true);
-      setBlockedUsersError(null);
-
-      const { data, error } = await supabase
-        .from('user_blocks')
-        .select(`
-          blocked_id,
-          blocked:profiles!user_blocks_blocked_id_fkey(
-            id,
-            username,
-            email
-          )
-        `)
-        .eq('blocker_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (!mounted) return;
-
-      if (error) {
-        setBlockedUsers([]);
-        setBlockedUsersError(error.message);
-        setBlockedUsersLoading(false);
-        return;
-      }
-
-      const nextBlockedUsers = ((data ?? []) as any[])
-        .map((row) => {
-          const blocked = row?.blocked as { id?: string; username?: string | null; email?: string | null } | null;
-          if (!blocked?.id) return null;
-          return {
-            id: blocked.id,
-            username: normalizeAiUsername(blocked.id, blocked.username, 'Blocked user'),
-            email: normalizeAiEmail(blocked.id, blocked.email, ''),
-          } satisfies BlockedUserOption;
-        })
-        .filter((entry): entry is BlockedUserOption => Boolean(entry))
-        .sort((a, b) => a.username.localeCompare(b.username));
-
-      setBlockedUsers(nextBlockedUsers);
-      setBlockedUsersLoading(false);
-    }
-
-    void loadBlockedUsers();
-    return () => {
-      mounted = false;
-    };
-  }, [user]);
 
   async function handleExportData() {
     if (!user || isExporting) return;
@@ -740,8 +585,13 @@ export default function SettingsScreen() {
   }
 
   async function handleUnblockUser(blockedUser: BlockedUserOption) {
+    if (!user) return;
     setUnblockingUserId(blockedUser.id);
-    setBlockedUsersError(null);
+    const previousBlockedUsers = queryClient.getQueryData<BlockedUserOption[]>(queryKeys.blockedUsers(user.id));
+    queryClient.setQueryData<BlockedUserOption[]>(
+      queryKeys.blockedUsers(user.id),
+      (previous) => (previous ?? []).filter((entry) => entry.id !== blockedUser.id),
+    );
 
     try {
       const { error } = await supabase.rpc('unblock_user', {
@@ -749,11 +599,11 @@ export default function SettingsScreen() {
       });
 
       if (error) {
-        setBlockedUsersError(error.message);
+        queryClient.setQueryData(queryKeys.blockedUsers(user.id), previousBlockedUsers);
+        Alert.alert('Could not unblock user', error.message);
         return;
       }
-
-      setBlockedUsers((prev) => prev.filter((entry) => entry.id !== blockedUser.id));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.blockedUsers(user.id) });
     } finally {
       setUnblockingUserId(null);
     }
@@ -763,24 +613,41 @@ export default function SettingsScreen() {
     setRelationshipInFlight((prev) => ({ ...prev, [key]: action }));
   }
 
+  function patchRelationshipsCache(
+    updater: (current: RelationshipsData) => RelationshipsData,
+  ) {
+    if (!user) return;
+    queryClient.setQueryData<RelationshipsData>(
+      queryKeys.relationships(user.id),
+      (current) => (current ? updater(current) : current),
+    );
+  }
+
+  function patchBlockedUsersCache(
+    updater: (current: BlockedUserOption[]) => BlockedUserOption[],
+  ) {
+    if (!user) return;
+    queryClient.setQueryData<BlockedUserOption[]>(
+      queryKeys.blockedUsers(user.id),
+      (current) => updater(current ?? []),
+    );
+  }
+
+  function patchFriendSearchResults(
+    updater: (current: SearchCandidate[]) => SearchCandidate[],
+  ) {
+    setFriendSearchResults((current) => updater(current));
+  }
+
+  function invalidateRelationshipCaches() {
+    if (!user) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.relationships(user.id) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.blockedUsers(user.id) });
+  }
+
   async function refreshRelationshipsAndSearch() {
     if (!user) return;
-
-    setRelationshipsLoading(true);
-    setRelationshipsError(null);
-
-    const result = await fetchRelationshipsData(user.id);
-
-    if (result.error) {
-      setRelationshipsError(result.error);
-      setRelationshipsLoading(false);
-      return;
-    }
-
-    setFriends(result.friends);
-    setIncomingRequests(result.incomingRequests);
-    setOutgoingRequests(result.outgoingRequests);
-    setRelationshipsLoading(false);
+    await relationshipsQuery.refetch();
 
     if (friendSearchQuery.trim()) {
       const { data, error } = await supabase.rpc('search_users_for_friendship', {
@@ -804,66 +671,164 @@ export default function SettingsScreen() {
     }
   }
 
+  async function handleRefresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        refreshRelationshipsAndSearch(),
+        blockedUsersQuery.refetch(),
+        settingsStatsQuery.refetch(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   async function handleSendFriendRequest(candidate: SearchCandidate) {
+    if (!user) return;
     const key = `send:${candidate.id}`;
     updateRelationshipInFlight(key, 'send');
+    const previousRelationships = queryClient.getQueryData<RelationshipsData>(queryKeys.relationships(user.id));
+    const previousSearchResults = friendSearchResults;
+    const receiver = buildUserSummaryFromCandidate(candidate);
+
+    patchRelationshipsCache((current) => ({
+      ...current,
+      outgoingRequests: [
+        {
+          id: `pending-outgoing:${candidate.id}`,
+          receiver_id: candidate.id,
+          created_at: new Date().toISOString(),
+          receiver,
+        },
+        ...current.outgoingRequests.filter((entry) => entry.receiver_id !== candidate.id),
+      ],
+    }));
+    patchFriendSearchResults((current) =>
+      current.map((entry) => (
+        entry.id === candidate.id
+          ? { ...entry, outgoing_request_pending: true, incoming_request_pending: false }
+          : entry
+      )),
+    );
+
     try {
       const { error } = await supabase.rpc('send_friend_request', {
         p_target_user_id: candidate.id,
       });
 
       if (error) {
+        queryClient.setQueryData(queryKeys.relationships(user.id), previousRelationships);
+        setFriendSearchResults(previousSearchResults);
         Alert.alert('Could not send request', error.message);
         return;
       }
-
-      await refreshRelationshipsAndSearch();
+      void queryClient.invalidateQueries({ queryKey: queryKeys.relationships(user.id) });
     } finally {
       updateRelationshipInFlight(key, null);
     }
   }
 
   async function handleAcceptFriendRequest(request: IncomingFriendRequest) {
+    if (!user) return;
     const key = `request:${request.id}:accept`;
     updateRelationshipInFlight(key, 'accept');
+    const previousRelationships = queryClient.getQueryData<RelationshipsData>(queryKeys.relationships(user.id));
+    const previousSearchResults = friendSearchResults;
+
+    patchRelationshipsCache((current) => ({
+      ...current,
+      incomingRequests: current.incomingRequests.filter((entry) => entry.id !== request.id),
+      friends: [...current.friends, request.sender]
+        .filter((entry, index, list) => list.findIndex((candidate) => candidate.id === entry.id) === index)
+        .sort((a, b) => a.username.localeCompare(b.username)),
+    }));
+    patchFriendSearchResults((current) =>
+      current.map((entry) => (
+        entry.id === request.sender.id
+          ? {
+              ...entry,
+              already_friends: true,
+              incoming_request_pending: false,
+              outgoing_request_pending: false,
+            }
+          : entry
+      )),
+    );
+
     try {
       const { error } = await supabase.rpc('accept_friend_request', {
         p_request_id: request.id,
       });
 
       if (error) {
+        queryClient.setQueryData(queryKeys.relationships(user.id), previousRelationships);
+        setFriendSearchResults(previousSearchResults);
         Alert.alert('Could not accept request', error.message);
         return;
       }
-
-      await refreshRelationshipsAndSearch();
+      void queryClient.invalidateQueries({ queryKey: queryKeys.relationships(user.id) });
     } finally {
       updateRelationshipInFlight(key, null);
     }
   }
 
   async function handleRejectFriendRequest(request: IncomingFriendRequest) {
+    if (!user) return;
     const key = `request:${request.id}:reject`;
     updateRelationshipInFlight(key, 'reject');
+    const previousRelationships = queryClient.getQueryData<RelationshipsData>(queryKeys.relationships(user.id));
+    const previousSearchResults = friendSearchResults;
+
+    patchRelationshipsCache((current) => ({
+      ...current,
+      incomingRequests: current.incomingRequests.filter((entry) => entry.id !== request.id),
+    }));
+    patchFriendSearchResults((current) =>
+      current.map((entry) => (
+        entry.id === request.sender.id
+          ? { ...entry, incoming_request_pending: false }
+          : entry
+      )),
+    );
+
     try {
       const { error } = await supabase.rpc('reject_friend_request', {
         p_request_id: request.id,
       });
 
       if (error) {
+        queryClient.setQueryData(queryKeys.relationships(user.id), previousRelationships);
+        setFriendSearchResults(previousSearchResults);
         Alert.alert('Could not reject request', error.message);
         return;
       }
-
-      await refreshRelationshipsAndSearch();
+      void queryClient.invalidateQueries({ queryKey: queryKeys.relationships(user.id) });
     } finally {
       updateRelationshipInFlight(key, null);
     }
   }
 
   async function handleWithdrawFriendRequest(request: OutgoingFriendRequest) {
+    if (!user) return;
     const key = `outgoing:${request.id}:withdraw`;
     updateRelationshipInFlight(key, 'withdraw');
+    const previousRelationships = queryClient.getQueryData<RelationshipsData>(queryKeys.relationships(user.id));
+    const previousSearchResults = friendSearchResults;
+
+    patchRelationshipsCache((current) => ({
+      ...current,
+      outgoingRequests: current.outgoingRequests.filter((entry) => entry.id !== request.id),
+    }));
+    patchFriendSearchResults((current) =>
+      current.map((entry) => (
+        entry.id === request.receiver_id
+          ? { ...entry, outgoing_request_pending: false }
+          : entry
+      )),
+    );
+
     try {
       const { error } = await supabase.rpc('withdraw_friend_request', {
         p_request_id: request.id,
@@ -871,59 +836,126 @@ export default function SettingsScreen() {
 
       if (error) {
         if (error.message?.toLowerCase().includes('no longer pending')) {
-          await refreshRelationshipsAndSearch();
+          void queryClient.invalidateQueries({ queryKey: queryKeys.relationships(user.id) });
           return;
         }
+        queryClient.setQueryData(queryKeys.relationships(user.id), previousRelationships);
+        setFriendSearchResults(previousSearchResults);
         Alert.alert('Could not withdraw request', error.message);
         return;
       }
-
-      await refreshRelationshipsAndSearch();
+      void queryClient.invalidateQueries({ queryKey: queryKeys.relationships(user.id) });
     } finally {
       updateRelationshipInFlight(key, null);
     }
   }
 
   async function handleRemoveFriend(friend: UserSummary) {
+    if (!user) return;
     const key = `friend:${friend.id}:remove`;
     updateRelationshipInFlight(key, 'remove');
-    try {
-      const { error } = await supabase.rpc('remove_friend', {
-        p_target_user_id: friend.id,
-      });
+    const isAiFriend = friend.id === AI_PROFILE_ID;
+    const previousRelationships = queryClient.getQueryData<RelationshipsData>(queryKeys.relationships(user.id));
+    const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
+    const previousSearchResults = friendSearchResults;
+    const previousDefaultVoucherId = defaultVoucherId;
+    const previousAiVoucherEnabled = aiVoucherEnabled;
 
-      if (error) {
-        Alert.alert('Could not remove friend', error.message);
+    patchRelationshipsCache((current) => ({
+      ...current,
+      friends: current.friends.filter((entry) => entry.id !== friend.id),
+    }));
+    patchFriendSearchResults((current) =>
+      current.map((entry) => (
+        entry.id === friend.id
+          ? {
+              ...entry,
+              already_friends: false,
+              incoming_request_pending: false,
+              outgoing_request_pending: false,
+            }
+          : entry
+      )),
+    );
+    if (isAiFriend) {
+      queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) =>
+        current ? { ...current, ai_friend_opt_in: false } : current,
+      );
+      setAiVoucherEnabled(false);
+    }
+    if (defaultVoucherId === friend.id) {
+      setDefaultVoucherId(user.id);
+    }
+
+    try {
+      const removeFriendPromise = supabase.rpc('remove_friend', { p_target_user_id: friend.id });
+      const aiProfileUpdatePromise = isAiFriend
+        ? supabase.from('profiles').update({ ai_friend_opt_in: false }).eq('id', user.id)
+        : Promise.resolve(null);
+
+      const [removeRes] = await Promise.all([removeFriendPromise, aiProfileUpdatePromise]);
+
+      if (removeRes.error) {
+        queryClient.setQueryData(queryKeys.relationships(user.id), previousRelationships);
+        queryClient.setQueryData(queryKeys.currentProfile(user.id), previousProfile);
+        setFriendSearchResults(previousSearchResults);
+        setDefaultVoucherId(previousDefaultVoucherId);
+        setAiVoucherEnabled(previousAiVoucherEnabled);
+        Alert.alert('Could not remove friend', removeRes.error.message);
         return;
       }
 
-      if (defaultVoucherId === friend.id && user) {
-        setDefaultVoucherId(user.id);
+      if (isAiFriend) {
+        aiFeaturesSavedRef.current = false;
       }
-
-      await refreshRelationshipsAndSearch();
+      invalidateRelationshipCaches();
     } finally {
       updateRelationshipInFlight(key, null);
     }
   }
 
   async function handleBlockRelationshipUser(target: UserSummary | SearchCandidate, sourceKey: string) {
+    if (!user) return;
     updateRelationshipInFlight(sourceKey, 'block');
+    const previousRelationships = queryClient.getQueryData<RelationshipsData>(queryKeys.relationships(user.id));
+    const previousBlockedUsers = queryClient.getQueryData<BlockedUserOption[]>(queryKeys.blockedUsers(user.id));
+    const previousSearchResults = friendSearchResults;
+    const previousDefaultVoucherId = defaultVoucherId;
+    const blockedEntry: BlockedUserOption = {
+      id: target.id,
+      username: normalizeAiUsername(target.id, target.username, 'Blocked user'),
+      email: normalizeAiEmail(target.id, target.email, ''),
+    };
+
+    patchRelationshipsCache((current) => ({
+      ...current,
+      friends: current.friends.filter((entry) => entry.id !== target.id),
+      incomingRequests: current.incomingRequests.filter((entry) => entry.sender.id !== target.id),
+      outgoingRequests: current.outgoingRequests.filter((entry) => entry.receiver.id !== target.id),
+    }));
+    patchBlockedUsersCache((current) => {
+      if (current.some((entry) => entry.id === target.id)) return current;
+      return [blockedEntry, ...current].sort((a, b) => a.username.localeCompare(b.username));
+    });
+    patchFriendSearchResults((current) => current.filter((entry) => entry.id !== target.id));
+    if (defaultVoucherId === target.id) {
+      setDefaultVoucherId(user.id);
+    }
+
     try {
       const { error } = await supabase.rpc('block_user', {
         p_target_user_id: target.id,
       });
 
       if (error) {
+        queryClient.setQueryData(queryKeys.relationships(user.id), previousRelationships);
+        queryClient.setQueryData(queryKeys.blockedUsers(user.id), previousBlockedUsers);
+        setFriendSearchResults(previousSearchResults);
+        setDefaultVoucherId(previousDefaultVoucherId);
         Alert.alert('Could not block user', error.message);
         return;
       }
-
-      if (defaultVoucherId === target.id && user) {
-        setDefaultVoucherId(user.id);
-      }
-
-      await refreshRelationshipsAndSearch();
+      invalidateRelationshipCaches();
     } finally {
       updateRelationshipInFlight(sourceKey, null);
     }
@@ -1032,7 +1064,10 @@ export default function SettingsScreen() {
   useEffect(() => {
     if (!user) return;
     if (usernameSavedRef.current === null) return;
-    if (normalizedUsernameDraft === usernameSavedRef.current) return;
+    if (normalizedUsernameDraft === usernameSavedRef.current) {
+      setUsernameError(null);
+      return;
+    }
 
     const validationError = validateUsername(normalizedUsernameDraft);
     if (validationError) {
@@ -1046,6 +1081,11 @@ export default function SettingsScreen() {
     const timer = setTimeout(async () => {
       setSavingUsername(true);
       setUsernameSuccess(null);
+      const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
+      queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) => current ? {
+        ...current,
+        username: normalizedUsernameDraft,
+      } : current);
 
       const { error } = await supabase
         .from('profiles')
@@ -1056,6 +1096,7 @@ export default function SettingsScreen() {
       if (cancelled) return;
 
       if (error) {
+        queryClient.setQueryData(queryKeys.currentProfile(user.id), previousProfile);
         if (error.code === '23505') {
           setUsernameError('Username is already taken.');
         } else {
@@ -1073,7 +1114,7 @@ export default function SettingsScreen() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [normalizedUsernameDraft, user]);
+  }, [normalizedUsernameDraft, queryClient, user]);
 
   useEffect(() => {
     if (!user || !resolvedDefaultVoucherId) return;
@@ -1096,6 +1137,16 @@ export default function SettingsScreen() {
     const timer = setTimeout(async () => {
       setSavingDefaults(true);
       setDefaultsSuccess(null);
+      const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
+      queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) => current ? {
+        ...current,
+        default_pomo_duration_minutes: parsedPomoMinutes,
+        default_failure_cost_cents: parsedFailureCostCents,
+        default_voucher_id: resolvedDefaultVoucherId,
+        currency,
+        deadline_one_hour_warning_enabled: oneHourReminderEnabled,
+        deadline_final_warning_enabled: tenMinuteReminderEnabled,
+      } : current);
 
       const { error } = await supabase
         .from('profiles')
@@ -1113,6 +1164,7 @@ export default function SettingsScreen() {
       if (cancelled) return;
 
       if (error) {
+        queryClient.setQueryData(queryKeys.currentProfile(user.id), previousProfile);
         setDefaultsError(error.message);
         return;
       }
@@ -1136,6 +1188,7 @@ export default function SettingsScreen() {
     defaultsSnapshot,
     pomoValidationError,
     failureCostValidationError,
+    queryClient,
   ]);
 
   useEffect(() => {
@@ -1148,29 +1201,74 @@ export default function SettingsScreen() {
     const timer = setTimeout(async () => {
       setSavingAiFeatures(true);
       setAiFeaturesSuccess(null);
+      const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
+      const previousRelationships = queryClient.getQueryData(queryKeys.relationships(user.id)) as any;
 
-      const { error } = await supabase
-        .from('profiles')
-        .update({ ai_friend_opt_in: aiVoucherEnabled })
-        .eq('id', user.id);
+      queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) => current ? {
+        ...current,
+        ai_friend_opt_in: aiVoucherEnabled,
+      } : current);
+
+      queryClient.setQueryData(queryKeys.relationships(user.id), (current: any) => {
+        if (!current) return current;
+        const nextFriends = aiVoucherEnabled
+          ? current.friends.some((friend: any) => friend.id === AI_PROFILE_ID)
+            ? current.friends
+            : [
+                ...current.friends,
+                {
+                  id: AI_PROFILE_ID,
+                  username: normalizeAiUsername(AI_PROFILE_ID, null, 'AI voucher'),
+                  email: normalizeAiEmail(AI_PROFILE_ID, null, ''),
+                  initial: normalizeAiUsername(AI_PROFILE_ID, null, 'AI voucher')[0]?.toUpperCase() || 'A',
+                },
+              ]
+          : current.friends.filter((friend: any) => friend.id !== AI_PROFILE_ID);
+
+        return {
+          ...current,
+          friends: nextFriends,
+        };
+      });
+
+      const [profileRes, friendshipRes] = await Promise.all([
+        supabase
+          .from('profiles')
+          .update({ ai_friend_opt_in: aiVoucherEnabled })
+          .eq('id', user.id),
+        aiVoucherEnabled
+          ? supabase.from('friendships').upsert(
+              { user_id: user.id, friend_id: AI_PROFILE_ID },
+              { onConflict: 'user_id,friend_id' },
+            )
+          : supabase
+              .from('friendships')
+              .delete()
+              .eq('user_id', user.id)
+              .eq('friend_id', AI_PROFILE_ID),
+      ]);
 
       setSavingAiFeatures(false);
       if (cancelled) return;
 
+      const error = profileRes.error ?? friendshipRes.error;
       if (error) {
+        queryClient.setQueryData(queryKeys.currentProfile(user.id), previousProfile);
+        queryClient.setQueryData(queryKeys.relationships(user.id), previousRelationships);
         setAiFeaturesError(error.message);
         return;
       }
 
       aiFeaturesSavedRef.current = aiVoucherEnabled;
       setAiFeaturesSuccess('Saved');
+      void queryClient.invalidateQueries({ queryKey: queryKeys.relationships(user.id) });
     }, 400);
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [user, aiVoucherEnabled]);
+  }, [aiVoucherEnabled, queryClient, user]);
 
   useEffect(() => {
     if (!usernameSuccess) return;
@@ -1190,6 +1288,52 @@ export default function SettingsScreen() {
     return () => clearTimeout(timer);
   }, [aiFeaturesSuccess]);
 
+  useEffect(() => {
+    if (!user) return;
+    if (voucherVisibilitySavedRef.current === null) return;
+    if (voucherCanViewActiveTasks === voucherVisibilitySavedRef.current) return;
+
+    setVoucherVisibilityError(null);
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setSavingVoucherVisibility(true);
+      setVoucherVisibilitySuccess(null);
+      const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
+      queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) => current ? {
+        ...current,
+        voucher_can_view_active_tasks: voucherCanViewActiveTasks,
+      } : current);
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({ voucher_can_view_active_tasks: voucherCanViewActiveTasks })
+        .eq('id', user.id);
+
+      setSavingVoucherVisibility(false);
+      if (cancelled) return;
+
+      if (error) {
+        queryClient.setQueryData(queryKeys.currentProfile(user.id), previousProfile);
+        setVoucherVisibilityError(error.message);
+        return;
+      }
+
+      voucherVisibilitySavedRef.current = voucherCanViewActiveTasks;
+      setVoucherVisibilitySuccess('Saved');
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [voucherCanViewActiveTasks, queryClient, user]);
+
+  useEffect(() => {
+    if (!voucherVisibilitySuccess) return;
+    const timer = setTimeout(() => setVoucherVisibilitySuccess(null), 1600);
+    return () => clearTimeout(timer);
+  }, [voucherVisibilitySuccess]);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <PageHeader title="Settings" />
@@ -1198,8 +1342,25 @@ export default function SettingsScreen() {
         style={styles.body}
         contentContainerStyle={styles.bodyContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { void handleRefresh(); }}
+            tintColor={colors.textMuted}
+            colors={[colors.textMuted]}
+          />
+        }
       >
-        <StatsOverview />
+        <StatsOverview
+          totalTasks={settingsStats?.totalTasks}
+          accepted={settingsStats?.accepted}
+          denied={settingsStats?.denied}
+          missed={settingsStats?.missed}
+          totalVouched={settingsStats?.totalVouched}
+          focusedSeconds={settingsStats?.focusedSeconds}
+          loading={statsLoading}
+          error={statsError}
+        />
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Account</Text>
@@ -1242,7 +1403,7 @@ export default function SettingsScreen() {
             </View>
             <SettingsRow
               icon="log-out"
-              label="Sign out from all sessions"
+              label="Sign out"
               onPress={handleSignOut}
               destructive
               tinted
@@ -1371,9 +1532,23 @@ export default function SettingsScreen() {
                 />
               </View>
 
-              {savingDefaults ? <Text style={styles.savingText}>Saving defaults...</Text> : null}
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}>
+                  <Text style={styles.toggleTitle}>Allow vouchers to view my active tasks</Text>
+                  <Text style={styles.toggleSub}>Controls whether selected vouchers can see your tasks in ACTIVE or POSTPONED status.</Text>
+                </View>
+                <Switch
+                  value={voucherCanViewActiveTasks}
+                  onValueChange={setVoucherCanViewActiveTasks}
+                  trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                  thumbColor={colors.text}
+                />
+              </View>
+
+              {savingDefaults || savingVoucherVisibility ? <Text style={styles.savingText}>Saving...</Text> : null}
               {defaultsError ? <Text style={styles.errorText}>{defaultsError}</Text> : null}
-              {defaultsSuccess ? <Text style={styles.successText}>{defaultsSuccess}</Text> : null}
+              {voucherVisibilityError ? <Text style={styles.errorText}>{voucherVisibilityError}</Text> : null}
+              {defaultsSuccess || voucherVisibilitySuccess ? <Text style={styles.successText}>Saved</Text> : null}
             </View>
           </View>
         </View>

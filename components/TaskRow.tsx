@@ -40,6 +40,7 @@ interface TaskRowProps {
   onPostpone?: (task: TaskRowData) => void | Promise<void>;
   onDelete?: (task: TaskRowData) => void | Promise<void>;
   defaultPomoDurationMinutes?: number;
+  onSubtaskComposerFocus?: (inputBottomY: number) => void;
 }
 
 // Format deadline as `HH:MM` for today/past or `HH:MM DD mon` for future
@@ -60,6 +61,7 @@ export function TaskRow({
   onPostpone,
   onDelete,
   defaultPomoDurationMinutes = 25,
+  onSubtaskComposerFocus,
 }: TaskRowProps) {
   const router = useRouter();
   const {
@@ -188,6 +190,18 @@ export function TaskRow({
     } catch {
       setSubtasks(snapshot);
     }
+  }
+
+  function handleSubtaskInputFocus() {
+    const input = subtaskInputRef.current;
+    if (!input || !onSubtaskComposerFocus) return;
+
+    requestAnimationFrame(() => {
+      input.measureInWindow((_x, y, _width, height) => {
+        if (height <= 0) return;
+        onSubtaskComposerFocus(y + height);
+      });
+    });
   }
 
   const hasSubtasks = (task.subtaskTotal ?? 0) > 0 || subtasks.length > 0;
@@ -585,6 +599,7 @@ export function TaskRow({
                 returnKeyType="done"
                 blurOnSubmit={false}
                 onSubmitEditing={() => { void handleAddSubtask(); }}
+                onFocus={handleSubtaskInputFocus}
               />
             </View>
           </View>

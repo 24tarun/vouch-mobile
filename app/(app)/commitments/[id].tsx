@@ -1,7 +1,8 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,10 +11,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { colors, radius, spacing, typography } from '@/lib/theme';
-import { useCommitments } from '@/lib/hooks/useCommitments';
+import { useCommitments, type CommitmentListItem } from '@/lib/hooks/useCommitments';
+import { queryKeys } from '@/lib/query/keys';
 import {
   DayStrip,
   LinkedTaskRow,
@@ -27,17 +30,35 @@ import {
 export default function CommitmentDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { commitments, currency, loading, error, refetch } = useCommitments();
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Re-fetch every time this screen is navigated to. The Tabs layout pre-mounts
-  // all screens, so without this the hook would show stale (or empty) data when
-  // the user lands here after creating a new commitment.
-  useFocusEffect(useCallback(() => { refetch(); }, []));
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [taskPickerOpen, setTaskPickerOpen] = useState(false);
 
   const item = commitments.find((commitment) => commitment.id === id) ?? null;
-  const { linkedTasks, setLinkedTasks, loadingLinks } = useCommitmentLinks(item?.id ?? null);
+  const { linkedTasks, setLinkedTasks, loadingLinks, refetchLinks } = useCommitmentLinks(item?.id ?? null);
+
+  async function handleRefresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await Promise.all([Promise.resolve(refetch()), Promise.resolve(refetchLinks())]);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  function patchCommitmentsCache(
+    updater: (current: CommitmentListItem[]) => CommitmentListItem[],
+  ) {
+    if (!item) return;
+    queryClient.setQueryData<CommitmentListItem[]>(
+      queryKeys.commitments(item.user_id),
+      (current) => updater(current ?? []),
+    );
+  }
 
   const today = toDateOnly(new Date());
   const isWithinCommitmentWindow = item ? today >= item.start_date && today <= item.end_date : false;
@@ -46,11 +67,19 @@ export default function CommitmentDetailScreen() {
     : null;
 
   async function handleRemoveLink(linkId: string) {
+    const previousLinks = linkedTasks;
     setActionLoading(`unlink-${linkId}`);
+    setLinkedTasks((prev) => prev.filter((entry) => entry.linkId !== linkId));
     try {
-      await supabase.from('commitment_task_links').delete().eq('id', linkId);
-      setLinkedTasks((prev) => prev.filter((entry) => entry.linkId !== linkId));
-      refetch();
+      const { error: deleteError } = await supabase.from('commitment_task_links').delete().eq('id', linkId);
+      if (deleteError) {
+        setLinkedTasks(previousLinks);
+        Alert.alert('Error', deleteError.message);
+        return;
+      }
+      if (item) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.commitments(item.user_id) });
+      }
     } finally {
       setActionLoading(null);
     }
@@ -67,6 +96,14 @@ export default function CommitmentDetailScreen() {
       return;
     }
     setActionLoading('commit');
+    const previousCommitments = commitments;
+    patchCommitmentsCache((current) =>
+      current.map((entry) => (
+        entry.id === item.id
+          ? { ...entry, status: 'ACTIVE', derived_status: 'ACTIVE' }
+          : entry
+      )),
+    );
     try {
       const { error: updateError } = await supabase
         .from('commitments')
@@ -74,10 +111,11 @@ export default function CommitmentDetailScreen() {
         .eq('id', item.id)
         .eq('status', 'DRAFT');
       if (updateError) {
+        queryClient.setQueryData(queryKeys.commitments(item.user_id), previousCommitments);
         Alert.alert('Error', updateError.message);
         return;
       }
-      refetch();
+      void queryClient.invalidateQueries({ queryKey: queryKeys.commitments(item.user_id) });
     } finally {
       setActionLoading(null);
     }
@@ -95,10 +133,20 @@ export default function CommitmentDetailScreen() {
           text: isDraft ? 'Delete' : 'Abandon',
           style: 'destructive',
           onPress: async () => {
+            const previousCommitments = commitments;
+            const previousLinks = linkedTasks;
             setActionLoading('delete');
+            patchCommitmentsCache((current) => current.filter((entry) => entry.id !== item.id));
+            queryClient.setQueryData(queryKeys.commitmentLinks(item.id), []);
             try {
-              await supabase.from('commitments').delete().eq('id', item.id);
-              router.replace({ pathname: '/(app)/commitments', params: { refresh: '1' } });
+              const { error: deleteError } = await supabase.from('commitments').delete().eq('id', item.id);
+              if (deleteError) {
+                queryClient.setQueryData(queryKeys.commitments(item.user_id), previousCommitments);
+                queryClient.setQueryData(queryKeys.commitmentLinks(item.id), previousLinks);
+                Alert.alert('Error', deleteError.message);
+                return;
+              }
+              router.replace('/(app)/commitments');
             } finally {
               setActionLoading(null);
             }
@@ -142,7 +190,19 @@ export default function CommitmentDetailScreen() {
         <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.textMuted}
+            colors={[colors.textMuted]}
+          />
+        }
+      >
         <View style={styles.detailCard}>
           <View style={styles.cardTop}>
             <View style={{ flex: 1 }}>
@@ -251,7 +311,9 @@ export default function CommitmentDetailScreen() {
           onLinked={(linked) => {
             setLinkedTasks((prev) => [...prev, linked]);
             setTaskPickerOpen(false);
-            refetch();
+            if (item) {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.commitments(item.user_id) });
+            }
           }}
         />
       )}

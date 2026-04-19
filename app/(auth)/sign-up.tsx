@@ -3,17 +3,16 @@ import {
   Linking,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
-import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { signInWithApple, signInWithGoogle } from '@/lib/auth-social';
+import { EMAIL_CONFIRMATION_URL } from '@/lib/auth-urls';
 import { Button, TextButton } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { colors, spacing, typography } from '@/lib/theme';
 import { AuthScreenShell } from '@/components/auth/AuthScreenShell';
 import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
 
@@ -28,8 +27,6 @@ export default function SignUpScreen() {
   const [globalError, setGlobalError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState(false);
-  const [privacyOpened, setPrivacyOpened] = useState(false);
-  const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
   function deriveUsername(rawEmail: string): string {
     const prefix = rawEmail.trim().toLowerCase().split('@')[0] ?? '';
@@ -45,9 +42,6 @@ export default function SignUpScreen() {
     if (!password) errors.password = 'Password is required.';
     else if (password.length < 6) errors.password = 'At least 6 characters.';
 
-    if (!privacyOpened) errors.privacy = 'Please open the Privacy Policy before signing up.';
-    else if (!privacyAccepted) errors.privacy = 'You must accept the Privacy Policy to create an account.';
-
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -61,6 +55,9 @@ export default function SignUpScreen() {
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim().toLowerCase(),
       password,
+      options: {
+        emailRedirectTo: EMAIL_CONFIRMATION_URL,
+      },
     });
 
     if (signUpError) {
@@ -121,12 +118,6 @@ export default function SignUpScreen() {
     }
   }
 
-  function handleOpenPrivacyPolicy() {
-    setPrivacyOpened(true);
-    setFieldErrors((e) => ({ ...e, privacy: '' }));
-    void Linking.openURL(PRIVACY_POLICY_URL);
-  }
-
   if (success) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -149,31 +140,6 @@ export default function SignUpScreen() {
 
   return (
     <AuthScreenShell tagline="Create your account.">
-      <SocialAuthButtons
-        mode="sign-up"
-        loadingProvider={socialLoading}
-        onGooglePress={handleGoogleSignUp}
-        onApplePress={handleAppleSignUp}
-        disclaimer={(
-          <>
-            By continuing, you agree to our{' '}
-            <Text
-              style={styles.socialDisclaimerLink}
-              onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}
-            >
-              Privacy Policy
-            </Text>
-            .
-          </>
-        )}
-      />
-
-      <View style={styles.divider}>
-        <View style={styles.dividerLine} />
-        <Text style={styles.dividerText}>or sign up with email</Text>
-        <View style={styles.dividerLine} />
-      </View>
-
       <View style={styles.form}>
         <Input
           label="Email"
@@ -205,35 +171,6 @@ export default function SignUpScreen() {
           error={fieldErrors.password}
         />
 
-        <View style={styles.consentBox}>
-          <TouchableOpacity onPress={handleOpenPrivacyPolicy} activeOpacity={0.7}>
-            <Text style={styles.consentLink}>Open Privacy Policy</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.consentRow, !privacyOpened && styles.consentRowDisabled]}
-            onPress={() => {
-              if (!privacyOpened) return;
-              setPrivacyAccepted((v) => !v);
-              setFieldErrors((e) => ({ ...e, privacy: '' }));
-            }}
-            activeOpacity={privacyOpened ? 0.7 : 1}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: privacyAccepted, disabled: !privacyOpened }}
-          >
-            <View style={[styles.checkbox, privacyAccepted && styles.checkboxChecked]}>
-              {privacyAccepted && <Feather name="check" size={12} color={colors.bg} />}
-            </View>
-            <Text style={[styles.consentLabel, !privacyOpened && styles.consentLabelDisabled]}>
-              I have read and agree to the Privacy Policy
-            </Text>
-          </TouchableOpacity>
-
-          {fieldErrors.privacy ? (
-            <Text style={styles.consentError}>{fieldErrors.privacy}</Text>
-          ) : null}
-        </View>
-
         {globalError ? (
           <Text style={styles.errorBanner}>{globalError}</Text>
         ) : null}
@@ -243,9 +180,33 @@ export default function SignUpScreen() {
           onPress={handleSignUp}
           loading={loading}
           style={styles.signUpButton}
-          disabled={!privacyAccepted}
         />
       </View>
+
+      <View style={styles.divider}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>or continue with</Text>
+        <View style={styles.dividerLine} />
+      </View>
+
+      <SocialAuthButtons
+        mode="sign-up"
+        loadingProvider={socialLoading}
+        onGooglePress={handleGoogleSignUp}
+        onApplePress={handleAppleSignUp}
+      />
+
+      <Text style={styles.legal}>
+        By signing up, you agree to our{' '}
+        <Text style={styles.legalLink} onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}>
+          Terms &amp; Conditions
+        </Text>
+        {' '}and{' '}
+        <Text style={styles.legalLink} onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}>
+          Privacy Policy
+        </Text>
+        .
+      </Text>
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>Already have an account?</Text>
@@ -271,6 +232,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
   },
+  form: {
+    gap: spacing.md,
+  },
+  signUpButton: {
+    marginTop: spacing.xs,
+  },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -287,59 +254,15 @@ const styles = StyleSheet.create({
     color: colors.textSubtle,
     letterSpacing: 0.5,
   },
-  form: {
-    gap: spacing.md,
-  },
-  signUpButton: {
-    marginTop: spacing.xs,
-  },
-  socialDisclaimerLink: {
-    color: colors.accentCyan,
-  },
-  consentBox: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.sm,
-    gap: spacing.sm,
-  },
-  consentLink: {
-    color: colors.accentCyan,
-    fontSize: typography.sm,
-    fontWeight: typography.semibold,
-  },
-  consentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  consentRowDisabled: {
-    opacity: 0.45,
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxChecked: {
-    backgroundColor: colors.accentCyan,
-    borderColor: colors.accentCyan,
-  },
-  consentLabel: {
-    flex: 1,
-    color: colors.text,
-    fontSize: typography.sm,
-  },
-  consentLabelDisabled: {
-    color: colors.textMuted,
-  },
-  consentError: {
+  legal: {
+    marginTop: spacing.md,
     fontSize: typography.xs,
-    color: colors.destructive,
+    color: colors.textSubtle,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  legalLink: {
+    color: colors.accentCyan,
   },
   errorBanner: {
     fontSize: typography.sm,

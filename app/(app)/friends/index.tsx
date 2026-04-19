@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -19,18 +19,18 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { colors, radius, spacing, typography } from '@/lib/theme';
 import { useAuth } from '@/hooks/useAuth';
 import { StatusPill } from '@/components/StatusPill';
-import type { TaskStatus } from '@/lib/types';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
+import { queryKeys } from '@/lib/query/keys';
 import {
   VOUCHER_ACTIONABLE_STATUSES,
-  VOUCHER_ACTIVE_VIEW_STATUSES,
-  VOUCHER_VISIBLE_STATUSES,
-  VOUCHER_HISTORY_STATUSES,
 } from '@/lib/constants/task-status';
+import { useFriendQueue, type VoucherTaskRow, type VouchHistoryTaskRow } from '@/lib/hooks/useFriendQueue';
+import type { TaskDetailData } from '@/lib/hooks/useTaskDetail';
 
 type DecisionAction = 'accept' | 'deny' | 'proof';
 
@@ -38,20 +38,6 @@ interface TaskProof {
   signedUrl: string;
   mediaKind: 'image' | 'video';
   overlayTimestampText: string;
-}
-
-interface VoucherTaskRow {
-  id: string;
-  title: string;
-  status: TaskStatus;
-  proof_request_open: boolean;
-  has_proof: boolean;
-  proof: TaskProof | null;
-  user: {
-    id: string;
-    username: string;
-    voucher_can_view_active_tasks: boolean;
-  } | null;
 }
 
 interface ActionButtonProps {
@@ -62,20 +48,6 @@ interface ActionButtonProps {
   disabled: boolean;
   loading: boolean;
   onPress: () => void;
-}
-
-const HISTORY_PAGE_SIZE = 10;
-
-interface VouchHistoryTaskRow {
-  id: string;
-  title: string;
-  status: TaskStatus;
-  updated_at: string;
-  failure_cost_cents: number;
-  user: {
-    id: string;
-    username: string;
-  } | null;
 }
 
 function ActionButton({
@@ -107,53 +79,6 @@ function ActionButton({
       )}
     </TouchableOpacity>
   );
-}
-
-function canVoucherSeeTask(task: VoucherTaskRow): boolean {
-  if (VOUCHER_ACTIONABLE_STATUSES.includes(task.status)) return true;
-  if (VOUCHER_ACTIVE_VIEW_STATUSES.includes(task.status)) {
-    return Boolean(task.user?.voucher_can_view_active_tasks);
-  }
-  return true;
-}
-
-async function fetchProofsForTasks(taskIds: string[]): Promise<Record<string, TaskProof>> {
-  if (taskIds.length === 0) return {};
-
-  // No upload_state filter — include PENDING and UPLOADED so the proof shows
-  // as soon as the owner uploads it, regardless of the denormalized has_proof flag.
-  const { data, error } = await supabase
-    .from('task_completion_proofs')
-    .select('task_id, object_path, media_kind, overlay_timestamp_text, upload_state')
-    .in('task_id', taskIds)
-    .neq('upload_state', 'FAILED');
-
-  if (error || !data) return {};
-
-  const result: Record<string, TaskProof> = {};
-
-  await Promise.all(
-    (data as any[]).map(async (row) => {
-      const objectPath = row.object_path as string;
-      const taskId = row.task_id as string;
-      const mediaKind = (row.media_kind as string) === 'video' ? 'video' : 'image';
-      const overlayTimestampText = (row.overlay_timestamp_text as string) ?? '';
-
-      const { data: signedData, error: signedError } = await supabase.storage
-        .from('task-proofs')
-        .createSignedUrl(objectPath, 3600);
-
-      if (signedError || !signedData?.signedUrl) return;
-
-      result[taskId] = {
-        signedUrl: signedData.signedUrl,
-        mediaKind,
-        overlayTimestampText,
-      };
-    }),
-  );
-
-  return result;
 }
 
 function VideoProofPlayer({
@@ -213,30 +138,33 @@ function VideoProofPlayer({
 
 export default function FriendsScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const { width: screenWidth } = useWindowDimensions();
-  const [tasks, setTasks] = useState<VoucherTaskRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const friendQueue = useFriendQueue(user?.id, searchQuery);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [inFlightByTaskId, setInFlightByTaskId] = useState<Record<string, DecisionAction | null>>({});
   const [inFlightRectifyByTaskId, setInFlightRectifyByTaskId] = useState<Record<string, boolean>>({});
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchAnim = useRef(new Animated.Value(0)).current;
   const searchInputRef = useRef<TextInput>(null);
   const searchBarWidth = screenWidth - spacing.lg * 2 - 40;
-  const [historyTasks, setHistoryTasks] = useState<VouchHistoryTaskRow[]>([]);
-  const [historyHasMore, setHistoryHasMore] = useState(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
+  const historyLoadingMore = false;
   const [lightboxProof, setLightboxProof] = useState<TaskProof | null>(null);
 
   const proofPreviewWidth = screenWidth - spacing.md * 2;
 
   const q = searchQuery.trim().toLowerCase();
+  const tasks = friendQueue.tasks;
+  const historyTasks = friendQueue.historyTasks;
+  const loading = friendQueue.loading;
+  const historyLoading = friendQueue.historyLoading;
+  const historyHasMore = friendQueue.historyHasMore;
+  const error = actionError ?? friendQueue.error;
+  const historyError = friendQueue.historyError;
 
   const awaitingVoucherTasks = useMemo(
     () => tasks.filter((task) =>
@@ -267,6 +195,7 @@ export default function FriendsScreen() {
 
   function closeSearch() {
     setSearchQuery('');
+    setActionError(null);
     searchInputRef.current?.blur();
     Animated.spring(searchAnim, {
       toValue: 0,
@@ -274,6 +203,37 @@ export default function FriendsScreen() {
       friction: 11,
       useNativeDriver: false,
     }).start(() => setIsSearchOpen(false));
+  }
+
+  function patchFriendQueue(updater: (current: VoucherTaskRow[]) => VoucherTaskRow[]) {
+    if (!user) return;
+
+    queryClient.setQueryData<VoucherTaskRow[]>(
+      queryKeys.friendQueue(user.id),
+      (current) => updater(current ?? []),
+    );
+  }
+
+  function patchFriendHistory(updater: (current: VouchHistoryTaskRow[]) => VouchHistoryTaskRow[]) {
+    if (!user) return;
+
+    queryClient.setQueryData<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }>(
+      queryKeys.friendHistory(user.id, searchQuery),
+      (current) => {
+        const nextTasks = updater(current?.tasks ?? []);
+        return {
+          tasks: nextTasks,
+          hasMore: current?.hasMore ?? false,
+        };
+      },
+    );
+  }
+
+  function patchTaskDetail(taskId: string, updater: (current: TaskDetailData) => TaskDetailData) {
+    queryClient.setQueryData<TaskDetailData>(
+      queryKeys.taskDetail(taskId),
+      (current) => (current ? updater(current) : current),
+    );
   }
 
   async function handleRectify(task: VouchHistoryTaskRow) {
@@ -351,7 +311,26 @@ export default function FriendsScreen() {
                 return;
               }
 
-              setHistoryTasks((prev) => prev.filter((t) => t.id !== task.id));
+              const nextUpdatedAt = new Date().toISOString();
+              patchFriendHistory((current) => {
+                const nextTask: VouchHistoryTaskRow = {
+                  ...task,
+                  status: 'RECTIFIED',
+                  updated_at: nextUpdatedAt,
+                };
+
+                return [nextTask, ...current.filter((candidate) => candidate.id !== task.id)].slice(0, 10);
+              });
+              patchTaskDetail(task.id, (current) => ({
+                ...current,
+                task: current.task
+                  ? {
+                      ...current.task,
+                      status: 'RECTIFIED',
+                      updated_at: nextUpdatedAt,
+                    }
+                  : current.task,
+              }));
             } finally {
               setInFlightRectifyByTaskId((prev) => ({ ...prev, [task.id]: false }));
             }
@@ -361,182 +340,10 @@ export default function FriendsScreen() {
     );
   }
 
-  const fetchVoucherTasks = useCallback(async () => {
-    if (!user) {
-      setTasks([]);
-      setLoading(false);
-      return;
-    }
-
-    setError(null);
-
-    const { data, error: fetchError } = await supabase
-      .from('tasks')
-      .select(`
-        id,
-        title,
-        status,
-        proof_request_open,
-        has_proof,
-        user:profiles!tasks_user_id_fkey(
-          id,
-          username,
-          voucher_can_view_active_tasks
-        )
-      `)
-      .eq('voucher_id', user.id)
-      .neq('user_id', user.id)
-      .in('status', VOUCHER_VISIBLE_STATUSES)
-      .order('updated_at', { ascending: false });
-
-    if (fetchError) {
-      setError(fetchError.message);
-      setTasks([]);
-      setLoading(false);
-      return;
-    }
-
-    const rows = ((data ?? []) as any[]).map((row) => {
-      const owner = row.user as {
-        id?: string;
-        username?: string;
-        voucher_can_view_active_tasks?: boolean;
-      } | null;
-
-      return {
-        id: row.id as string,
-        title: (row.title as string) || 'Untitled task',
-        status: row.status as TaskStatus,
-        proof_request_open: Boolean(row.proof_request_open),
-        has_proof: Boolean(row.has_proof),
-        proof: null,
-        user: owner?.id
-          ? {
-              id: owner.id,
-              username: owner.username ?? 'Unknown owner',
-              voucher_can_view_active_tasks: Boolean(owner.voucher_can_view_active_tasks),
-            }
-          : null,
-      } satisfies VoucherTaskRow;
-    });
-
-    const filtered = rows.filter(canVoucherSeeTask);
-
-    // Fetch signed proof URLs for all AWAITING_VOUCHER tasks (has_proof flag is unreliable)
-    const taskIdsWithProof = filtered
-      .filter((t) => t.has_proof || t.status === 'AWAITING_VOUCHER')
-      .map((t) => t.id);
-
-    const proofsByTaskId = await fetchProofsForTasks(taskIdsWithProof);
-
-    const withProofs = filtered.map((t) => ({
-      ...t,
-      proof: proofsByTaskId[t.id] ?? null,
-    }));
-
-    setTasks(withProofs);
-    setLoading(false);
-  }, [user]);
-
-  useEffect(() => {
-    setLoading(true);
-    void fetchVoucherTasks();
-  }, [fetchVoucherTasks]);
-
-  async function fetchVouchHistory(options?: { reset?: boolean }) {
-    const shouldReset = Boolean(options?.reset);
-    const searchValue = searchQuery.trim();
-
-    if (!user) {
-      setHistoryTasks([]);
-      setHistoryHasMore(false);
-      setHistoryError(null);
-      setHistoryLoading(false);
-      setHistoryLoadingMore(false);
-      return;
-    }
-
-    if (shouldReset) {
-      setHistoryLoading(true);
-      setHistoryError(null);
-    } else {
-      setHistoryLoadingMore(true);
-    }
-
-    const offset = shouldReset ? 0 : historyTasks.length;
-    let query = supabase
-      .from('tasks')
-      .select(`
-        id,
-        title,
-        status,
-        updated_at,
-        failure_cost_cents,
-        user:profiles!tasks_user_id_fkey(
-          id,
-          username
-        )
-      `)
-      .eq('voucher_id', user.id)
-      .neq('user_id', user.id)
-      .in('status', VOUCHER_HISTORY_STATUSES)
-      .order('updated_at', { ascending: false })
-      .range(offset, offset + HISTORY_PAGE_SIZE - 1);
-
-    if (searchValue.length > 0) {
-      query = query.ilike('title', `%${searchValue}%`);
-    }
-
-    const { data, error: fetchError } = await query;
-
-    if (fetchError) {
-      setHistoryError(fetchError.message);
-      if (shouldReset) setHistoryTasks([]);
-      setHistoryHasMore(false);
-      setHistoryLoading(false);
-      setHistoryLoadingMore(false);
-      return;
-    }
-
-    const mapped = ((data ?? []) as any[]).map((row) => {
-      const owner = row.user as { id?: string; username?: string } | null;
-      return {
-        id: row.id as string,
-        title: (row.title as string) || 'Untitled task',
-        status: row.status as TaskStatus,
-        updated_at: row.updated_at as string,
-        failure_cost_cents: (row.failure_cost_cents as number) ?? 0,
-        user: owner?.id
-          ? {
-              id: owner.id,
-              username: owner.username ?? 'Unknown owner',
-            }
-          : null,
-      } satisfies VouchHistoryTaskRow;
-    });
-
-    setHistoryTasks((prev) => {
-      if (shouldReset) return mapped;
-      const existingIds = new Set(prev.map((t) => t.id));
-      return [...prev, ...mapped.filter((t) => !existingIds.has(t.id))];
-    });
-    setHistoryHasMore(mapped.length === HISTORY_PAGE_SIZE);
-    setHistoryLoading(false);
-    setHistoryLoadingMore(false);
-  }
-
   useEffect(() => {
     if (searchQuery.trim() && !historyOpen) {
       setHistoryOpen(true);
     }
-  }, [searchQuery]);
-
-  useEffect(() => {
-    if (!historyOpen) return;
-    const timeoutId = setTimeout(() => {
-      void fetchVouchHistory({ reset: true });
-    }, 250);
-    return () => clearTimeout(timeoutId);
   }, [historyOpen, searchQuery]);
 
   function updateInFlight(taskId: string, action: DecisionAction | null) {
@@ -546,6 +353,7 @@ export default function FriendsScreen() {
   async function handleAccept(task: VoucherTaskRow) {
     if (!user) return;
 
+    setActionError(null);
     updateInFlight(task.id, 'accept');
     try {
       const actorUserClientInstanceId = await resolveUserClientInstanceId(user.id);
@@ -568,7 +376,7 @@ export default function FriendsScreen() {
       }
       if (!updatedRows || updatedRows.length === 0) {
         Alert.alert('Task changed', 'This task is no longer waiting for your review.');
-        await fetchVoucherTasks();
+        await Promise.resolve(friendQueue.refetchQueue());
         return;
       }
 
@@ -582,10 +390,41 @@ export default function FriendsScreen() {
       });
 
       if (eventError) {
-        setError('Task accepted, but event logging failed.');
+        setActionError('Task accepted, but event logging failed.');
       }
 
-      setTasks((prev) => prev.filter((candidate) => candidate.id !== task.id));
+      const nextUpdatedAt = new Date().toISOString();
+      patchFriendQueue((current) => current.filter((candidate) => candidate.id !== task.id));
+      patchFriendHistory((current) => {
+        const nextTask: VouchHistoryTaskRow = {
+          id: task.id,
+          title: task.title,
+          status: 'ACCEPTED',
+          updated_at: nextUpdatedAt,
+          failure_cost_cents: task.failure_cost_cents,
+          user: task.user
+            ? {
+                id: task.user.id,
+                username: task.user.username,
+              }
+            : null,
+        };
+
+        return [nextTask, ...current.filter((candidate) => candidate.id !== task.id)].slice(0, 10);
+      });
+      patchTaskDetail(task.id, (current) => ({
+        ...current,
+        task: current.task
+          ? {
+              ...current.task,
+              status: 'ACCEPTED',
+              proof_request_open: false,
+              proof_requested_at: null,
+              proof_requested_by: null,
+              updated_at: nextUpdatedAt,
+            }
+          : current.task,
+      }));
     } finally {
       updateInFlight(task.id, null);
     }
@@ -594,6 +433,7 @@ export default function FriendsScreen() {
   async function handleDeny(task: VoucherTaskRow) {
     if (!user) return;
 
+    setActionError(null);
     updateInFlight(task.id, 'deny');
     try {
       const actorUserClientInstanceId = await resolveUserClientInstanceId(user.id);
@@ -616,7 +456,7 @@ export default function FriendsScreen() {
       }
       if (!updatedRows || updatedRows.length === 0) {
         Alert.alert('Task changed', 'This task is no longer waiting for your review.');
-        await fetchVoucherTasks();
+        await Promise.resolve(friendQueue.refetchQueue());
         return;
       }
 
@@ -630,10 +470,41 @@ export default function FriendsScreen() {
       });
 
       if (eventError) {
-        setError('Task denied, but event logging failed.');
+        setActionError('Task denied, but event logging failed.');
       }
 
-      setTasks((prev) => prev.filter((candidate) => candidate.id !== task.id));
+      const nextUpdatedAt = new Date().toISOString();
+      patchFriendQueue((current) => current.filter((candidate) => candidate.id !== task.id));
+      patchFriendHistory((current) => {
+        const nextTask: VouchHistoryTaskRow = {
+          id: task.id,
+          title: task.title,
+          status: 'DENIED',
+          updated_at: nextUpdatedAt,
+          failure_cost_cents: task.failure_cost_cents,
+          user: task.user
+            ? {
+                id: task.user.id,
+                username: task.user.username,
+              }
+            : null,
+        };
+
+        return [nextTask, ...current.filter((candidate) => candidate.id !== task.id)].slice(0, 10);
+      });
+      patchTaskDetail(task.id, (current) => ({
+        ...current,
+        task: current.task
+          ? {
+              ...current.task,
+              status: 'DENIED',
+              proof_request_open: false,
+              proof_requested_at: null,
+              proof_requested_by: null,
+              updated_at: nextUpdatedAt,
+            }
+          : current.task,
+      }));
     } finally {
       updateInFlight(task.id, null);
     }
@@ -642,6 +513,7 @@ export default function FriendsScreen() {
   async function handleRequestProof(task: VoucherTaskRow) {
     if (!user) return;
 
+    setActionError(null);
     updateInFlight(task.id, 'proof');
     try {
       const actorUserClientInstanceId = await resolveUserClientInstanceId(user.id);
@@ -665,7 +537,7 @@ export default function FriendsScreen() {
       }
       if (!updatedRows || updatedRows.length === 0) {
         Alert.alert('Task changed', 'This task is no longer awaiting voucher response.');
-        await fetchVoucherTasks();
+        await Promise.resolve(friendQueue.refetchQueue());
         return;
       }
 
@@ -679,16 +551,28 @@ export default function FriendsScreen() {
       });
 
       if (eventError) {
-        setError('Proof requested, but event logging failed.');
+        setActionError('Proof requested, but event logging failed.');
       }
 
-      setTasks((prev) =>
-        prev.map((candidate) => (
+      patchFriendQueue((current) =>
+        current.map((candidate) => (
           candidate.id === task.id
             ? { ...candidate, proof_request_open: true }
             : candidate
         )),
       );
+      patchTaskDetail(task.id, (current) => ({
+        ...current,
+        task: current.task
+          ? {
+              ...current.task,
+              proof_request_open: true,
+              proof_requested_at: nowIso,
+              proof_requested_by: user.id,
+              updated_at: nowIso,
+            }
+          : current.task,
+      }));
     } finally {
       updateInFlight(task.id, null);
     }
@@ -753,8 +637,8 @@ export default function FriendsScreen() {
               onRefresh={() => {
                 setRefreshing(true);
                 Promise.all([
-                  fetchVoucherTasks(),
-                  historyOpen ? fetchVouchHistory({ reset: true }) : Promise.resolve(),
+                  friendQueue.refetchQueue(),
+                  historyOpen ? friendQueue.refetchHistory() : Promise.resolve(),
                 ]).finally(() => setRefreshing(false));
               }}
               tintColor={colors.accentCyan}
@@ -888,7 +772,7 @@ export default function FriendsScreen() {
                 const next = !historyOpen;
                 setHistoryOpen(next);
                 if (next && historyTasks.length === 0 && !historyLoading) {
-                  void fetchVouchHistory({ reset: true });
+                  void friendQueue.refetchHistory();
                 }
               }}
             >
@@ -966,7 +850,7 @@ export default function FriendsScreen() {
                     {historyHasMore ? (
                       <TouchableOpacity
                         style={[styles.loadMoreButton, historyLoadingMore && styles.actionButtonDisabled]}
-                        onPress={() => { void fetchVouchHistory({ reset: false }); }}
+                        onPress={() => { void friendQueue.refetchHistory(); }}
                         disabled={historyLoadingMore}
                         activeOpacity={0.8}
                       >

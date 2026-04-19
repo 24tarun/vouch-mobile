@@ -18,6 +18,7 @@ interface CollapsibleSectionProps {
   onPostpone?: (task: TaskRowData) => void | Promise<void>;
   onDelete?: (task: TaskRowData) => void | Promise<void>;
   defaultPomoDurationMinutes?: number;
+  onSubtaskComposerFocus?: (inputBottomY: number) => void;
 }
 
 export function CollapsibleSection({
@@ -32,6 +33,7 @@ export function CollapsibleSection({
   onPostpone,
   onDelete,
   defaultPomoDurationMinutes = 25,
+  onSubtaskComposerFocus,
 }: CollapsibleSectionProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
@@ -67,6 +69,7 @@ export function CollapsibleSection({
               onPostpone={onPostpone}
               onDelete={onDelete}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}
+              onSubtaskComposerFocus={onSubtaskComposerFocus}
             />
           ))}
 

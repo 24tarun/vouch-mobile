@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
@@ -47,8 +49,6 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Allow Vouch to use your camera to capture photo or video proof.</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow Vouch to record audio while capturing video proof.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
@@ -61,6 +61,10 @@
 	<true/>
 	<key>RCTRootViewBackgroundColor</key>
 	<integer>4279176975</integer>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

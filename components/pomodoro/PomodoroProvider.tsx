@@ -3,6 +3,7 @@ import { Alert, AppState } from 'react-native';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import type { PomoSession } from '@/lib/types';
+import { createRealtimeRateLimiter } from '@/lib/query/realtimeRateLimiter';
 import { PomodoroTimer } from './PomodoroTimer';
 
 type PomoEndSource = 'manual_stop' | 'timer_completed' | 'system';
@@ -45,11 +46,14 @@ export function PomodoroProvider({ children }: { children: ReactNode }) {
   const [minimized, setMinimized] = useState(false);
   const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
   const pomoChannelRef = useRef<RealtimeChannel | null>(null);
+  const pomoRefreshLimiterRef = useRef<ReturnType<typeof createRealtimeRateLimiter> | null>(null);
   const locallyStartedSessionIdRef = useRef<string | null>(null);
   const lastSeenSessionIdRef = useRef<string | null>(null);
 
   const clearPomoChannel = useCallback(() => {
     const channel = pomoChannelRef.current;
+    pomoRefreshLimiterRef.current?.dispose();
+    pomoRefreshLimiterRef.current = null;
     if (!channel) return;
     void supabase.removeChannel(channel);
     pomoChannelRef.current = null;
@@ -121,6 +125,12 @@ export function PomodoroProvider({ children }: { children: ReactNode }) {
 
     const subscribeToPomoSessions = (userId: string) => {
       clearPomoChannel();
+      pomoRefreshLimiterRef.current = createRealtimeRateLimiter({
+        label: `pomo-sessions:${userId}`,
+        callback: () => {
+          void refreshSession();
+        },
+      });
       const channel = supabase
         .channel(`realtime:pomo_sessions:${userId}`)
         .on(
@@ -132,7 +142,7 @@ export function PomodoroProvider({ children }: { children: ReactNode }) {
             filter: `user_id=eq.${userId}`,
           },
           () => {
-            void refreshSession();
+            pomoRefreshLimiterRef.current?.trigger();
           },
         )
         .subscribe((status) => {

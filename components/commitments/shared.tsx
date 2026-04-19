@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,6 +11,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { colors, radius, spacing, typography } from '@/lib/theme';
@@ -20,6 +21,8 @@ import {
   toDateOnlyString as toDateOnly,
   parseDateOnly,
 } from '@/lib/utils/date-only';
+import { queryKeys } from '@/lib/query/keys';
+import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
 
 export function formatCents(cents: number, currency: Currency): string {
   const major = Math.round(cents / 100);
@@ -61,13 +64,16 @@ export function DayStrip({ item }: { item: CommitmentListItem }) {
   const today = toDateOnly(new Date());
   const statusByDate = new Map(day_statuses.map((d) => [d.date, d.status]));
 
-  const days: string[] = [];
-  const cursor = new Date(`${start_date}T00:00:00.000Z`);
-  const endMs = new Date(`${end_date}T00:00:00.000Z`).getTime();
-  while (cursor.getTime() <= endMs) {
-    days.push(cursor.toISOString().slice(0, 10));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
+  const days = useMemo(() => {
+    const nextDays: string[] = [];
+    const cursor = new Date(`${start_date}T00:00:00.000Z`);
+    const endMs = new Date(`${end_date}T00:00:00.000Z`).getTime();
+    while (cursor.getTime() <= endMs) {
+      nextDays.push(cursor.toISOString().slice(0, 10));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return nextDays;
+  }, [start_date, end_date]);
 
   const visibleCount = Math.min(5, days.length || 1);
   const tileGap = spacing.xs;
@@ -187,65 +193,92 @@ export function LinkedTaskRow({
 }
 
 export function useCommitmentLinks(commitmentId: string | null) {
-  const [linkedTasks, setLinkedTasks] = useState<LinkedTask[]>([]);
-  const [loadingLinks, setLoadingLinks] = useState(true);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    if (!commitmentId) return;
-    let cancelled = false;
-    setLoadingLinks(true);
+  const query = useQuery({
+    queryKey: queryKeys.commitmentLinks(commitmentId),
+    queryFn: async () => {
+      const { data: links, error: linksError } = await supabase
+        .from('commitment_task_links')
+        .select('id, task_id, recurrence_rule_id')
+        .eq('commitment_id', commitmentId!)
+        .order('created_at', { ascending: true });
 
-    async function fetchLinks() {
-      try {
-        const { data: links } = await supabase
-          .from('commitment_task_links')
-          .select('id, task_id, recurrence_rule_id')
-          .eq('commitment_id', commitmentId)
-          .order('created_at', { ascending: true });
-
-        if (cancelled || !links) return;
-
-        const taskIds = links.filter((l: any) => l.task_id).map((l: any) => l.task_id as string);
-        const ruleIds = links.filter((l: any) => l.recurrence_rule_id).map((l: any) => l.recurrence_rule_id as string);
-
-        const [tasksRes, rulesRes] = await Promise.all([
-          taskIds.length > 0
-            ? supabase.from('tasks').select('id, title, failure_cost_cents, deadline').in('id', taskIds)
-            : Promise.resolve({ data: [] }),
-          ruleIds.length > 0
-            ? supabase.from('recurrence_rules').select('id, title, failure_cost_cents').in('id', ruleIds)
-            : Promise.resolve({ data: [] }),
-        ]);
-
-        if (cancelled) return;
-
-        const taskMap = new Map((tasksRes.data ?? []).map((t: any) => [t.id, t]));
-        const ruleMap = new Map((rulesRes.data ?? []).map((r: any) => [r.id, r]));
-
-        setLinkedTasks(
-          links.map((link: any) => {
-            const task = link.task_id ? taskMap.get(link.task_id) : null;
-            const rule = link.recurrence_rule_id ? ruleMap.get(link.recurrence_rule_id) : null;
-            return {
-              linkId: link.id,
-              sourceId: link.task_id ?? link.recurrence_rule_id ?? undefined,
-              title: task?.title ?? rule?.title ?? 'Unknown',
-              type: link.task_id ? 'task' : 'rule',
-              failureCostCents: Number(task?.failure_cost_cents ?? rule?.failure_cost_cents ?? 0),
-              deadline: task?.deadline,
-            } satisfies LinkedTask;
-          }),
-        );
-      } finally {
-        if (!cancelled) setLoadingLinks(false);
+      if (linksError) {
+        throw new Error(linksError.message);
       }
-    }
 
-    fetchLinks();
-    return () => { cancelled = true; };
-  }, [commitmentId]);
+      const taskIds = ((links ?? []) as any[]).filter((link) => link.task_id).map((link) => link.task_id as string);
+      const ruleIds = ((links ?? []) as any[]).filter((link) => link.recurrence_rule_id).map((link) => link.recurrence_rule_id as string);
 
-  return { linkedTasks, setLinkedTasks, loadingLinks };
+      const [tasksRes, rulesRes] = await Promise.all([
+        taskIds.length > 0
+          ? supabase.from('tasks').select('id, title, failure_cost_cents, deadline').in('id', taskIds)
+          : Promise.resolve({ data: [], error: null }),
+        ruleIds.length > 0
+          ? supabase.from('recurrence_rules').select('id, title, failure_cost_cents').in('id', ruleIds)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+
+      if (tasksRes.error) {
+        throw new Error(tasksRes.error.message);
+      }
+      if (rulesRes.error) {
+        throw new Error(rulesRes.error.message);
+      }
+
+      const taskMap = new Map((tasksRes.data ?? []).map((task: any) => [task.id, task]));
+      const ruleMap = new Map((rulesRes.data ?? []).map((rule: any) => [rule.id, rule]));
+
+      return ((links ?? []) as any[]).map((link) => {
+        const task = link.task_id ? taskMap.get(link.task_id) : null;
+        const rule = link.recurrence_rule_id ? ruleMap.get(link.recurrence_rule_id) : null;
+        return {
+          linkId: link.id,
+          sourceId: link.task_id ?? link.recurrence_rule_id ?? undefined,
+          title: task?.title ?? rule?.title ?? 'Unknown',
+          type: link.task_id ? 'task' : 'rule',
+          failureCostCents: Number(task?.failure_cost_cents ?? rule?.failure_cost_cents ?? 0),
+          deadline: task?.deadline,
+        } satisfies LinkedTask;
+      });
+    },
+    enabled: Boolean(commitmentId),
+  });
+
+  useRealtimeInvalidation({
+    channelName: `commitment-links:${commitmentId ?? 'none'}`,
+    enabled: Boolean(commitmentId),
+    subscriptions: commitmentId
+      ? [
+          { table: 'commitment_task_links', filter: `commitment_id=eq.${commitmentId}` },
+          { table: 'tasks' },
+          { table: 'recurrence_rules' },
+        ]
+      : [],
+    invalidateKeys: [queryKeys.commitmentLinks(commitmentId)],
+  });
+
+  return {
+    linkedTasks: query.data ?? [],
+    setLinkedTasks: useCallback((value: SetStateAction<LinkedTask[]>) => {
+      if (!commitmentId) return;
+
+      queryClient.setQueryData<LinkedTask[]>(
+        queryKeys.commitmentLinks(commitmentId),
+        (current) => {
+          const previous = current ?? [];
+          return typeof value === 'function'
+            ? (value as (prevState: LinkedTask[]) => LinkedTask[])(previous)
+            : value;
+        },
+      );
+    }, [commitmentId, queryClient]),
+    loadingLinks: query.isLoading,
+    refetchLinks: useCallback(() => {
+      void query.refetch();
+    }, [query]),
+  };
 }
 
 export function TaskPickerModal({

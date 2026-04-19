@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import type { Commitment, CommitmentStatus, CommitmentTaskLink, Currency } from '@/lib/types';
+import { useAuth } from '@/hooks/useAuth';
+import { queryKeys } from '@/lib/query/keys';
+import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
 
 // ─── Day status ───────────────────────────────────────────────────────────────
 
@@ -162,167 +166,147 @@ function getDayStatuses(
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useCommitments(): UseCommitmentsResult {
-  const [commitments, setCommitments] = useState<CommitmentListItem[]>([]);
-  const [currency, setCurrency] = useState<Currency>('USD');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
+async function fetchCommitments(userId: string): Promise<CommitmentListItem[]> {
+  const { data: commitmentsData, error: commitmentsError } = await supabase
+    .from('commitments')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
 
-  useEffect(() => {
-    let cancelled = false;
+  if (commitmentsError) {
+    throw new Error(commitmentsError.message);
+  }
 
-    async function fetchData() {
-      setLoading(true);
-      setError(null);
+  const rawCommitments = (commitmentsData ?? []) as Commitment[];
+  if (rawCommitments.length === 0) {
+    return [];
+  }
 
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const userId = session?.user?.id;
-        if (!userId) {
-          if (!cancelled) setLoading(false);
-          return;
-        }
+  const commitmentIds = rawCommitments.map((commitment) => commitment.id);
+  const { data: linksData, error: linksError } = await supabase
+    .from('commitment_task_links')
+    .select('*')
+    .in('commitment_id', commitmentIds)
+    .order('created_at', { ascending: true });
 
-        // Fetch commitments and profile in parallel
-        const [commitmentsRes, profileRes] = await Promise.all([
-          supabase
-            .from('commitments')
-            .select('*')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false }),
-          supabase
-            .from('profiles')
-            .select('currency')
-            .eq('id', userId)
-            .single(),
-        ]);
+  if (linksError) {
+    throw new Error(linksError.message);
+  }
 
-        if (cancelled) return;
-        if (commitmentsRes.error) { setError(commitmentsRes.error.message); return; }
+  const links = (linksData ?? []) as CommitmentTaskLink[];
+  const taskIds = [...new Set(links.map((link) => link.task_id).filter((id): id is string => Boolean(id)))];
+  const ruleIds = [...new Set(links.map((link) => link.recurrence_rule_id).filter((id): id is string => Boolean(id)))];
+  const allStarts = rawCommitments.map((commitment) => commitment.start_date).sort();
+  const allEnds = rawCommitments.map((commitment) => commitment.end_date).sort();
+  const minStart = allStarts[0];
+  const maxEnd = allEnds[allEnds.length - 1];
 
-        const rawCommitments = (commitmentsRes.data ?? []) as Commitment[];
-        if (profileRes.data?.currency) {
-          setCurrency(profileRes.data.currency as Currency);
-        }
+  const [oneOffRes, recurringRes] = await Promise.all([
+    taskIds.length > 0
+      ? supabase
+          .from('tasks')
+          .select('id, title, status, deadline, failure_cost_cents, recurrence_rule_id')
+          .eq('user_id', userId)
+          .in('id', taskIds)
+          .neq('status', 'DELETED')
+      : Promise.resolve({ data: [], error: null }),
+    ruleIds.length > 0 && minStart && maxEnd
+      ? supabase
+          .from('tasks')
+          .select('id, title, status, deadline, failure_cost_cents, recurrence_rule_id')
+          .eq('user_id', userId)
+          .in('recurrence_rule_id', ruleIds)
+          .gte('deadline', `${minStart}T00:00:00.000Z`)
+          .lte('deadline', `${maxEnd}T23:59:59.999Z`)
+          .neq('status', 'DELETED')
+      : Promise.resolve({ data: [], error: null }),
+  ]);
 
-        if (rawCommitments.length === 0) {
-          setCommitments([]);
-          return;
-        }
+  if (oneOffRes.error) throw new Error(oneOffRes.error.message);
+  if (recurringRes.error) throw new Error(recurringRes.error.message);
 
-        const commitmentIds = rawCommitments.map((c) => c.id);
+  const oneOffById = new Map<string, CommitmentTaskLite>();
+  for (const task of ((oneOffRes.data ?? []) as CommitmentTaskLite[])) {
+    oneOffById.set(task.id, task);
+  }
+  const recurringInstances = (recurringRes.data ?? []) as CommitmentTaskLite[];
 
-        // Fetch links
-        const { data: linksData, error: linksError } = await supabase
-          .from('commitment_task_links')
-          .select('*')
-          .in('commitment_id', commitmentIds)
-          .order('created_at', { ascending: true });
+  const linksByCommitmentId = new Map<string, CommitmentTaskLink[]>();
+  for (const link of links) {
+    const bucket = linksByCommitmentId.get(link.commitment_id) ?? [];
+    bucket.push(link);
+    linksByCommitmentId.set(link.commitment_id, bucket);
+  }
 
-        if (cancelled) return;
-        if (linksError) { setError(linksError.message); return; }
+  return rawCommitments.map((commitment) => {
+    const commitmentLinks = linksByCommitmentId.get(commitment.id) ?? [];
+    const ruleIdsForThis = new Set(
+      commitmentLinks
+        .map((link) => link.recurrence_rule_id)
+        .filter((id): id is string => Boolean(id)),
+    );
 
-        const links = (linksData ?? []) as CommitmentTaskLink[];
-
-        // Collect task IDs and recurrence rule IDs
-        const taskIds = [...new Set(links.map((l) => l.task_id).filter((id): id is string => Boolean(id)))];
-        const ruleIds = [...new Set(links.map((l) => l.recurrence_rule_id).filter((id): id is string => Boolean(id)))];
-
-        // Date window for recurring instances
-        const allStarts = rawCommitments.map((c) => c.start_date).sort();
-        const allEnds = rawCommitments.map((c) => c.end_date).sort();
-        const minStart = allStarts[0];
-        const maxEnd = allEnds[allEnds.length - 1];
-
-        // Fetch one-off tasks and recurring instances in parallel
-        const [oneOffRes, recurringRes] = await Promise.all([
-          taskIds.length > 0
-            ? supabase
-                .from('tasks')
-                .select('id, title, status, deadline, failure_cost_cents, recurrence_rule_id')
-                .eq('user_id', userId)
-                .in('id', taskIds)
-                .neq('status', 'DELETED')
-            : Promise.resolve({ data: [], error: null }),
-          ruleIds.length > 0 && minStart && maxEnd
-            ? supabase
-                .from('tasks')
-                .select('id, title, status, deadline, failure_cost_cents, recurrence_rule_id')
-                .eq('user_id', userId)
-                .in('recurrence_rule_id', ruleIds)
-                .gte('deadline', `${minStart}T00:00:00.000Z`)
-                .lte('deadline', `${maxEnd}T23:59:59.999Z`)
-                .neq('status', 'DELETED')
-            : Promise.resolve({ data: [], error: null }),
-        ]);
-
-        if (cancelled) return;
-
-        const oneOffById = new Map<string, CommitmentTaskLite>();
-        for (const t of ((oneOffRes.data ?? []) as CommitmentTaskLite[])) {
-          oneOffById.set(t.id, t);
-        }
-        const recurringInstances = (recurringRes.data ?? []) as CommitmentTaskLite[];
-
-        // Build commitment task map
-        const linksByCommitmentId = new Map<string, CommitmentTaskLink[]>();
-        for (const link of links) {
-          const arr = linksByCommitmentId.get(link.commitment_id) ?? [];
-          arr.push(link);
-          linksByCommitmentId.set(link.commitment_id, arr);
-        }
-
-        // Compute derived data for each commitment
-        const items: CommitmentListItem[] = rawCommitments.map((c) => {
-          const commitmentLinks = linksByCommitmentId.get(c.id) ?? [];
-          const ruleIdsForThis = new Set(
-            commitmentLinks.map((l) => l.recurrence_rule_id).filter((id): id is string => Boolean(id)),
-          );
-
-          const linkedTasks: CommitmentTaskLite[] = [];
-          for (const link of commitmentLinks) {
-            if (link.task_id) {
-              const t = oneOffById.get(link.task_id);
-              if (t) linkedTasks.push(t);
-            }
-          }
-          for (const t of recurringInstances) {
-            if (!t.recurrence_rule_id || !ruleIdsForThis.has(t.recurrence_rule_id)) continue;
-            const d = toDateOnly(t.deadline);
-            if (!d || d < c.start_date || d > c.end_date) continue;
-            linkedTasks.push(t);
-          }
-
-          return {
-            ...c,
-            derived_status: computeDerivedStatus(c, linkedTasks),
-            earned_so_far_cents: computeEarnedSoFar(linkedTasks, c.start_date, c.end_date),
-            total_target_cents: computeTotalTarget(linkedTasks, c.start_date, c.end_date),
-            days_total: dayDiffInclusive(c.start_date, c.end_date),
-            days_remaining: Math.max(0, dayDiffFromToday(c.end_date)),
-            starts_in_days: dayDiffFromToday(c.start_date),
-            day_statuses: getDayStatuses(linkedTasks, c.start_date, c.end_date),
-          };
-        });
-
-        if (!cancelled) setCommitments(items);
-      } catch (err: any) {
-        if (!cancelled) setError(err?.message ?? 'Failed to load commitments');
-      } finally {
-        if (!cancelled) setLoading(false);
+    const linkedTasks: CommitmentTaskLite[] = [];
+    for (const link of commitmentLinks) {
+      if (link.task_id) {
+        const task = oneOffById.get(link.task_id);
+        if (task) linkedTasks.push(task);
       }
     }
 
-    fetchData();
-    return () => { cancelled = true; };
-  }, [tick]);
+    for (const task of recurringInstances) {
+      if (!task.recurrence_rule_id || !ruleIdsForThis.has(task.recurrence_rule_id)) continue;
+      const deadlineDate = toDateOnly(task.deadline);
+      if (!deadlineDate || deadlineDate < commitment.start_date || deadlineDate > commitment.end_date) continue;
+      linkedTasks.push(task);
+    }
+
+    return {
+      ...commitment,
+      derived_status: computeDerivedStatus(commitment, linkedTasks),
+      earned_so_far_cents: computeEarnedSoFar(linkedTasks, commitment.start_date, commitment.end_date),
+      total_target_cents: computeTotalTarget(linkedTasks, commitment.start_date, commitment.end_date),
+      days_total: dayDiffInclusive(commitment.start_date, commitment.end_date),
+      days_remaining: Math.max(0, dayDiffFromToday(commitment.end_date)),
+      starts_in_days: dayDiffFromToday(commitment.start_date),
+      day_statuses: getDayStatuses(linkedTasks, commitment.start_date, commitment.end_date),
+    };
+  });
+}
+
+export function useCommitments(): UseCommitmentsResult {
+  const { user, profile } = useAuth();
+  const query = useQuery({
+    queryKey: queryKeys.commitments(user?.id),
+    queryFn: () => fetchCommitments(user!.id),
+    enabled: Boolean(user?.id),
+  });
+
+  const subscriptions = useMemo(
+    () => user?.id
+      ? [
+          { table: 'commitments', filter: `user_id=eq.${user.id}` },
+          { table: 'commitment_task_links' },
+          { table: 'tasks', filter: `user_id=eq.${user.id}` },
+        ]
+      : [],
+    [user?.id],
+  );
+
+  useRealtimeInvalidation({
+    channelName: `commitments:${user?.id ?? 'anon'}`,
+    enabled: Boolean(user?.id),
+    subscriptions,
+    invalidateKeys: [queryKeys.commitments(user?.id)],
+  });
 
   return {
-    commitments,
-    currency,
-    loading,
-    error,
-    refetch: useCallback(() => setTick((t) => t + 1), []),
+    commitments: query.data ?? [],
+    currency: (profile?.currency ?? 'USD') as Currency,
+    loading: query.isLoading,
+    error: query.error instanceof Error ? query.error.message : null,
+    refetch: useCallback(() => {
+      void query.refetch();
+    }, [query]),
   };
 }

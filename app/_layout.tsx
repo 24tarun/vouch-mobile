@@ -1,11 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
-import { useAuth } from '@/hooks/useAuth';
+import * as SplashScreen from 'expo-splash-screen';
+import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { colors } from '@/lib/theme';
 import {
   clearLocalReminderNotificationsAsync,
@@ -14,18 +15,23 @@ import {
   syncLocalReminderNotificationsAsync,
 } from '@/lib/notifications';
 import { PomodoroProvider } from '@/components/pomodoro/PomodoroProvider';
+import { AppQueryProvider } from '@/lib/query/client';
+
+void SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function AuthGuard() {
-  const { session, loading } = useAuth();
+  const { session, authInitialized } = useAuth();
   const router = useRouter();
   const segments = useSegments();
   const notificationListener = useRef<Notifications.Subscription | null>(null);
   const responseListener = useRef<Notifications.Subscription | null>(null);
   const lastHandledNotificationId = useRef<string | null>(null);
+  const [routeReady, setRouteReady] = useState(false);
+  const [splashHidden, setSplashHidden] = useState(false);
 
-  function routeFromNotificationResponse(
+  const routeFromNotificationResponse = useCallback((
     response: Notifications.NotificationResponse | null | undefined,
-  ) {
+  ) => {
     const notificationId = response?.notification.request.identifier ?? null;
     if (!notificationId || lastHandledNotificationId.current === notificationId) {
       return;
@@ -36,23 +42,54 @@ function AuthGuard() {
 
     lastHandledNotificationId.current = notificationId;
     router.push(`/(app)/tasks/${taskId}`);
-  }
+  }, [router]);
 
   useEffect(() => {
-    if (loading) return;
+    let cancelled = false;
 
-    const inAuthGroup = segments[0] === '(auth)';
+    async function resolveInitialRoute() {
+      if (!authInitialized) return;
 
-    if (!session && !inAuthGroup) {
-      // Route unauthenticated users through onboarding on first launch,
-      // or directly to sign-in on subsequent launches.
-      AsyncStorage.getItem('vouch_onboarding_seen').then((seen) => {
-        router.replace(seen ? '/(auth)/sign-in' : '/(auth)/onboarding');
-      });
-    } else if (session && inAuthGroup) {
-      router.replace('/(app)/tasks');
+      const topSegment = (segments[0] ?? '') as string;
+      const inAppGroup = topSegment === '(app)';
+      const inAuthGroup = topSegment === '(auth)';
+      const isPublicUtilityRoute = topSegment === 'email-confirmed';
+
+      if (session) {
+        if (!inAppGroup) {
+          router.replace('/(app)/tasks');
+          return;
+        }
+        if (!cancelled) setRouteReady(true);
+        return;
+      }
+
+      if (inAuthGroup || isPublicUtilityRoute) {
+        if (!cancelled) setRouteReady(true);
+        return;
+      }
+
+      const seen = await AsyncStorage.getItem('vouch_onboarding_seen');
+      if (cancelled) return;
+      router.replace(seen ? '/(auth)/sign-in' : '/(auth)/onboarding');
     }
-  }, [session, loading, segments]);
+
+    void resolveInitialRoute();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authInitialized, session, segments, router]);
+
+  useEffect(() => {
+    if (!routeReady || splashHidden) return;
+
+    SplashScreen.hideAsync()
+      .catch(() => {})
+      .finally(() => {
+        setSplashHidden(true);
+      });
+  }, [routeReady, splashHidden]);
 
   // Register for push notifications once the user is authenticated.
   useEffect(() => {
@@ -82,20 +119,26 @@ function AuthGuard() {
       notificationListener.current?.remove();
       responseListener.current?.remove();
     };
-  }, [session?.user?.id]);
+  }, [routeFromNotificationResponse, session?.user?.id]);
 
+  // Always keep <Slot /> mounted so child navigators ((app), (auth)) are never
+  // torn down mid-navigation. The native splash screen covers the initial load.
   return <Slot />;
 }
 
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <PomodoroProvider>
-        <View style={styles.root}>
-          <StatusBar style="light" />
-          <AuthGuard />
-        </View>
-      </PomodoroProvider>
+      <AppQueryProvider>
+        <AuthProvider>
+          <PomodoroProvider>
+            <View style={styles.root}>
+              <StatusBar style="light" />
+              <AuthGuard />
+            </View>
+          </PomodoroProvider>
+        </AuthProvider>
+      </AppQueryProvider>
     </SafeAreaProvider>
   );
 }

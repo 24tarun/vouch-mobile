@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  Linking,
   StyleSheet,
   Text,
   View,
@@ -13,16 +14,33 @@ import { colors, spacing, typography } from '@/lib/theme';
 import { AuthScreenShell } from '@/components/auth/AuthScreenShell';
 import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
 
+const PRIVACY_POLICY_URL = 'https://tas.tarunh.com/privacy-policy';
+
+async function resolveEmail(input: string): Promise<{ email: string; error: string | null }> {
+  const trimmed = input.trim().toLowerCase();
+  if (trimmed.includes('@')) {
+    return { email: trimmed, error: null };
+  }
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('email')
+    .eq('username', trimmed)
+    .maybeSingle();
+  if (error) return { email: '', error: 'Could not look up username.' };
+  if (!data?.email) return { email: '', error: 'No account found with that username.' };
+  return { email: data.email, error: null };
+}
+
 export default function SignInScreen() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [socialLoading, setSocialLoading] = useState<'google' | 'apple' | null>(null);
   const [error, setError] = useState('');
 
   async function handleSignIn() {
-    if (!email.trim() || !password) {
+    if (!identifier.trim() || !password) {
       setError('Please fill in all fields.');
       return;
     }
@@ -30,16 +48,20 @@ export default function SignInScreen() {
     setLoading(true);
     setError('');
 
-    const { error: authError } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    });
+    const { email, error: lookupError } = await resolveEmail(identifier);
+    if (lookupError) {
+      setError(lookupError);
+      setLoading(false);
+      return;
+    }
+
+    const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
 
     setLoading(false);
 
     if (authError) {
       if (authError.message.toLowerCase().includes('invalid login')) {
-        setError('Incorrect email or password.');
+        setError('Incorrect email/username or password.');
       } else {
         setError(authError.message);
       }
@@ -68,27 +90,16 @@ export default function SignInScreen() {
 
   return (
     <AuthScreenShell tagline="hold yourself accountable.">
-      <SocialAuthButtons
-        mode="sign-in"
-        loadingProvider={socialLoading}
-        onGooglePress={handleGoogleSignIn}
-        onApplePress={handleAppleSignIn}
-      />
-
-      <View style={styles.divider}>
-        <View style={styles.dividerLine} />
-        <Text style={styles.dividerText}>or</Text>
-        <View style={styles.dividerLine} />
-      </View>
-
       <View style={styles.form}>
         <Input
-          label="Email"
-          placeholder="you@example.com"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          textContentType="emailAddress"
+          label="Email or Username"
+          placeholder="you@example.com or username"
+          value={identifier}
+          onChangeText={setIdentifier}
+          keyboardType="default"
+          autoCapitalize="none"
+          autoCorrect={false}
+          textContentType="username"
           returnKeyType="next"
         />
 
@@ -120,6 +131,31 @@ export default function SignInScreen() {
         />
       </View>
 
+      <View style={styles.divider}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>or continue with</Text>
+        <View style={styles.dividerLine} />
+      </View>
+
+      <SocialAuthButtons
+        mode="sign-in"
+        loadingProvider={socialLoading}
+        onGooglePress={handleGoogleSignIn}
+        onApplePress={handleAppleSignIn}
+      />
+
+      <Text style={styles.legal}>
+        By signing in, you agree to our{' '}
+        <Text style={styles.legalLink} onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}>
+          Terms &amp; Conditions
+        </Text>
+        {' '}and{' '}
+        <Text style={styles.legalLink} onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}>
+          Privacy Policy
+        </Text>
+        .
+      </Text>
+
       <View style={styles.footer}>
         <Text style={styles.footerText}>Don&apos;t have an account?</Text>
         <TextButton
@@ -140,6 +176,17 @@ export default function SignInScreen() {
 }
 
 const styles = StyleSheet.create({
+  form: {
+    gap: spacing.md,
+  },
+  signInButton: {
+    marginTop: spacing.xs,
+  },
+  errorBanner: {
+    fontSize: typography.sm,
+    color: colors.destructive,
+    paddingVertical: spacing.xs,
+  },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -156,16 +203,15 @@ const styles = StyleSheet.create({
     color: colors.textSubtle,
     letterSpacing: 0.5,
   },
-  form: {
-    gap: spacing.md,
+  legal: {
+    marginTop: spacing.md,
+    fontSize: typography.xs,
+    color: colors.textSubtle,
+    textAlign: 'center',
+    lineHeight: 18,
   },
-  signInButton: {
-    marginTop: spacing.xs,
-  },
-  errorBanner: {
-    fontSize: typography.sm,
-    color: colors.destructive,
-    paddingVertical: spacing.xs,
+  legalLink: {
+    color: colors.accentCyan,
   },
   footer: {
     marginTop: 'auto',

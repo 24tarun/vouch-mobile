@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Alert,
   Keyboard,
   Platform,
+  ScrollView,
   TextInput,
   useWindowDimensions,
   View,
@@ -12,24 +13,24 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { spacing } from '@/lib/theme';
-import { styles } from './styles';
+import { styles } from '@/components/tasks/styles';
 import {
   getTodayParts,
   sortDraftReminders,
   normalizeEventDurationMinutes,
-} from './helpers';
+} from '@/components/tasks/helpers';
 import {
   type DraftReminder,
   type DraftReminderPresetSource,
   type DraftSubtask,
   type RecurrenceType,
-} from './types';
-import { TaskTopBar } from './components/TaskTopBar';
-import { TaskContent } from './components/TaskContent';
-import { PostponeDeadlineModal } from './components/PostponeDeadlineModal';
-import { VoucherPickerModal } from './components/VoucherPickerModal';
-import { TaskCreatorOverlay } from './components/TaskCreatorOverlay';
-import { TaskSortMenu } from './components/TaskSortMenu';
+} from '@/components/tasks/types';
+import { TaskTopBar } from '@/components/tasks/TaskTopBar';
+import { TaskContent } from '@/components/tasks/TaskContent';
+import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
+import { VoucherPickerModal } from '@/components/tasks/VoucherPickerModal';
+import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
+import { TaskSortMenu } from '@/components/tasks/TaskSortMenu';
 import { taskCreatorState } from '@/lib/taskCreatorState';
 import { parseTitleForDeadline } from '@/lib/task-title-parser';
 import { useFriends } from '@/lib/hooks/useFriends';
@@ -56,6 +57,14 @@ const SORT_OPTIONS: { mode: DashboardSortMode; label: string }[] = [
   { mode: 'created_asc', label: 'Sort by time created ascending' },
   { mode: 'created_desc', label: 'Sort by time created descending' },
 ];
+
+function getFutureBoundaryMs(): number {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const boundary = new Date(startOfToday);
+  boundary.setDate(boundary.getDate() + 2);
+  return boundary.getTime();
+}
 
 export default function TasksScreen() {
   const { profile: authProfile, user } = useAuth();
@@ -90,6 +99,12 @@ export default function TasksScreen() {
   const [postponePickerDate, setPostponePickerDate] = useState<Date>(new Date());
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [creatorAnchor, setCreatorAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const taskListScrollRef = useRef<ScrollView | null>(null);
+  const taskListScrollOffsetYRef = useRef(0);
+  const focusedSubtaskInputBottomYRef = useRef<number | null>(null);
+  const keyboardTopYRef = useRef(Number.POSITIVE_INFINITY);
+  const [taskListKeyboardInset, setTaskListKeyboardInset] = useState(0);
+  const [optimisticTasks, setOptimisticTasks] = useState<TaskRowData[]>([]);
 
   const [title, setTitle] = useState('');
   const [deadlineDate, setDeadlineDate] = useState<Date>(() => {
@@ -110,7 +125,7 @@ export default function TasksScreen() {
   const { friends, currentUserId, profile, loading: friendsLoading, error: friendsError } = useFriends();
   const defaultPomoDurationMinutes = authProfile?.default_pomo_duration_minutes ?? 25;
 
-  function resolveDefaultVoucherValue(): string | null {
+  const resolveDefaultVoucherValue = useCallback((): string | null => {
     if (!profile) return null;
     const defaultVoucherId = profile.default_voucher_id ?? null;
     if (!currentUserId) return null;
@@ -120,7 +135,7 @@ export default function TasksScreen() {
       if (friends.some((friend) => friend.id === defaultVoucherId)) return defaultVoucherId;
     }
     return 'self';
-  }
+  }, [profile, currentUserId, friendsLoading, friends]);
 
   function expandCreator() {
     closeVoucherPicker();
@@ -233,6 +248,37 @@ export default function TasksScreen() {
   const [isSubtaskFocused, setIsSubtaskFocused] = useState(false);
   const trimmedSearchQuery = searchQuery.trim();
   const isSearchActive = trimmedSearchQuery.length > 0;
+
+  const mergedDueSoonTasks = useMemo(() => {
+    const existingIds = new Set(dueSoonTasks.map((task) => task.id));
+    const futureBoundaryMs = getFutureBoundaryMs();
+    const optimisticDueSoon = optimisticTasks.filter((task) => {
+      if (existingIds.has(task.id)) return false;
+      const deadlineMs = Date.parse(task.deadline);
+      return Number.isNaN(deadlineMs) || deadlineMs < futureBoundaryMs;
+    });
+    return [...optimisticDueSoon, ...dueSoonTasks];
+  }, [dueSoonTasks, optimisticTasks]);
+
+  const mergedFutureTasks = useMemo(() => {
+    const existingIds = new Set(futureTasks.map((task) => task.id));
+    const futureBoundaryMs = getFutureBoundaryMs();
+    const optimisticFuture = optimisticTasks.filter((task) => {
+      if (existingIds.has(task.id)) return false;
+      const deadlineMs = Date.parse(task.deadline);
+      return !Number.isNaN(deadlineMs) && deadlineMs >= futureBoundaryMs;
+    });
+    return [...optimisticFuture, ...futureTasks];
+  }, [futureTasks, optimisticTasks]);
+
+  useEffect(() => {
+    if (optimisticTasks.length === 0) return;
+    const serverIds = new Set([...dueSoonTasks, ...futureTasks].map((task) => task.id));
+    setOptimisticTasks((prev) => {
+      const next = prev.filter((task) => !serverIds.has(task.id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [dueSoonTasks, futureTasks, optimisticTasks.length]);
 
   useEffect(() => {
     if (!isSearchActive) {
@@ -563,18 +609,36 @@ function updateCustomReminderDatePart(dateValue: Date) {
       return;
     }
 
+    const nowIso = new Date().toISOString();
+    const deadlineIso = deadlineDate.toISOString();
+    const trimmedSubtaskTitles = draftSubtasks
+      .map((subtask) => subtask.title.trim())
+      .filter((subtaskTitle) => subtaskTitle.length > 0);
+
+    const optimisticTaskId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const optimisticTask: TaskRowData = {
+      id: optimisticTaskId,
+      title: trimmedTitle,
+      deadline: deadlineIso,
+      status: 'ACTIVE',
+      postponed_at: null,
+      recurrence_rule_id: null,
+      created_at: nowIso,
+      subtaskTotal: trimmedSubtaskTitles.length,
+      subtaskCompleted: 0,
+    };
+
+    setOptimisticTasks((prev) => [optimisticTask, ...prev]);
+    collapseCreator();
+
     setIsCreatingTask(true);
+    let createdTaskId: string | null = null;
     try {
-      const nowIso = new Date().toISOString();
       const userClientInstanceId = await resolveUserClientInstanceId(currentUserId);
       let recurrenceRuleId: string | null = null;
       const isAiVoucher = resolvedVoucherId === AI_PROFILE_ID;
       const finalRequiresProof = isAiVoucher ? true : requiresProof;
       const eventDurationMinutes = normalizeEventDurationMinutes(authProfile?.default_event_duration_minutes);
-
-      // Send deadline as an explicit UTC ISO string so the TIMESTAMPTZ column
-      // is never ambiguous regardless of the server's session timezone.
-      const deadlineIso = deadlineDate.toISOString();
       const eventEndIso = eventSyncEnabled ? deadlineIso : null;
       const eventStartIso = eventSyncEnabled
         ? new Date(deadlineDate.getTime() - eventDurationMinutes * 60 * 1000).toISOString()
@@ -629,6 +693,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
           .single();
 
         if (recurrenceRuleInsertError || !insertedRule?.id) {
+          setOptimisticTasks((prev) => prev.filter((task) => task.id !== optimisticTaskId));
           Alert.alert('Could not create task', recurrenceRuleInsertError?.message ?? 'Recurrence rule insert failed.');
           return;
         }
@@ -665,14 +730,23 @@ function updateCustomReminderDatePart(dateValue: Date) {
             .eq('id', recurrenceRuleId)
             .eq('user_id', currentUserId);
         }
+        setOptimisticTasks((prev) => prev.filter((task) => task.id !== optimisticTaskId));
         Alert.alert('Could not create task', taskInsertError?.message ?? 'Task insert failed.');
         return;
       }
 
-      const subtaskRows = draftSubtasks
-        .map((subtask) => subtask.title.trim())
-        .filter((subtaskTitle) => subtaskTitle.length > 0)
-        .map((subtaskTitle) => ({
+      createdTaskId = createdTask.id;
+      setOptimisticTasks((prev) => prev.map((task) => (
+        task.id === optimisticTaskId
+          ? {
+              ...task,
+              id: createdTask.id,
+              recurrence_rule_id: recurrenceRuleId,
+            }
+          : task
+      )));
+
+      const subtaskRows = trimmedSubtaskTitles.map((subtaskTitle) => ({
           parent_task_id: createdTask.id,
           user_id: currentUserId,
           title: subtaskTitle,
@@ -700,6 +774,9 @@ function updateCustomReminderDatePart(dateValue: Date) {
               .eq('id', recurrenceRuleId)
               .eq('user_id', currentUserId);
           }
+          setOptimisticTasks((prev) => prev.filter((task) => (
+            task.id !== optimisticTaskId && task.id !== createdTask.id
+          )));
           Alert.alert('Could not create task', subtaskInsertError.message);
           return;
         }
@@ -736,15 +813,21 @@ function updateCustomReminderDatePart(dateValue: Date) {
               .eq('id', recurrenceRuleId)
               .eq('user_id', currentUserId);
           }
+          setOptimisticTasks((prev) => prev.filter((task) => (
+            task.id !== optimisticTaskId && task.id !== createdTask.id
+          )));
           Alert.alert('Could not create task', reminderInsertError.message);
           return;
         }
       }
 
-      resetCreateDraftState();
-      collapseCreator();
       refetchTasks();
       void syncLocalReminderNotificationsAsync(currentUserId);
+    } catch (error: any) {
+      setOptimisticTasks((prev) => prev.filter((task) => (
+        task.id !== optimisticTaskId && task.id !== createdTaskId
+      )));
+      Alert.alert('Could not create task', error?.message ?? 'Unknown error');
     } finally {
       setIsCreatingTask(false);
     }
@@ -755,17 +838,6 @@ function updateCustomReminderDatePart(dateValue: Date) {
     const id = setTimeout(() => titleInputRef.current?.focus(), 180);
     return () => clearTimeout(id);
   }, [creatorExpanded]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    const show = Keyboard.addListener('keyboardDidShow', (e) => {
-      setAndroidKeyboardHeight(e.endCoordinates.height);
-    });
-    const hide = Keyboard.addListener('keyboardDidHide', () => {
-      setAndroidKeyboardHeight(0);
-    });
-    return () => { show.remove(); hide.remove(); };
-  }, []);
 
   // Initialize defaults as soon as profile/friends are available on initial screen load.
   useEffect(() => {
@@ -783,7 +855,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
         hasInitializedVoucherRef.current = true;
       }
     }
-  }, [profile, currentUserId, friends, friendsLoading]);
+  }, [profile, resolveDefaultVoucherValue]);
 
   const normalizedFriends = useMemo(
     () =>
@@ -812,6 +884,63 @@ function updateCustomReminderDatePart(dateValue: Date) {
   const [voucherDropdownHeight, setVoucherDropdownHeight] = useState(300);
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
   const sortMenuWidth = Math.min(screenWidth - spacing.lg * 2, 320);
+
+  const scrollFocusedSubtaskIntoView = useCallback((inputBottomY: number | null = focusedSubtaskInputBottomYRef.current) => {
+    if (inputBottomY == null) return;
+
+    const keyboardTopY = keyboardTopYRef.current;
+    if (!Number.isFinite(keyboardTopY)) return;
+
+    const visibilityGap = spacing.md;
+    const overlap = inputBottomY + visibilityGap - keyboardTopY;
+    if (overlap <= 0) return;
+
+    const nextOffsetY = Math.max(0, taskListScrollOffsetYRef.current + overlap);
+    taskListScrollRef.current?.scrollTo({ y: nextOffsetY, animated: true });
+  }, []);
+
+  const handleSubtaskComposerFocus = useCallback((inputBottomY: number) => {
+    focusedSubtaskInputBottomYRef.current = inputBottomY;
+    requestAnimationFrame(() => {
+      scrollFocusedSubtaskIntoView(inputBottomY);
+    });
+  }, [scrollFocusedSubtaskIntoView]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const show = Keyboard.addListener(showEvent, (e) => {
+      const nextHeight = Math.max(0, e.endCoordinates?.height ?? 0);
+      const nextScreenY = e.endCoordinates?.screenY ?? (screenHeight - nextHeight);
+
+      keyboardTopYRef.current = nextScreenY;
+      setTaskListKeyboardInset(nextHeight);
+      if (Platform.OS === 'android') {
+        setAndroidKeyboardHeight(nextHeight);
+      }
+
+      const focusedBottomY = focusedSubtaskInputBottomYRef.current;
+      if (focusedBottomY != null) {
+        requestAnimationFrame(() => {
+          scrollFocusedSubtaskIntoView(focusedBottomY);
+        });
+      }
+    });
+
+    const hide = Keyboard.addListener(hideEvent, () => {
+      keyboardTopYRef.current = Number.POSITIVE_INFINITY;
+      setTaskListKeyboardInset(0);
+      if (Platform.OS === 'android') {
+        setAndroidKeyboardHeight(0);
+      }
+    });
+
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [screenHeight, scrollFocusedSubtaskIntoView]);
 
   function openSortMenu() {
     sortButtonRef.current?.measureInWindow((x, y, width, height) => {
@@ -850,6 +979,11 @@ function updateCustomReminderDatePart(dateValue: Date) {
   const todayParts = getTodayParts();
 
   function handlePostponeTask(task: TaskRowData) {
+    if (task.id.startsWith('optimistic-')) {
+      Alert.alert('Please wait', 'Task is still being created.');
+      return;
+    }
+
     if (postponingTaskId) {
       Alert.alert('Postpone in progress', 'Please wait for the current postpone action to finish.');
       return;
@@ -916,6 +1050,11 @@ function updateCustomReminderDatePart(dateValue: Date) {
   }
 
   async function handleProofPicked(taskId: string, asset: ImagePickerAsset) {
+    if (taskId.startsWith('optimistic-')) {
+      Alert.alert('Please wait', 'Task is still being created.');
+      return;
+    }
+
     if (proofUploadTaskId) {
       Alert.alert('Upload in progress', 'Please wait for the current proof upload to finish.');
       return;
@@ -936,6 +1075,11 @@ function updateCustomReminderDatePart(dateValue: Date) {
   }
 
   async function handleCompleteTask(taskId: string) {
+    if (taskId.startsWith('optimistic-')) {
+      Alert.alert('Please wait', 'Task is still being created.');
+      return;
+    }
+
     const result = await completeTask(taskId);
     if (!result.success) {
       Alert.alert('Could not complete task', result.error ?? 'Unknown error');
@@ -947,6 +1091,11 @@ function updateCustomReminderDatePart(dateValue: Date) {
   }
 
   async function handleDeleteTask(task: TaskRowData) {
+    if (task.id.startsWith('optimistic-')) {
+      Alert.alert('Please wait', 'Task is still being created.');
+      return;
+    }
+
     const isWithinDeleteWindow = isTaskWithinDeleteWindow(task.created_at);
     if (!isWithinDeleteWindow) {
       Alert.alert('Delete unavailable', 'Tasks can only be deleted within 10 minutes of creation.');
@@ -967,20 +1116,6 @@ function updateCustomReminderDatePart(dateValue: Date) {
 
   return (
     <SafeAreaView ref={rootRef} style={styles.safe} edges={['top']}>
-      <TaskTopBar
-        displayName={displayName}
-        todayParts={todayParts}
-        creatorAnchorRef={creatorAnchorRef}
-        sortButtonRef={sortButtonRef}
-        searchInputRef={searchInputRef}
-        isSearchOpen={isSearchOpen}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        setIsSearchOpen={setIsSearchOpen}
-        expandCreator={expandCreator}
-        openSortMenu={openSortMenu}
-      />
-
       <TaskCreatorOverlay
         visible={creatorExpanded}
         anchor={creatorAnchor}
@@ -1059,12 +1194,27 @@ function updateCustomReminderDatePart(dateValue: Date) {
         onClose={() => setSortMenuOpen(false)}
       />
       <TaskContent
+        header={(
+          <TaskTopBar
+            displayName={displayName}
+            todayParts={todayParts}
+            creatorAnchorRef={creatorAnchorRef}
+            sortButtonRef={sortButtonRef}
+            searchInputRef={searchInputRef}
+            isSearchOpen={isSearchOpen}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            setIsSearchOpen={setIsSearchOpen}
+            expandCreator={expandCreator}
+            openSortMenu={openSortMenu}
+          />
+        )}
         isSearchActive={isSearchActive}
         searchLoading={searchLoading}
         searchError={searchError}
         searchResults={searchResults}
-        dueSoonTasks={dueSoonTasks}
-        futureTasks={futureTasks}
+        dueSoonTasks={mergedDueSoonTasks}
+        futureTasks={mergedFutureTasks}
         pastTasks={pastTasks}
         hasMorePast={hasMorePast}
         loadingMore={loadingMore}
@@ -1080,6 +1230,12 @@ function updateCustomReminderDatePart(dateValue: Date) {
         onPostpone={handlePostponeTask}
         onDelete={handleDeleteTask}
         defaultPomoDurationMinutes={defaultPomoDurationMinutes}
+        scrollRef={taskListScrollRef}
+        onScrollOffsetChange={(offsetY) => {
+          taskListScrollOffsetYRef.current = offsetY;
+        }}
+        keyboardBottomInset={taskListKeyboardInset}
+        onSubtaskComposerFocus={handleSubtaskComposerFocus}
       />
 
       <PostponeDeadlineModal

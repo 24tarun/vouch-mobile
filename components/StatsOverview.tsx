@@ -35,51 +35,72 @@ function QuickStatItem({ label, value, valueColor, glowColor }: QuickStatItemPro
   );
 }
 
-export function StatsOverview() {
+export interface StatsOverviewProps {
+  totalTasks?: number;
+  accepted?: number;
+  denied?: number;
+  missed?: number;
+  totalVouched?: number;
+  focusedSeconds?: number;
+  loading?: boolean;
+  error?: string | null;
+}
+
+export function StatsOverview({
+  totalTasks,
+  accepted,
+  denied,
+  missed,
+  totalVouched,
+  focusedSeconds = 0,
+  loading = false,
+  error = null,
+}: StatsOverviewProps) {
   const stats = useMemo(
     () => [
       {
         label: 'Total Tasks',
-        value: '48',
+        value: loading ? '—' : String(totalTasks ?? 0),
         valueColor: '#60A5FA',
         glowColor: 'rgba(96,165,250,0.45)',
       },
       {
         label: 'Accepted',
-        value: '21',
+        value: loading ? '—' : String(accepted ?? 0),
         valueColor: '#BEF264',
         glowColor: 'rgba(190,242,100,0.45)',
       },
       {
         label: 'Denied',
-        value: '4',
+        value: loading ? '—' : String(denied ?? 0),
         valueColor: '#F87171',
         glowColor: 'rgba(248,113,113,0.45)',
       },
       {
         label: 'Missed',
-        value: '6',
+        value: loading ? '—' : String(missed ?? 0),
         valueColor: '#FB7185',
         glowColor: 'rgba(251,113,133,0.45)',
       },
       {
         label: 'Total Vouched',
-        value: '31',
+        value: loading ? '—' : String(totalVouched ?? 0),
         valueColor: '#C084FC',
         glowColor: 'rgba(192,132,252,0.45)',
       },
       {
         label: 'Time Focused',
-        value: formatFocusedTime(18 * 3600 + 25 * 60),
+        value: loading ? '—' : formatFocusedTime(focusedSeconds),
         valueColor: '#22D3EE',
         glowColor: 'rgba(34,211,238,0.45)',
       },
     ],
-    [],
+    [loading, totalTasks, accepted, denied, missed, totalVouched, focusedSeconds],
   );
 
   return (
     <View style={styles.container}>
+      {error && <Text style={styles.errorText}>{error}</Text>}
       <View style={styles.grid}>
         {stats.map((stat) => (
           <QuickStatItem
@@ -124,5 +145,10 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 7,
+  },
+  errorText: {
+    fontSize: 12,
+    color: colors.destructive,
+    marginBottom: spacing.xs,
   },
 });

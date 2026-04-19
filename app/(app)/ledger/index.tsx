@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,16 +10,18 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { colors, spacing, typography } from '@/lib/theme';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { PageHeader } from '@/components/PageHeader';
+import { useLedger } from '@/lib/hooks/useLedger';
 
 type CurrencyCode = 'USD' | 'EUR' | 'INR';
 type LedgerEntryKind = 'failure' | 'rectified' | 'override' | 'voucher_timeout_penalty' | 'other';
 
 interface LedgerEntry {
   id: string;
+  taskId: string | null;
   periodId: string;
   title: string;
   amountCents: number;
@@ -41,10 +44,6 @@ function monthStart(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-function addMonths(date: Date, delta: number): Date {
-  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
-}
-
 function formatMonthId(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -64,10 +63,6 @@ function parsePeriodToLabel(periodId: string): string {
   return formatMonthLabel(new Date(year, month, 1));
 }
 
-function formatDateOnly(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
 function resolveCurrency(raw: string | null | undefined): CurrencyCode {
   if (raw === 'EUR' || raw === 'INR') return raw;
   return 'USD';
@@ -81,28 +76,6 @@ function currencySymbol(currency: CurrencyCode): string {
 
 function formatCurrency(cents: number, currency: CurrencyCode): string {
   return `${currencySymbol(currency)}${(Math.abs(cents) / 100).toFixed(2)}`;
-}
-
-function parsePeriodFromCreatedAt(createdAt: string | null | undefined, fallbackPeriod: string): string {
-  if (!createdAt) return fallbackPeriod;
-  const date = new Date(createdAt);
-  if (Number.isNaN(date.getTime())) return fallbackPeriod;
-  return formatMonthId(monthStart(date));
-}
-
-function normalizeEntryKind(raw: string): LedgerEntryKind {
-  if (raw === 'failure') return 'failure';
-  if (raw === 'rectified') return 'rectified';
-  if (raw === 'override') return 'override';
-  if (raw === 'voucher_timeout_penalty') return 'voucher_timeout_penalty';
-  return 'other';
-}
-
-function fallbackTitle(kind: LedgerEntryKind): string {
-  if (kind === 'rectified') return 'Rectified Task';
-  if (kind === 'override') return 'Override';
-  if (kind === 'voucher_timeout_penalty') return 'Voucher Timeout Penalty';
-  return 'Task Penalty';
 }
 
 function badgeForKind(kind: LedgerEntryKind): { label: string; fg: string; bg: string } {
@@ -124,17 +97,6 @@ function isReversal(kind: LedgerEntryKind, amountCents: number): boolean {
   if (kind === 'rectified' || kind === 'override') return true;
   if (kind === 'other') return amountCents < 0;
   return false;
-}
-
-function monthTotals(entries: LedgerEntry[]): { totalCents: number; failures: number } {
-  return entries.reduce(
-    (acc, entry) => {
-      acc.totalCents += entry.amountCents;
-      if (entry.kind === 'failure') acc.failures += 1;
-      return acc;
-    },
-    { totalCents: 0, failures: 0 },
-  );
 }
 
 function formatMonthNet(totalCents: number, currency: CurrencyCode): string {
@@ -180,11 +142,18 @@ function LedgerEntryRow({
   entry: LedgerEntry;
   currency: CurrencyCode;
 }) {
+  const router = useRouter();
   const badge = badgeForKind(entry.kind);
   const reversal = isReversal(entry.kind, entry.amountCents);
 
-  return (
-    <View style={styles.entryRow}>
+  function handlePress() {
+    if (entry.taskId) {
+      router.push(`/(app)/tasks/${entry.taskId}` as any);
+    }
+  }
+
+  const content = (
+    <>
       <View style={styles.entryMain}>
         <Text style={styles.entryTitle} numberOfLines={1} ellipsizeMode="tail">
           {entry.title}
@@ -193,7 +162,7 @@ function LedgerEntryRow({
           <View style={[styles.entryBadge, { backgroundColor: badge.bg }]}>
             <Text style={[styles.entryBadgeText, { color: badge.fg }]}>{badge.label}</Text>
           </View>
-          <Feather name="external-link" size={14} color={colors.textMuted} />
+          {entry.taskId && <Feather name="external-link" size={14} color={colors.textMuted} />}
         </View>
       </View>
 
@@ -202,168 +171,48 @@ function LedgerEntryRow({
           {reversal ? '+' : '-'}{formatCurrency(entry.amountCents, currency)}
         </Text>
       </View>
-    </View>
+    </>
+  );
+
+  if (!entry.taskId) {
+    return <View style={styles.entryRow}>{content}</View>;
+  }
+
+  return (
+    <TouchableOpacity
+      style={styles.entryRow}
+      onPress={handlePress}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={`View task: ${entry.title}`}
+    >
+      {content}
+    </TouchableOpacity>
   );
 }
 
 export default function LedgerScreen() {
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile } = useAuth();
   const currency = useMemo(() => resolveCurrency(profile?.currency), [profile?.currency]);
-
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [currentMonth, setCurrentMonth] = useState<LedgerMonth | null>(null);
-  const [previousMonths, setPreviousMonths] = useState<LedgerMonth[]>([]);
+  const ledger = useLedger(user?.id);
   const [openMonthById, setOpenMonthById] = useState<Record<string, boolean>>({});
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadLedger() {
-      const currentPeriodId = formatMonthId(monthStart(new Date()));
-      if (!user?.id) {
-        if (!cancelled) {
-          setCurrentMonth(emptyCurrentMonth(currentPeriodId));
-          setPreviousMonths([]);
-          setLoading(false);
-        }
-        return;
-      }
-
-      setLoading(true);
-      setError(null);
-
-      const now = new Date();
-      const currentStart = monthStart(now);
-      const nextStart = addMonths(currentStart, 1);
-      const periodStartDate = `${formatMonthId(currentStart)}-01`;
-      const periodEndDate = formatDateOnly(nextStart);
-
-      const [ledgerRes, rectifyRes, keptRes] = await Promise.all([
-        supabase
-          .from('ledger_entries')
-          .select(`
-            id,
-            period,
-            amount_cents,
-            entry_type,
-            created_at,
-            task:tasks(id, title, status)
-          `)
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from('rectify_passes')
-          .select('*', { count: 'exact', head: true })
-          .eq('user_id', user.id)
-          .eq('period', currentPeriodId),
-        supabase
-          .from('tasks')
-          .select('failure_cost_cents')
-          .eq('user_id', user.id)
-          .in('status', ['ACCEPTED', 'AUTO_ACCEPTED', 'AI_ACCEPTED'])
-          .gte('deadline', periodStartDate)
-          .lt('deadline', periodEndDate),
-      ]);
-
-      if (cancelled) return;
-
-      if (ledgerRes.error) {
-        setError(ledgerRes.error.message);
-        setLoading(false);
-        return;
-      }
-      if (rectifyRes.error) {
-        setError(rectifyRes.error.message);
-        setLoading(false);
-        return;
-      }
-      if (keptRes.error) {
-        setError(keptRes.error.message);
-        setLoading(false);
-        return;
-      }
-
-      const rawRows = (ledgerRes.data ?? []) as any[];
-      const mappedEntries: LedgerEntry[] = rawRows.map((row) => {
-        const kind = normalizeEntryKind(String(row.entry_type ?? ''));
-        const task = Array.isArray(row.task) ? row.task[0] : row.task;
-        const periodId = typeof row.period === 'string' && /^\d{4}-\d{2}$/.test(row.period)
-          ? row.period
-          : parsePeriodFromCreatedAt(row.created_at, currentPeriodId);
-        return {
-          id: String(row.id),
-          periodId,
-          title: (task?.title as string | undefined)?.trim() || fallbackTitle(kind),
-          amountCents: Number(row.amount_cents ?? 0),
-          createdAt: typeof row.created_at === 'string' ? row.created_at : new Date().toISOString(),
-          kind,
-        };
-      });
-
-      const entriesByPeriod = new Map<string, LedgerEntry[]>();
-      for (const entry of mappedEntries) {
-        const existing = entriesByPeriod.get(entry.periodId) ?? [];
-        existing.push(entry);
-        entriesByPeriod.set(entry.periodId, existing);
-      }
-      for (const [periodId, entries] of entriesByPeriod.entries()) {
-        entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-        entriesByPeriod.set(periodId, entries);
-      }
-
-      const currentEntries = entriesByPeriod.get(currentPeriodId) ?? [];
-      const currentComputed = monthTotals(currentEntries);
-      const keptCents = ((keptRes.data ?? []) as { failure_cost_cents: number | null }[]).reduce(
-        (sum, row) => sum + Number(row.failure_cost_cents ?? 0),
-        0,
-      );
-      const rectifyCount = rectifyRes.count ?? 0;
-
-      const currentMonthData: LedgerMonth = {
-        id: currentPeriodId,
-        label: parsePeriodToLabel(currentPeriodId),
-        projectedDonationCents: currentComputed.totalCents,
-        rectifyPassesUsed: rectifyCount,
-        keptCents,
-        failures: currentComputed.failures,
-        totalCents: currentComputed.totalCents,
-        entries: currentEntries,
-      };
-
-      const previousPeriodIds = Array.from(entriesByPeriod.keys())
-        .filter((periodId) => periodId !== currentPeriodId)
-        .sort((a, b) => b.localeCompare(a));
-
-      const previousMonthsData = previousPeriodIds.map((periodId) => {
-        const entries = entriesByPeriod.get(periodId) ?? [];
-        const computed = monthTotals(entries);
-        return {
-          id: periodId,
-          label: parsePeriodToLabel(periodId),
-          projectedDonationCents: computed.totalCents,
-          rectifyPassesUsed: 0,
-          keptCents: 0,
-          failures: computed.failures,
-          totalCents: computed.totalCents,
-          entries,
-        } satisfies LedgerMonth;
-      });
-
-      setCurrentMonth(currentMonthData);
-      setPreviousMonths(previousMonthsData);
-      setLoading(false);
-    }
-
-    if (!authLoading) loadLedger();
-    return () => {
-      cancelled = true;
-    };
-  }, [authLoading, user?.id]);
+  async function handleRefresh() {
+    setRefreshing(true);
+    await Promise.resolve(ledger.refetch());
+    setRefreshing(false);
+  }
 
   function toggleMonth(monthId: string) {
     setOpenMonthById((prev) => ({ ...prev, [monthId]: !prev[monthId] }));
   }
+
+  const month = ledger.data?.currentMonth ?? emptyCurrentMonth(formatMonthId(monthStart(new Date())));
+  const previousMonths = useMemo(
+    () => ledger.data?.previousMonths ?? [],
+    [ledger.data?.previousMonths],
+  );
 
   const allPreviousMonthsExpanded = useMemo(() => {
     if (previousMonths.length === 0) return false;
@@ -380,7 +229,6 @@ export default function LedgerScreen() {
     setOpenMonthById(next);
   }
 
-  const month = currentMonth ?? emptyCurrentMonth(formatMonthId(monthStart(new Date())));
   const projectedDonationDisplayCents = Math.max(0, month.projectedDonationCents);
 
   return (
@@ -390,15 +238,23 @@ export default function LedgerScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.textMuted}
+            colors={[colors.textMuted]}
+          />
+        }
       >
-        {loading ? (
+        {ledger.loading ? (
           <View style={styles.stateWrap}>
             <ActivityIndicator color={colors.accentCyan} />
             <Text style={styles.stateText}>Loading ledger...</Text>
           </View>
-        ) : error ? (
+        ) : ledger.error ? (
           <View style={styles.stateWrap}>
-            <Text style={styles.errorText}>{error}</Text>
+            <Text style={styles.errorText}>{ledger.error}</Text>
           </View>
         ) : (
           <>

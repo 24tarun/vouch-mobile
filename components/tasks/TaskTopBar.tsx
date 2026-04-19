@@ -61,11 +61,6 @@ export function TaskTopBar({
                 autoCorrect={false}
                 returnKeyType="search"
               />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={8}>
-                  <Feather name="x-circle" size={16} color={colors.textMuted} />
-                </TouchableOpacity>
-              )}
             </View>
           ) : (
             <View style={styles.inlineCreatorMain} pointerEvents="none">

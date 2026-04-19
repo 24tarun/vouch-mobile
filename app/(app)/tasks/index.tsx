@@ -12,6 +12,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { useQueryClient } from '@tanstack/react-query';
+import ConfettiCannon from 'react-native-confetti-cannon';
+import Toast from 'react-native-toast-message';
 import { spacing } from '@/lib/theme';
 import { styles } from '@/components/tasks/styles';
 import {
@@ -43,11 +46,13 @@ import { useAuth } from '@/hooks/useAuth';
 import type { Currency } from '@/lib/types';
 import { AI_PROFILE_ID, normalizeAiUsername } from '@/lib/constants/ai-profile';
 import { formatFailureCostFromCents, getFailureCostBounds } from '@/lib/domain/failure-cost';
+import { queryKeys } from '@/lib/query/keys';
 import {
   completeTask,
   deleteTask,
   postponeTaskDeadline,
   isTaskWithinDeleteWindow,
+  removeTaskProof,
   uploadTaskProof,
 } from '@/lib/tasks/task-actions';
 
@@ -68,6 +73,7 @@ function getFutureBoundaryMs(): number {
 
 export default function TasksScreen() {
   const { profile: authProfile, user } = useAuth();
+  const queryClient = useQueryClient();
   const rootRef = useRef<View | null>(null);
   const creatorAnchorRef = useRef<View | null>(null);
   const titleInputRef = useRef<TextInput | null>(null);
@@ -105,6 +111,10 @@ export default function TasksScreen() {
   const keyboardTopYRef = useRef(Number.POSITIVE_INFINITY);
   const [taskListKeyboardInset, setTaskListKeyboardInset] = useState(0);
   const [optimisticTasks, setOptimisticTasks] = useState<TaskRowData[]>([]);
+  const [optimisticallyCompletingTaskIds, setOptimisticallyCompletingTaskIds] = useState<string[]>([]);
+  const [showCompletionConfetti, setShowCompletionConfetti] = useState(false);
+  const [confettiBurstKey, setConfettiBurstKey] = useState(0);
+  const confettiHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [title, setTitle] = useState('');
   const [deadlineDate, setDeadlineDate] = useState<Date>(() => {
@@ -257,8 +267,10 @@ export default function TasksScreen() {
       const deadlineMs = Date.parse(task.deadline);
       return Number.isNaN(deadlineMs) || deadlineMs < futureBoundaryMs;
     });
-    return [...optimisticDueSoon, ...dueSoonTasks];
-  }, [dueSoonTasks, optimisticTasks]);
+    return [...optimisticDueSoon, ...dueSoonTasks].filter(
+      (task) => !optimisticallyCompletingTaskIds.includes(task.id),
+    );
+  }, [dueSoonTasks, optimisticTasks, optimisticallyCompletingTaskIds]);
 
   const mergedFutureTasks = useMemo(() => {
     const existingIds = new Set(futureTasks.map((task) => task.id));
@@ -268,8 +280,15 @@ export default function TasksScreen() {
       const deadlineMs = Date.parse(task.deadline);
       return !Number.isNaN(deadlineMs) && deadlineMs >= futureBoundaryMs;
     });
-    return [...optimisticFuture, ...futureTasks];
-  }, [futureTasks, optimisticTasks]);
+    return [...optimisticFuture, ...futureTasks].filter(
+      (task) => !optimisticallyCompletingTaskIds.includes(task.id),
+    );
+  }, [futureTasks, optimisticTasks, optimisticallyCompletingTaskIds]);
+
+  const visiblePastTasks = useMemo(
+    () => pastTasks.filter((task) => !optimisticallyCompletingTaskIds.includes(task.id)),
+    [pastTasks, optimisticallyCompletingTaskIds],
+  );
 
   useEffect(() => {
     if (optimisticTasks.length === 0) return;
@@ -279,6 +298,21 @@ export default function TasksScreen() {
       return next.length === prev.length ? prev : next;
     });
   }, [dueSoonTasks, futureTasks, optimisticTasks.length]);
+
+  useEffect(() => {
+    if (optimisticallyCompletingTaskIds.length === 0) return;
+    const knownTaskIds = new Set([
+      ...dueSoonTasks.map((task) => task.id),
+      ...futureTasks.map((task) => task.id),
+      ...pastTasks.map((task) => task.id),
+      ...optimisticTasks.map((task) => task.id),
+    ]);
+
+    setOptimisticallyCompletingTaskIds((prev) => {
+      const next = prev.filter((id) => knownTaskIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [dueSoonTasks, futureTasks, pastTasks, optimisticTasks, optimisticallyCompletingTaskIds.length]);
 
   useEffect(() => {
     if (!isSearchActive) {
@@ -305,7 +339,7 @@ export default function TasksScreen() {
 
         const { data, error } = await supabase
           .from('tasks')
-          .select('id, title, deadline, status')
+          .select('id, title, deadline, status, has_proof')
           .eq('user_id', userId)
           .neq('status', 'DELETED')
           .ilike('title', `%${trimmedSearchQuery}%`)
@@ -621,6 +655,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
       title: trimmedTitle,
       deadline: deadlineIso,
       status: 'ACTIVE',
+      has_proof: false,
       postponed_at: null,
       recurrence_rule_id: null,
       created_at: nowIso,
@@ -838,6 +873,14 @@ function updateCustomReminderDatePart(dateValue: Date) {
     const id = setTimeout(() => titleInputRef.current?.focus(), 180);
     return () => clearTimeout(id);
   }, [creatorExpanded]);
+
+  useEffect(() => (
+    () => {
+      if (confettiHideTimeoutRef.current) {
+        clearTimeout(confettiHideTimeoutRef.current);
+      }
+    }
+  ), []);
 
   // Initialize defaults as soon as profile/friends are available on initial screen load.
   useEffect(() => {
@@ -1067,8 +1110,39 @@ function updateCustomReminderDatePart(dateValue: Date) {
         Alert.alert('Could not attach proof', result.error);
         return;
       }
+      void queryClient.invalidateQueries({ queryKey: queryKeys.taskDetail(taskId) });
       refetchTasks();
-      Alert.alert('Proof attached', result.mediaKind === 'video' ? 'Video proof uploaded.' : 'Photo proof uploaded.');
+      Toast.show({
+        type: 'proofSuccess',
+        text1: 'Proof uploaded',
+        position: 'bottom',
+        bottomOffset: 84,
+        visibilityTime: 1800,
+      });
+    } finally {
+      setProofUploadTaskId((prev) => (prev === taskId ? null : prev));
+    }
+  }
+
+  async function handleProofRemoved(taskId: string) {
+    if (taskId.startsWith('optimistic-')) {
+      Alert.alert('Please wait', 'Task is still being created.');
+      return;
+    }
+
+    if (proofUploadTaskId) {
+      Alert.alert('Upload in progress', 'Please wait for the current proof action to finish.');
+      return;
+    }
+
+    setProofUploadTaskId(taskId);
+    try {
+      const result = await removeTaskProof(taskId);
+      if (!result.success) {
+        Alert.alert('Could not remove proof', result.error ?? 'Unknown error');
+        return;
+      }
+      refetchTasks();
     } finally {
       setProofUploadTaskId((prev) => (prev === taskId ? null : prev));
     }
@@ -1080,12 +1154,50 @@ function updateCustomReminderDatePart(dateValue: Date) {
       return;
     }
 
+    if (optimisticallyCompletingTaskIds.includes(taskId)) return;
+
+    if (confettiHideTimeoutRef.current) {
+      clearTimeout(confettiHideTimeoutRef.current);
+    }
+    setConfettiBurstKey((prev) => prev + 1);
+    setShowCompletionConfetti(true);
+    confettiHideTimeoutRef.current = setTimeout(() => {
+      setShowCompletionConfetti(false);
+      confettiHideTimeoutRef.current = null;
+    }, 1500);
+
+    setOptimisticallyCompletingTaskIds((prev) => (prev.includes(taskId) ? prev : [...prev, taskId]));
+    setOptimisticTasks((prev) => prev.filter((task) => task.id !== taskId));
+
+    type TaskListsCache = {
+      dueSoonTasks: TaskRowData[];
+      futureTasks: TaskRowData[];
+      pastTasks: TaskRowData[];
+      hasMorePast: boolean;
+    };
+    const taskListKey = queryKeys.taskLists(user?.id, sortMode);
+    const previousTaskLists = queryClient.getQueryData<TaskListsCache>(taskListKey);
+    queryClient.setQueryData<TaskListsCache>(taskListKey, (current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        dueSoonTasks: current.dueSoonTasks.filter((task) => task.id !== taskId),
+        futureTasks: current.futureTasks.filter((task) => task.id !== taskId),
+        pastTasks: current.pastTasks.filter((task) => task.id !== taskId),
+      };
+    });
+
     const result = await completeTask(taskId);
     if (!result.success) {
+      if (previousTaskLists) {
+        queryClient.setQueryData(taskListKey, previousTaskLists);
+      }
+      setOptimisticallyCompletingTaskIds((prev) => prev.filter((id) => id !== taskId));
       Alert.alert('Could not complete task', result.error ?? 'Unknown error');
       return;
     }
 
+    void queryClient.invalidateQueries({ queryKey: queryKeys.taskDetail(taskId) });
     refetchTasks();
     if (result.userId) void syncLocalReminderNotificationsAsync(result.userId);
   }
@@ -1215,7 +1327,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
         searchResults={searchResults}
         dueSoonTasks={mergedDueSoonTasks}
         futureTasks={mergedFutureTasks}
-        pastTasks={pastTasks}
+        pastTasks={visiblePastTasks}
         hasMorePast={hasMorePast}
         loadingMore={loadingMore}
         loadMorePastTasks={loadMorePastTasks}
@@ -1227,6 +1339,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
         }}
         onComplete={handleCompleteTask}
         onProofPicked={handleProofPicked}
+        onProofRemoved={handleProofRemoved}
         onPostpone={handlePostponeTask}
         onDelete={handleDeleteTask}
         defaultPomoDurationMinutes={defaultPomoDurationMinutes}
@@ -1262,6 +1375,29 @@ function updateCustomReminderDatePart(dateValue: Date) {
         friendsError={friendsError}
         filteredFriends={filteredFriends}
       />
+
+      {showCompletionConfetti ? (
+        <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
+          <ConfettiCannon
+            key={`left-${confettiBurstKey}`}
+            count={45}
+            origin={{ x: -20, y: Math.round(screenHeight * 0.5) }}
+            explosionSpeed={350}
+            fallSpeed={1150}
+            fadeOut
+            autoStart
+          />
+          <ConfettiCannon
+            key={`right-${confettiBurstKey}`}
+            count={45}
+            origin={{ x: screenWidth + 20, y: Math.round(screenHeight * 0.5) }}
+            explosionSpeed={350}
+            fallSpeed={1150}
+            fadeOut
+            autoStart
+          />
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }

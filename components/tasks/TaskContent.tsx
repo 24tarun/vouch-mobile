@@ -25,6 +25,7 @@ interface TaskContentProps {
   onRefresh: () => Promise<void>;
   onComplete: (taskId: string) => Promise<void>;
   onProofPicked: (taskId: string, asset: ImagePickerAsset) => Promise<void>;
+  onProofRemoved: (taskId: string) => Promise<void>;
   onPostpone: (task: TaskRowData) => void;
   onDelete: (task: TaskRowData) => Promise<void>;
   defaultPomoDurationMinutes: number;
@@ -50,6 +51,7 @@ export function TaskContent({
   onRefresh,
   onComplete,
   onProofPicked,
+  onProofRemoved,
   onPostpone,
   onDelete,
   defaultPomoDurationMinutes,
@@ -122,6 +124,7 @@ export function TaskContent({
               task={task}
               onComplete={onComplete}
               onProofPicked={onProofPicked}
+              onProofRemoved={onProofRemoved}
               onPostpone={onPostpone}
               onDelete={onDelete}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}
@@ -133,6 +136,7 @@ export function TaskContent({
             tasks={futureTasks}
             onComplete={onComplete}
             onProofPicked={onProofPicked}
+            onProofRemoved={onProofRemoved}
             onPostpone={onPostpone}
             onDelete={onDelete}
             defaultPomoDurationMinutes={defaultPomoDurationMinutes}
@@ -146,6 +150,7 @@ export function TaskContent({
             onLoadMore={loadMorePastTasks}
             onComplete={onComplete}
             onProofPicked={onProofPicked}
+            onProofRemoved={onProofRemoved}
             onPostpone={onPostpone}
             onDelete={onDelete}
             defaultPomoDurationMinutes={defaultPomoDurationMinutes}

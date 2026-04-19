@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View, StyleSheet } from 'react-native';
+import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
+import Toast, { BaseToast, type ToastConfig, type ToastConfigParams } from 'react-native-toast-message';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
-import { colors } from '@/lib/theme';
+import { colors, radius, spacing, typography } from '@/lib/theme';
 import {
   clearLocalReminderNotificationsAsync,
   getTaskIdFromNotificationResponse,
@@ -18,6 +19,94 @@ import { PomodoroProvider } from '@/components/pomodoro/PomodoroProvider';
 import { AppQueryProvider } from '@/lib/query/client';
 
 void SplashScreen.preventAutoHideAsync().catch(() => {});
+
+const toastBaseStyle = {
+  width: 'auto' as const,
+  maxWidth: '88%' as const,
+  minHeight: 44,
+  borderLeftWidth: 0,
+  borderWidth: 1,
+  borderRadius: radius.md,
+  backgroundColor: '#0B1220EE',
+  alignSelf: 'flex-start' as const,
+  marginLeft: spacing.lg,
+};
+
+function ProofSuccessToast({ isVisible, text1, onPress }: ToastConfigParams<any>) {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (isVisible) {
+      Animated.spring(progress, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 90,
+        friction: 11,
+      }).start();
+      return;
+    }
+
+    Animated.timing(progress, {
+      toValue: 0,
+      duration: 230,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [isVisible, progress]);
+
+  return (
+    <Animated.View
+      style={[
+        toastBaseStyle,
+        {
+          borderColor: '#22C55E55',
+          opacity: progress,
+          transform: [
+            {
+              translateX: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [28, 0],
+              }),
+            },
+            {
+              translateY: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [6, 0],
+              }),
+            },
+            {
+              scale: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.84, 1],
+              }),
+            },
+          ],
+        },
+      ]}
+      pointerEvents="box-none"
+      onTouchEnd={onPress}
+    >
+      <View style={{ paddingHorizontal: spacing.md, paddingVertical: spacing.sm }}>
+        <Text style={{ color: '#E5E7EB', fontSize: typography.xs, fontWeight: typography.medium }}>
+          {text1}
+        </Text>
+      </View>
+    </Animated.View>
+  );
+}
+
+const toastConfig: ToastConfig = {
+  proofError: (props) => (
+    <BaseToast
+      {...props}
+      style={[toastBaseStyle, { borderColor: '#EF444455' }]}
+      contentContainerStyle={{ paddingHorizontal: spacing.md }}
+      text1Style={{ color: '#E5E7EB', fontSize: typography.xs, fontWeight: typography.medium }}
+      text1NumberOfLines={3}
+    />
+  ),
+  proofSuccess: (props) => <ProofSuccessToast {...props} />,
+};
 
 function AuthGuard() {
   const { session, authInitialized } = useAuth();
@@ -135,6 +224,7 @@ export default function RootLayout() {
             <View style={styles.root}>
               <StatusBar style="light" />
               <AuthGuard />
+              <Toast config={toastConfig} />
             </View>
           </PomodoroProvider>
         </AuthProvider>

@@ -47,7 +47,7 @@ const styles = StyleSheet.create({
   },
   inlineCreatorWrap: {
     marginHorizontal: spacing.lg,
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
     marginBottom: spacing.md,
     borderRadius: radius.lg,
     borderWidth: 1,

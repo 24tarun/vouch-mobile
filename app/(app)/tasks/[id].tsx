@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   Animated,
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -13,17 +14,21 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import Toast from 'react-native-toast-message';
 import { supabase } from '@/lib/supabase';
-import { uploadTaskProofAsset } from '@/lib/task-proof-upload';
+import { purgeTaskProofForFinalState, removeTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
 import { undoCompleteTask } from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import { colors, radius, spacing, typography } from '@/lib/theme';
@@ -298,12 +303,68 @@ function formatCost(cents: number, currency: string): string {
   return `${symbol}${formatted}`;
 }
 
+function VideoProofPreview({
+  signedUrl,
+  overlayTimestampText,
+  width,
+}: {
+  signedUrl: string;
+  overlayTimestampText: string;
+  width: number;
+}) {
+  const player = useVideoPlayer(signedUrl, (p) => {
+    p.loop = false;
+    p.muted = false;
+  });
+  const [playing, setPlaying] = useState(false);
+
+  useEffect(() => {
+    const sub = player.addListener('playingChange', (event) => {
+      setPlaying(event.isPlaying);
+    });
+    return () => sub.remove();
+  }, [player]);
+
+  function togglePlay() {
+    if (playing) {
+      player.pause();
+    } else {
+      player.play();
+    }
+  }
+
+  return (
+    <Pressable
+      style={[styles.proofPreviewWrap, { width }]}
+      onPress={togglePlay}
+    >
+      <VideoView
+        player={player}
+        style={styles.proofPreviewVideo}
+        contentFit="cover"
+        nativeControls={false}
+      />
+      {!playing ? (
+        <View style={styles.proofVideoOverlay}>
+          <Feather name="play-circle" size={36} color="rgba(255,255,255,0.9)" />
+        </View>
+      ) : null}
+      {overlayTimestampText ? (
+        <View style={styles.proofTimestampWrap}>
+          <Text style={styles.proofTimestampText}>{overlayTimestampText}</Text>
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function TaskDetailScreen() {
   const { id, back } = useLocalSearchParams<{ id: string; back?: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { width: screenWidth } = useWindowDimensions();
   const { user, profile } = useAuth();
   const detail = useTaskDetail(id);
   const handleBack = () => {
@@ -329,6 +390,7 @@ export default function TaskDetailScreen() {
   const [showCustomReminderAndroidPicker, setShowCustomReminderAndroidPicker] = useState(false);
   const [showCustomReminderIosModal, setShowCustomReminderIosModal] = useState(false);
   const [proofUploading, setProofUploading] = useState(false);
+  const [proofRemoving, setProofRemoving] = useState(false);
   const [isOverriding, setIsOverriding] = useState(false);
   const [isUndoingComplete, setIsUndoingComplete] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -345,6 +407,14 @@ export default function TaskDetailScreen() {
   const reminders = detail.data?.reminders ?? [];
   const events = detail.data?.events ?? [];
   const totalFocusedSeconds = detail.data?.totalFocusedSeconds ?? 0;
+  const proof = detail.data?.proof ?? null;
+  const proofPreviewWidth = screenWidth - spacing.lg * 2;
+
+  useFocusEffect(
+    useCallback(() => {
+      void detail.refetch();
+    }, [detail.refetch]),
+  );
 
   useEffect(() => {
     const nextCurrency = profile?.currency ?? 'USD';
@@ -353,6 +423,17 @@ export default function TaskDetailScreen() {
     setPomoDuration(defaultPomo);
     setPomoDraft(String(defaultPomo));
   }, [profile?.currency, profile?.default_pomo_duration_minutes]);
+
+  function showProofToast(message: string, tone: 'error' | 'success') {
+    Toast.show({
+      type: tone === 'error' ? 'proofError' : 'proofSuccess',
+      text1: message,
+      position: 'bottom',
+      autoHide: true,
+      visibilityTime: 2600,
+      bottomOffset: 84,
+    });
+  }
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -392,11 +473,12 @@ export default function TaskDetailScreen() {
   async function uploadSelectedProof(asset: ImagePickerAsset) {
     if (!task || proofUploading) return;
 
+    const isReplacingProof = Boolean(proof);
     setProofUploading(true);
     try {
       const result = await uploadTaskProofAsset(task.id, asset);
       if (!result.success) {
-        Alert.alert('Could not attach proof', result.error);
+        showProofToast(`Proof upload failed: ${result.error}`, 'error');
         return;
       }
 
@@ -412,8 +494,11 @@ export default function TaskDetailScreen() {
             }
           : previous.task,
       } : previous);
-
-      Alert.alert('Proof attached', result.mediaKind === 'video' ? 'Video proof uploaded.' : 'Photo proof uploaded.');
+      await Promise.resolve(detail.refetch());
+      invalidateDerivedTaskViews();
+      if (isReplacingProof) {
+        showProofToast('Proof replaced successfully.', 'success');
+      }
     } finally {
       setProofUploading(false);
     }
@@ -424,7 +509,7 @@ export default function TaskDetailScreen() {
     if (!allowed) return;
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: 'images',
       quality: 0.9,
       allowsEditing: false,
       exif: true,
@@ -440,7 +525,7 @@ export default function TaskDetailScreen() {
     if (!allowed) return;
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: 'videos',
       videoMaxDuration: 15,
       quality: 0.8,
       exif: true,
@@ -456,11 +541,17 @@ export default function TaskDetailScreen() {
     if (!allowed) return;
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      mediaTypes: ['images', 'videos'],
       allowsMultipleSelection: false,
       quality: 0.9,
       videoMaxDuration: 15,
       exif: true,
+      ...(Platform.OS === 'ios'
+        ? {
+            preferredAssetRepresentationMode:
+              ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+          }
+        : {}),
     });
 
     if (!result.canceled && result.assets.length > 0) {
@@ -468,22 +559,88 @@ export default function TaskDetailScreen() {
     }
   }
 
+  async function removeCurrentProof() {
+    if (!task || !proof || proofUploading || proofRemoving) return;
+
+    setProofRemoving(true);
+    try {
+      const removeResult = await removeTaskProofAsset(task.id, {
+        bucket: proof.bucket,
+        objectPath: proof.objectPath,
+      });
+
+      if (!removeResult.success) {
+        Alert.alert('Could not remove proof', removeResult.error);
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const { error: taskUpdateError } = await supabase
+        .from('tasks')
+        .update({
+          has_proof: false,
+          updated_at: nowIso,
+        })
+        .eq('id', task.id)
+        .eq('user_id', task.user_id);
+
+      if (taskUpdateError) {
+        Alert.alert('Proof removed', 'Proof file was removed, but task state did not refresh yet. Pull to refresh.');
+      }
+
+      queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
+        ...previous,
+        task: previous.task
+          ? {
+              ...previous.task,
+              has_proof: false,
+            }
+          : previous.task,
+        proof: null,
+      } : previous);
+      await Promise.resolve(detail.refetch());
+      invalidateDerivedTaskViews();
+    } finally {
+      setProofRemoving(false);
+    }
+  }
+
   function openProofPicker() {
-    if (proofUploading) return;
+    if (proofUploading || proofRemoving) return;
 
     if (Platform.OS === 'ios') {
+      const hasExistingProof = Boolean(proof);
+      const options = hasExistingProof
+        ? ['Replace: Take Photo', 'Replace: Record Video', 'Replace: Choose from Library', 'Remove proof', 'Cancel']
+        : ['Take Photo', 'Record Video', 'Choose from Library', 'Cancel'];
+      const cancelButtonIndex = hasExistingProof ? 4 : 3;
+      const destructiveButtonIndex = hasExistingProof ? 3 : undefined;
+
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          options: ['Take Photo', 'Record Video', 'Choose from Library', 'Cancel'],
-          cancelButtonIndex: 3,
+          options,
+          cancelButtonIndex,
+          destructiveButtonIndex,
           userInterfaceStyle: 'dark',
         },
         (selectedIndex) => {
           if (selectedIndex === 0) void handleCameraPhoto();
           if (selectedIndex === 1) void handleCameraVideo();
           if (selectedIndex === 2) void handleGalleryPick();
+          if (hasExistingProof && selectedIndex === 3) void removeCurrentProof();
         },
       );
+      return;
+    }
+
+    if (proof) {
+      Alert.alert('Manage proof', 'Replace the current proof or remove it.', [
+        { text: 'Replace: Take Photo', onPress: () => void handleCameraPhoto() },
+        { text: 'Replace: Record Video', onPress: () => void handleCameraVideo() },
+        { text: 'Replace: Choose from Library', onPress: () => void handleGalleryPick() },
+        { text: 'Remove proof', style: 'destructive', onPress: () => void removeCurrentProof() },
+        { text: 'Cancel', style: 'cancel' },
+      ], { cancelable: true });
       return;
     }
 
@@ -492,7 +649,7 @@ export default function TaskDetailScreen() {
       { text: 'Record Video', onPress: () => void handleCameraVideo() },
       { text: 'Choose from Library', onPress: () => void handleGalleryPick() },
       { text: 'Cancel', style: 'cancel' },
-    ]);
+    ], { cancelable: true });
   }
 
   // ── Override ───────────────────────────────────────────────────────────────
@@ -570,15 +727,22 @@ export default function TaskDetailScreen() {
                 }),
               ]);
 
+              const purgeResult = await purgeTaskProofForFinalState(task.id);
+              if (!purgeResult.success) {
+                Alert.alert('Override applied, cleanup failed', purgeResult.error);
+              }
+
               queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
                 ...previous,
                 task: previous.task
                   ? {
                       ...previous.task,
                       status: 'SETTLED',
+                      has_proof: false,
                       updated_at: now,
                     }
                   : previous.task,
+                proof: null,
               } : previous);
               invalidateDerivedTaskViews();
             } finally {
@@ -899,6 +1063,32 @@ export default function TaskDetailScreen() {
           </View>
         )}
 
+        {proof ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Uploaded Proof</Text>
+            {proof.mediaKind === 'image' ? (
+              <View style={[styles.proofPreviewWrap, { width: proofPreviewWidth }]}>
+                <Image
+                  source={{ uri: proof.signedUrl }}
+                  style={styles.proofPreviewImage}
+                  resizeMode="cover"
+                />
+                {proof.overlayTimestampText ? (
+                  <View style={styles.proofTimestampWrap}>
+                    <Text style={styles.proofTimestampText}>{proof.overlayTimestampText}</Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : (
+              <VideoProofPreview
+                signedUrl={proof.signedUrl}
+                overlayTimestampText={proof.overlayTimestampText}
+                width={proofPreviewWidth}
+              />
+            )}
+          </View>
+        ) : null}
+
         {/* ── Actions ───────────────────────────────────────────────────────── */}
         <View style={styles.actionsBlock}>
 
@@ -967,13 +1157,13 @@ export default function TaskDetailScreen() {
                   style={[styles.actionBtn, { backgroundColor: BTN.proof.bg, borderColor: BTN.proof.border, flex: 1 }]}
                   onPress={openProofPicker}
                   activeOpacity={0.75}
-                  accessibilityLabel="Attach proof"
-                  disabled={proofUploading}
+                  accessibilityLabel={proof ? 'Manage proof' : 'Attach proof'}
+                  disabled={proofUploading || proofRemoving}
                 >
-                  {proofUploading ? (
+                  {(proofUploading || proofRemoving) ? (
                     <ActivityIndicator size="small" color={BTN.proof.text} />
                   ) : (
-                    <Feather name="camera" size={20} color={BTN.proof.text} />
+                    <Feather name={proof ? 'refresh-cw' : 'camera'} size={20} color={BTN.proof.text} />
                   )}
                 </TouchableOpacity>
               )}
@@ -1266,6 +1456,7 @@ export default function TaskDetailScreen() {
         })()}
 
       </ScrollView>
+
     </SafeAreaView>
   );
 }
@@ -1532,7 +1723,43 @@ const styles = StyleSheet.create({
   section: { gap: spacing.sm },
   sectionTitle: { fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 },
   description: { fontSize: typography.base, color: colors.text, lineHeight: 22 },
-
+  proofPreviewWrap: {
+    height: 220,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: '#101822',
+    alignSelf: 'center',
+  },
+  proofPreviewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  proofPreviewVideo: {
+    width: '100%',
+    height: '100%',
+  },
+  proofVideoOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.18)',
+  },
+  proofTimestampWrap: {
+    position: 'absolute',
+    left: spacing.sm,
+    bottom: spacing.sm,
+    backgroundColor: '#000000AA',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+  },
+  proofTimestampText: {
+    color: '#fff',
+    fontSize: typography.xs,
+    fontWeight: typography.medium,
+  },
   timeline: { paddingVertical: spacing.xs, paddingBottom: spacing.md },
   timelineRow: { flexDirection: 'row', alignItems: 'flex-start' },
   timelineSide: { flex: 1 },

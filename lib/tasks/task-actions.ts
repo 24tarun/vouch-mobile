@@ -1,7 +1,7 @@
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { supabase } from '@/lib/supabase';
 import { postponeTask } from '@/lib/task-postpone';
-import { uploadTaskProofAsset } from '@/lib/task-proof-upload';
+import { purgeTaskProofForFinalState, removeCurrentTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { AI_PROFILE_ID } from '@/lib/constants/ai-profile';
 
@@ -100,13 +100,35 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
 
   const { data: task, error: taskError } = await supabase
     .from('tasks')
-    .select('id, voucher_id, status')
+    .select('id, voucher_id, status, requires_proof, has_proof')
     .eq('id', taskId)
     .eq('user_id', userId)
     .single();
 
   if (taskError || !task) {
     return { success: false, userId, error: taskError?.message ?? 'Task not found.' };
+  }
+
+  if ((task as any).requires_proof) {
+    const taskHasProofFlag = Boolean((task as any).has_proof);
+
+    if (!taskHasProofFlag) {
+      const { data: proofRows, error: proofCheckError } = await supabase
+        .from('task_completion_proofs')
+        .select('id')
+        .eq('task_id', taskId)
+        .eq('upload_state', 'UPLOADED')
+        .limit(1);
+
+      if (proofCheckError) {
+        return { success: false, userId, error: proofCheckError.message };
+      }
+
+      const hasUploadedProof = Boolean(proofRows && proofRows.length > 0);
+      if (!hasUploadedProof) {
+        return { success: false, userId, error: 'Please upload proof before marking this task complete.' };
+      }
+    }
   }
 
   const isSelfVouched = task.voucher_id === userId;
@@ -157,6 +179,13 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
       : null,
   });
 
+  if (nextStatus === 'ACCEPTED') {
+    const purgeResult = await purgeTaskProofForFinalState(taskId);
+    if (!purgeResult.success) {
+      return { success: false, userId, error: `Task accepted, but proof cleanup failed: ${purgeResult.error}` };
+    }
+  }
+
   return { success: true, userId };
 }
 
@@ -205,6 +234,12 @@ export async function deleteTask(taskId: string): Promise<TaskMutationResult> {
     .eq('user_id', userId);
 
   if (error) return { success: false, userId, error: error.message };
+
+  const purgeResult = await purgeTaskProofForFinalState(taskId);
+  if (!purgeResult.success) {
+    return { success: false, userId, error: `Task deleted, but proof cleanup failed: ${purgeResult.error}` };
+  }
+
   return { success: true, userId };
 }
 
@@ -218,4 +253,8 @@ export async function postponeTaskDeadline(taskId: string, nextDeadlineIso: stri
 
 export async function uploadTaskProof(taskId: string, asset: ImagePickerAsset) {
   return uploadTaskProofAsset(taskId, asset);
+}
+
+export async function removeTaskProof(taskId: string) {
+  return removeCurrentTaskProofAsset(taskId);
 }

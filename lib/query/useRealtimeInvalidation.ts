@@ -15,7 +15,7 @@ interface UseRealtimeInvalidationOptions {
   enabled: boolean;
   subscriptions: RealtimeSubscription[];
   invalidateKeys?: QueryKey[];
-  onPayload?: () => void;
+  onPayload?: (payload: unknown) => void;
   maxInvalidationsPerMinute?: number;
   minInvalidateIntervalMs?: number;
 }
@@ -34,6 +34,7 @@ export function useRealtimeInvalidation({
   const subscriptionsRef = useRef(subscriptions);
   const invalidateKeysRef = useRef(invalidateKeys);
   const onPayloadRef = useRef(onPayload);
+  const lastPayloadRef = useRef<unknown>(null);
   const realtimeChannelName = useMemo(
     () => `${channelName}:${instanceIdRef.current}`,
     [channelName],
@@ -68,7 +69,7 @@ export function useRealtimeInvalidation({
     const rateLimiter = createRealtimeRateLimiter({
       label: realtimeChannelName,
       callback: () => {
-        onPayloadRef.current?.();
+        onPayloadRef.current?.(lastPayloadRef.current);
         for (const queryKey of invalidateKeysRef.current) {
           void queryClient.invalidateQueries({ queryKey });
         }
@@ -86,7 +87,8 @@ export function useRealtimeInvalidation({
           table: subscription.table,
           ...(subscription.filter ? { filter: subscription.filter } : {}),
         },
-        () => {
+        (payload) => {
+          lastPayloadRef.current = payload;
           rateLimiter.trigger();
         },
       );

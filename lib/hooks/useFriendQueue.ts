@@ -61,7 +61,7 @@ async function fetchProofsForTasks(taskIds: string[]): Promise<Record<string, Ta
     .from('task_completion_proofs')
     .select('task_id, object_path, media_kind, overlay_timestamp_text, upload_state')
     .in('task_id', taskIds)
-    .neq('upload_state', 'FAILED');
+    .eq('upload_state', 'UPLOADED');
 
   if (error || !data) return {};
 

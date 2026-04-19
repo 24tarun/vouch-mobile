@@ -15,6 +15,7 @@ interface CollapsibleSectionProps {
   onLoadMore?: () => void;
   onComplete?: (id: string) => void;
   onProofPicked?: (taskId: string, asset: ImagePickerAsset) => void | Promise<void>;
+  onProofRemoved?: (taskId: string) => void | Promise<void>;
   onPostpone?: (task: TaskRowData) => void | Promise<void>;
   onDelete?: (task: TaskRowData) => void | Promise<void>;
   defaultPomoDurationMinutes?: number;
@@ -30,6 +31,7 @@ export function CollapsibleSection({
   onLoadMore,
   onComplete,
   onProofPicked,
+  onProofRemoved,
   onPostpone,
   onDelete,
   defaultPomoDurationMinutes = 25,
@@ -66,6 +68,7 @@ export function CollapsibleSection({
               task={task}
               onComplete={onComplete}
               onProofPicked={onProofPicked}
+              onProofRemoved={onProofRemoved}
               onPostpone={onPostpone}
               onDelete={onDelete}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}

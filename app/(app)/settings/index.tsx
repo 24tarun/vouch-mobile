@@ -38,6 +38,7 @@ import { useRelationships, type RelationshipsData } from '@/lib/hooks/useRelatio
 import { useBlockedUsers } from '@/lib/hooks/useBlockedUsers';
 import { useSettingsStats } from '@/lib/hooks/useSettingsStats';
 import { queryKeys } from '@/lib/query/keys';
+import { WEBSITE_URL } from '@/lib/auth-urls';
 import {
   type BlockedUserOption,
   type IncomingFriendRequest,
@@ -70,7 +71,8 @@ type RelationshipAction = 'send' | 'accept' | 'reject' | 'remove' | 'block' | 'w
 
 const POMO_MIN_MINUTES = 1;
 const POMO_MAX_MINUTES = 120;
-const ACCOUNT_DELETE_FALLBACK_URL = 'https://tas.tarunh.com/settings';
+const ACCOUNT_DELETE_FALLBACK_URL = `${WEBSITE_URL}/settings`;
+const ACCOUNT_DELETE_API_URL = `${WEBSITE_URL}/api/account/delete`;
 const CURRENCY_OPTIONS: PickerOption[] = [
   { label: 'USD', value: 'USD' },
   { label: 'EUR', value: 'EUR' },
@@ -422,25 +424,6 @@ export default function SettingsScreen() {
     ]);
   }
 
-  function isMissingDeleteEndpoint(message: string) {
-    const normalized = message.toLowerCase();
-    return (
-      normalized.includes('does not exist')
-      || normalized.includes('could not find the function')
-      || normalized.includes('function delete_account')
-      || normalized.includes('404')
-      || normalized.includes('not found')
-    );
-  }
-
-  function readDeletePayloadError(payload: unknown): string | null {
-    if (!payload || typeof payload !== 'object') return null;
-    const maybeError = (payload as { error?: unknown }).error;
-    return typeof maybeError === 'string' && maybeError.trim().length > 0
-      ? maybeError
-      : null;
-  }
-
   async function getActiveVoucherTasksForDeleteCheck(): Promise<{ tasks: ActiveVoucherTask[]; error: string | null }> {
     if (!user) return { tasks: [], error: 'Not authenticated' };
 
@@ -480,33 +463,44 @@ export default function SettingsScreen() {
   }
 
   async function runDeleteAccount(): Promise<{ error: string | null; backendUnavailable: boolean }> {
-    const edgeResult = await supabase.functions.invoke('delete-account');
-    if (!edgeResult.error) {
-      const payloadError = readDeletePayloadError(edgeResult.data);
-      return { error: payloadError, backendUnavailable: false };
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token?.trim();
+    if (!accessToken) {
+      return { error: 'Not authenticated', backendUnavailable: false };
     }
 
-    const rpcResult = await supabase.rpc('delete_account');
-    if (!rpcResult.error) {
-      const payloadError = readDeletePayloadError(rpcResult.data);
-      return { error: payloadError, backendUnavailable: false };
-    }
+    try {
+      const response = await fetch(ACCOUNT_DELETE_API_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      let payload: { error?: string; success?: boolean } | null = null;
+      try {
+        payload = await response.json() as { error?: string; success?: boolean };
+      } catch {
+        payload = null;
+      }
 
-    const edgeMessage = edgeResult.error.message || 'Delete endpoint failed';
-    const rpcMessage = rpcResult.error.message || 'Delete RPC failed';
-    const backendUnavailable = isMissingDeleteEndpoint(edgeMessage) && isMissingDeleteEndpoint(rpcMessage);
+      if (!response.ok) {
+        const message = typeof payload?.error === 'string' && payload.error.trim().length > 0
+          ? payload.error
+          : 'Failed to delete account.';
+        return { error: message, backendUnavailable: response.status >= 500 };
+      }
 
-    if (backendUnavailable) {
+      if (payload && payload.success === true) {
+        return { error: null, backendUnavailable: false };
+      }
+
+      return { error: 'Failed to delete account.', backendUnavailable: false };
+    } catch {
       return {
-        error: 'Account deletion is not configured for mobile yet. You can finish this from web settings.',
+        error: 'Could not reach delete endpoint. You can finish this from web settings.',
         backendUnavailable: true,
       };
     }
-
-    return {
-      error: rpcMessage,
-      backendUnavailable: false,
-    };
   }
 
   async function performAccountDeletion() {

@@ -25,6 +25,7 @@ export interface TaskRowData {
   title: string;
   deadline: string; // ISO string
   status?: string;
+  has_proof?: boolean;
   postponed_at?: string | null;
   recurrence_rule_id?: string | null;
   created_at?: string;
@@ -37,6 +38,7 @@ interface TaskRowProps {
   task: TaskRowData;
   onComplete?: (id: string) => void;
   onProofPicked?: (taskId: string, asset: ImagePicker.ImagePickerAsset) => void | Promise<void>;
+  onProofRemoved?: (taskId: string) => void | Promise<void>;
   onPostpone?: (task: TaskRowData) => void | Promise<void>;
   onDelete?: (task: TaskRowData) => void | Promise<void>;
   defaultPomoDurationMinutes?: number;
@@ -58,6 +60,7 @@ export function TaskRow({
   task,
   onComplete,
   onProofPicked,
+  onProofRemoved,
   onPostpone,
   onDelete,
   defaultPomoDurationMinutes = 25,
@@ -294,7 +297,7 @@ export function TaskRow({
       if (!allowed) return;
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: 'images',
         quality: 0.9,
         allowsEditing: false,
         exif: true,
@@ -312,7 +315,7 @@ export function TaskRow({
       if (!allowed) return;
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        mediaTypes: 'videos',
         videoMaxDuration: 15,
         quality: 0.8,
         exif: true,
@@ -330,11 +333,17 @@ export function TaskRow({
       if (!allowed) return;
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        mediaTypes: ['images', 'videos'],
         allowsMultipleSelection: false,
         quality: 0.9,
         videoMaxDuration: 15,
         exif: true,
+        ...(Platform.OS === 'ios'
+          ? {
+              preferredAssetRepresentationMode:
+                ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+            }
+          : {}),
       });
 
       await handlePickedResult(result);
@@ -344,28 +353,51 @@ export function TaskRow({
   }
 
   function openProofSourcePicker() {
+    const hasProof = Boolean(task.has_proof);
+    const takePhotoLabel = hasProof ? 'Replace: Take Photo' : 'Take Photo';
+    const recordVideoLabel = hasProof ? 'Replace: Record Video' : 'Record Video';
+    const galleryLabel = hasProof ? 'Replace: Choose from Library' : 'Choose from Library';
+    const removeLabel = 'Remove proof';
+
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          options: ['Take Photo', 'Record Video', 'Choose from Library', 'Cancel'],
-          cancelButtonIndex: 3,
+          options: hasProof
+            ? [takePhotoLabel, recordVideoLabel, galleryLabel, removeLabel, 'Cancel']
+            : [takePhotoLabel, recordVideoLabel, galleryLabel, 'Cancel'],
+          cancelButtonIndex: hasProof ? 4 : 3,
+          destructiveButtonIndex: hasProof ? 3 : undefined,
           userInterfaceStyle: 'dark',
         },
         (selectedIndex) => {
           if (selectedIndex === 0) void handleTakePhoto();
           if (selectedIndex === 1) void handleRecordVideo();
           if (selectedIndex === 2) void handleChooseFromGallery();
+          if (hasProof && selectedIndex === 3) void onProofRemoved?.(task.id);
         },
       );
       return;
     }
 
-    Alert.alert('Attach proof', 'Choose a media source.', [
-      { text: 'Take Photo', onPress: () => void handleTakePhoto() },
-      { text: 'Record Video', onPress: () => void handleRecordVideo() },
-      { text: 'Choose from Library', onPress: () => void handleChooseFromGallery() },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    Alert.alert(
+      hasProof ? 'Replace proof' : 'Attach proof',
+      'Choose a media source.',
+      hasProof
+        ? [
+            { text: takePhotoLabel, onPress: () => void handleTakePhoto() },
+            { text: recordVideoLabel, onPress: () => void handleRecordVideo() },
+            { text: galleryLabel, onPress: () => void handleChooseFromGallery() },
+            { text: removeLabel, style: 'destructive', onPress: () => void onProofRemoved?.(task.id) },
+            { text: 'Cancel', style: 'cancel' },
+          ]
+        : [
+            { text: takePhotoLabel, onPress: () => void handleTakePhoto() },
+            { text: recordVideoLabel, onPress: () => void handleRecordVideo() },
+            { text: galleryLabel, onPress: () => void handleChooseFromGallery() },
+            { text: 'Cancel', style: 'cancel' },
+          ],
+      { cancelable: true },
+    );
   }
 
   async function handlePostponePress() {
@@ -499,11 +531,11 @@ export function TaskRow({
             <TouchableOpacity
               style={styles.actionBtn}
               activeOpacity={0.65}
-              accessibilityLabel="Attach proof"
+              accessibilityLabel={task.has_proof ? 'Replace proof' : 'Attach proof'}
               onPress={openProofSourcePicker}
               onLayout={(e) => setFirstActionX(e.nativeEvent.layout.x)}
             >
-              <Feather name="camera" size={20} color="#F472B6" />
+              <Feather name={task.has_proof ? 'refresh-cw' : 'camera'} size={20} color="#F472B6" />
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.actionBtn}

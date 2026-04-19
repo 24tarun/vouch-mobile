@@ -27,12 +27,22 @@ export type DashboardSortMode =
 
 type RawTask = {
   id: string;
+  user_id?: string;
   title: string;
   deadline: string;
   status: string;
+  has_proof?: boolean | null;
   created_at: string;
+  updated_at?: string;
   postponed_at?: string | null;
   recurrence_rule_id?: string | null;
+};
+
+type TaskRealtimePayload = {
+  table?: string;
+  eventType?: 'INSERT' | 'UPDATE' | 'DELETE';
+  new?: Partial<RawTask> | null;
+  old?: Partial<RawTask> | null;
 };
 
 function safeTimestamp(value: string): number {
@@ -77,6 +87,7 @@ function toPastRowData(row: RawTask): TaskRowData {
     title: row.title,
     deadline: row.deadline,
     status: row.status,
+    has_proof: Boolean(row.has_proof),
     postponed_at: row.postponed_at ?? null,
     recurrence_rule_id: row.recurrence_rule_id ?? null,
   };
@@ -101,17 +112,20 @@ interface TaskBucketsData {
   hasMorePast: boolean;
 }
 
+const TASK_ACTIVE_STATUS_SET = new Set<string>(TASK_ACTIVE_STATUSES);
+const TASK_PAST_STATUS_SET = new Set<string>(TASK_PAST_STATUSES);
+
 async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Promise<TaskBucketsData> {
   const [activeRes, pastRes] = await Promise.all([
     supabase
       .from('tasks')
-      .select('id, title, deadline, status, created_at, postponed_at, recurrence_rule_id')
+      .select('id, title, deadline, status, has_proof, created_at, postponed_at, recurrence_rule_id')
       .eq('user_id', userId)
       .in('status', TASK_ACTIVE_STATUSES)
       .order('deadline', { ascending: true }),
     supabase
       .from('tasks')
-      .select('id, title, deadline, status, created_at, postponed_at, recurrence_rule_id')
+      .select('id, title, deadline, status, has_proof, created_at, postponed_at, recurrence_rule_id')
       .eq('user_id', userId)
       .in('status', TASK_PAST_STATUSES)
       .order('updated_at', { ascending: false })
@@ -150,6 +164,7 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
       title: row.title,
       deadline: row.deadline,
       status: row.status,
+      has_proof: Boolean(row.has_proof),
       postponed_at: row.postponed_at ?? null,
       recurrence_rule_id: row.recurrence_rule_id ?? null,
       subtaskTotal: counts?.total,
@@ -199,7 +214,7 @@ export function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): T
     const offset = pastTasksLenRef.current;
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, title, deadline, status, created_at, postponed_at, recurrence_rule_id')
+      .select('id, title, deadline, status, has_proof, created_at, postponed_at, recurrence_rule_id')
       .eq('user_id', user.id)
       .in('status', TASK_PAST_STATUSES)
       .order('updated_at', { ascending: false })
@@ -236,11 +251,118 @@ export function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): T
     [user?.id],
   );
 
+  const handleTaskListPayload = useCallback((payload: unknown) => {
+    if (!user?.id) return;
+    const typedPayload = payload as TaskRealtimePayload;
+    if (typedPayload.table !== 'tasks') return;
+
+    const row = (typedPayload.eventType === 'DELETE' ? typedPayload.old : typedPayload.new)
+      ?? typedPayload.new
+      ?? typedPayload.old;
+    if (!row?.id) return;
+    if (row.user_id && row.user_id !== user.id) return;
+
+    queryClient.setQueryData<TaskBucketsData>(
+      queryKeys.taskLists(user.id, sortMode),
+      (current) => {
+        if (!current) return current;
+
+        const taskId = row.id;
+        if (!taskId) return current;
+
+        const existing = current.dueSoonTasks.find((task) => task.id === taskId)
+          ?? current.futureTasks.find((task) => task.id === taskId)
+          ?? current.pastTasks.find((task) => task.id === taskId);
+
+        const dueSoonWithout = current.dueSoonTasks.filter((task) => task.id !== taskId);
+        const futureWithout = current.futureTasks.filter((task) => task.id !== taskId);
+        const pastWithout = current.pastTasks.filter((task) => task.id !== taskId);
+
+        const nextStatus = row.status ?? existing?.status ?? null;
+        if (!nextStatus || typedPayload.eventType === 'DELETE' || nextStatus === 'DELETED') {
+          return {
+            ...current,
+            dueSoonTasks: dueSoonWithout,
+            futureTasks: futureWithout,
+            pastTasks: pastWithout,
+          };
+        }
+
+        const deadline = row.deadline ?? existing?.deadline ?? null;
+        const title = row.title ?? existing?.title ?? '';
+        const hasProof = Boolean(row.has_proof ?? existing?.has_proof);
+        const postponedAt = row.postponed_at ?? existing?.postponed_at ?? null;
+        const recurrenceRuleId = row.recurrence_rule_id ?? existing?.recurrence_rule_id ?? null;
+        const createdAt = row.created_at ?? existing?.created_at;
+
+        if (!deadline || !title) {
+          return current;
+        }
+
+        if (TASK_ACTIVE_STATUS_SET.has(nextStatus)) {
+          const activeTask: TaskRowData = {
+            id: taskId,
+            title,
+            deadline,
+            status: nextStatus,
+            has_proof: hasProof,
+            postponed_at: postponedAt,
+            recurrence_rule_id: recurrenceRuleId,
+            created_at: createdAt,
+            subtaskTotal: existing?.subtaskTotal,
+            subtaskCompleted: existing?.subtaskCompleted,
+          };
+
+          const futureBoundaryMs = getFutureBoundaryMs();
+          const deadlineMs = Date.parse(deadline);
+          const isDueSoon = Number.isNaN(deadlineMs) || deadlineMs < futureBoundaryMs;
+
+          return {
+            ...current,
+            dueSoonTasks: sortActiveTasks(
+              isDueSoon ? [...dueSoonWithout, activeTask] : dueSoonWithout,
+              sortMode,
+            ),
+            futureTasks: sortActiveTasks(
+              isDueSoon ? futureWithout : [...futureWithout, activeTask],
+              sortMode,
+            ),
+            pastTasks: pastWithout,
+          };
+        }
+
+        if (TASK_PAST_STATUS_SET.has(nextStatus)) {
+          const pastTask: TaskRowData = {
+            id: taskId,
+            title,
+            deadline,
+            status: nextStatus,
+            has_proof: hasProof,
+            postponed_at: postponedAt,
+            recurrence_rule_id: recurrenceRuleId,
+          };
+
+          return {
+            ...current,
+            dueSoonTasks: dueSoonWithout,
+            futureTasks: futureWithout,
+            pastTasks: [pastTask, ...pastWithout],
+          };
+        }
+
+        return current;
+      },
+    );
+  }, [queryClient, sortMode, user?.id]);
+
   useRealtimeInvalidation({
     channelName: `task-lists:${user?.id ?? 'anon'}:${sortMode}`,
     enabled: Boolean(user?.id),
     subscriptions,
+    onPayload: handleTaskListPayload,
     invalidateKeys: [queryKeys.taskLists(user?.id, sortMode)],
+    maxInvalidationsPerMinute: 120,
+    minInvalidateIntervalMs: 250,
   });
 
   return {

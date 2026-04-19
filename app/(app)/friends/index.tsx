@@ -26,6 +26,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { StatusPill } from '@/components/StatusPill';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { queryKeys } from '@/lib/query/keys';
+import { purgeTaskProofForFinalState } from '@/lib/task-proof-upload';
 import {
   VOUCHER_ACTIONABLE_STATUSES,
 } from '@/lib/constants/task-status';
@@ -311,6 +312,11 @@ export default function FriendsScreen() {
                 return;
               }
 
+              const purgeResult = await purgeTaskProofForFinalState(task.id);
+              if (!purgeResult.success) {
+                setActionError(`Rectified, but proof cleanup failed: ${purgeResult.error}`);
+              }
+
               const nextUpdatedAt = new Date().toISOString();
               patchFriendHistory((current) => {
                 const nextTask: VouchHistoryTaskRow = {
@@ -327,9 +333,11 @@ export default function FriendsScreen() {
                   ? {
                       ...current.task,
                       status: 'RECTIFIED',
+                      has_proof: false,
                       updated_at: nextUpdatedAt,
                     }
                   : current.task,
+                proof: null,
               }));
             } finally {
               setInFlightRectifyByTaskId((prev) => ({ ...prev, [task.id]: false }));
@@ -355,6 +363,48 @@ export default function FriendsScreen() {
 
     setActionError(null);
     updateInFlight(task.id, 'accept');
+    const nextUpdatedAt = new Date().toISOString();
+    const queueKey = queryKeys.friendQueue(user.id);
+    const historyKey = queryKeys.friendHistory(user.id, searchQuery);
+    const detailKey = queryKeys.taskDetail(task.id);
+    const previousQueue = queryClient.getQueryData<VoucherTaskRow[]>(queueKey);
+    const previousHistory = queryClient.getQueryData<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }>(historyKey);
+    const previousDetail = queryClient.getQueryData<TaskDetailData>(detailKey);
+
+    patchFriendQueue((current) => current.filter((candidate) => candidate.id !== task.id));
+    patchFriendHistory((current) => {
+      const nextTask: VouchHistoryTaskRow = {
+        id: task.id,
+        title: task.title,
+        status: 'ACCEPTED',
+        updated_at: nextUpdatedAt,
+        failure_cost_cents: task.failure_cost_cents,
+        user: task.user
+          ? {
+              id: task.user.id,
+              username: task.user.username,
+            }
+          : null,
+      };
+
+      return [nextTask, ...current.filter((candidate) => candidate.id !== task.id)].slice(0, 10);
+    });
+    patchTaskDetail(task.id, (current) => ({
+      ...current,
+      task: current.task
+        ? {
+            ...current.task,
+            status: 'ACCEPTED',
+            has_proof: false,
+            proof_request_open: false,
+            proof_requested_at: null,
+            proof_requested_by: null,
+            updated_at: nextUpdatedAt,
+          }
+        : current.task,
+      proof: null,
+    }));
+
     try {
       const actorUserClientInstanceId = await resolveUserClientInstanceId(user.id);
       const { data: updatedRows, error: updateError } = await supabase
@@ -364,6 +414,7 @@ export default function FriendsScreen() {
           proof_request_open: false,
           proof_requested_at: null,
           proof_requested_by: null,
+          updated_at: nextUpdatedAt,
         })
         .eq('id', task.id)
         .eq('voucher_id', user.id)
@@ -371,10 +422,16 @@ export default function FriendsScreen() {
         .select('id');
 
       if (updateError) {
+        if (previousQueue) queryClient.setQueryData(queueKey, previousQueue);
+        if (previousHistory) queryClient.setQueryData(historyKey, previousHistory);
+        if (previousDetail) queryClient.setQueryData(detailKey, previousDetail);
         Alert.alert('Could not accept task', updateError.message);
         return;
       }
       if (!updatedRows || updatedRows.length === 0) {
+        if (previousQueue) queryClient.setQueryData(queueKey, previousQueue);
+        if (previousHistory) queryClient.setQueryData(historyKey, previousHistory);
+        if (previousDetail) queryClient.setQueryData(detailKey, previousDetail);
         Alert.alert('Task changed', 'This task is no longer waiting for your review.');
         await Promise.resolve(friendQueue.refetchQueue());
         return;
@@ -393,38 +450,10 @@ export default function FriendsScreen() {
         setActionError('Task accepted, but event logging failed.');
       }
 
-      const nextUpdatedAt = new Date().toISOString();
-      patchFriendQueue((current) => current.filter((candidate) => candidate.id !== task.id));
-      patchFriendHistory((current) => {
-        const nextTask: VouchHistoryTaskRow = {
-          id: task.id,
-          title: task.title,
-          status: 'ACCEPTED',
-          updated_at: nextUpdatedAt,
-          failure_cost_cents: task.failure_cost_cents,
-          user: task.user
-            ? {
-                id: task.user.id,
-                username: task.user.username,
-              }
-            : null,
-        };
-
-        return [nextTask, ...current.filter((candidate) => candidate.id !== task.id)].slice(0, 10);
-      });
-      patchTaskDetail(task.id, (current) => ({
-        ...current,
-        task: current.task
-          ? {
-              ...current.task,
-              status: 'ACCEPTED',
-              proof_request_open: false,
-              proof_requested_at: null,
-              proof_requested_by: null,
-              updated_at: nextUpdatedAt,
-            }
-          : current.task,
-      }));
+      const purgeResult = await purgeTaskProofForFinalState(task.id);
+      if (!purgeResult.success) {
+        setActionError(`Task accepted, but proof cleanup failed: ${purgeResult.error}`);
+      }
     } finally {
       updateInFlight(task.id, null);
     }
@@ -435,6 +464,48 @@ export default function FriendsScreen() {
 
     setActionError(null);
     updateInFlight(task.id, 'deny');
+    const nextUpdatedAt = new Date().toISOString();
+    const queueKey = queryKeys.friendQueue(user.id);
+    const historyKey = queryKeys.friendHistory(user.id, searchQuery);
+    const detailKey = queryKeys.taskDetail(task.id);
+    const previousQueue = queryClient.getQueryData<VoucherTaskRow[]>(queueKey);
+    const previousHistory = queryClient.getQueryData<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }>(historyKey);
+    const previousDetail = queryClient.getQueryData<TaskDetailData>(detailKey);
+
+    patchFriendQueue((current) => current.filter((candidate) => candidate.id !== task.id));
+    patchFriendHistory((current) => {
+      const nextTask: VouchHistoryTaskRow = {
+        id: task.id,
+        title: task.title,
+        status: 'DENIED',
+        updated_at: nextUpdatedAt,
+        failure_cost_cents: task.failure_cost_cents,
+        user: task.user
+          ? {
+              id: task.user.id,
+              username: task.user.username,
+            }
+          : null,
+      };
+
+      return [nextTask, ...current.filter((candidate) => candidate.id !== task.id)].slice(0, 10);
+    });
+    patchTaskDetail(task.id, (current) => ({
+      ...current,
+      task: current.task
+        ? {
+            ...current.task,
+            status: 'DENIED',
+            has_proof: false,
+            proof_request_open: false,
+            proof_requested_at: null,
+            proof_requested_by: null,
+            updated_at: nextUpdatedAt,
+          }
+        : current.task,
+      proof: null,
+    }));
+
     try {
       const actorUserClientInstanceId = await resolveUserClientInstanceId(user.id);
       const { data: updatedRows, error: updateError } = await supabase
@@ -444,6 +515,7 @@ export default function FriendsScreen() {
           proof_request_open: false,
           proof_requested_at: null,
           proof_requested_by: null,
+          updated_at: nextUpdatedAt,
         })
         .eq('id', task.id)
         .eq('voucher_id', user.id)
@@ -451,10 +523,16 @@ export default function FriendsScreen() {
         .select('id');
 
       if (updateError) {
+        if (previousQueue) queryClient.setQueryData(queueKey, previousQueue);
+        if (previousHistory) queryClient.setQueryData(historyKey, previousHistory);
+        if (previousDetail) queryClient.setQueryData(detailKey, previousDetail);
         Alert.alert('Could not deny task', updateError.message);
         return;
       }
       if (!updatedRows || updatedRows.length === 0) {
+        if (previousQueue) queryClient.setQueryData(queueKey, previousQueue);
+        if (previousHistory) queryClient.setQueryData(historyKey, previousHistory);
+        if (previousDetail) queryClient.setQueryData(detailKey, previousDetail);
         Alert.alert('Task changed', 'This task is no longer waiting for your review.');
         await Promise.resolve(friendQueue.refetchQueue());
         return;
@@ -473,38 +551,10 @@ export default function FriendsScreen() {
         setActionError('Task denied, but event logging failed.');
       }
 
-      const nextUpdatedAt = new Date().toISOString();
-      patchFriendQueue((current) => current.filter((candidate) => candidate.id !== task.id));
-      patchFriendHistory((current) => {
-        const nextTask: VouchHistoryTaskRow = {
-          id: task.id,
-          title: task.title,
-          status: 'DENIED',
-          updated_at: nextUpdatedAt,
-          failure_cost_cents: task.failure_cost_cents,
-          user: task.user
-            ? {
-                id: task.user.id,
-                username: task.user.username,
-              }
-            : null,
-        };
-
-        return [nextTask, ...current.filter((candidate) => candidate.id !== task.id)].slice(0, 10);
-      });
-      patchTaskDetail(task.id, (current) => ({
-        ...current,
-        task: current.task
-          ? {
-              ...current.task,
-              status: 'DENIED',
-              proof_request_open: false,
-              proof_requested_at: null,
-              proof_requested_by: null,
-              updated_at: nextUpdatedAt,
-            }
-          : current.task,
-      }));
+      const purgeResult = await purgeTaskProofForFinalState(task.id);
+      if (!purgeResult.success) {
+        setActionError(`Task denied, but proof cleanup failed: ${purgeResult.error}`);
+      }
     } finally {
       updateInFlight(task.id, null);
     }
@@ -515,9 +565,40 @@ export default function FriendsScreen() {
 
     setActionError(null);
     updateInFlight(task.id, 'proof');
+    const nowIso = new Date().toISOString();
+    const queueKey = queryKeys.friendQueue(user.id);
+    const detailKey = queryKeys.taskDetail(task.id);
+    const previousQueue = queryClient.getQueryData<VoucherTaskRow[]>(queueKey);
+    const previousDetail = queryClient.getQueryData<TaskDetailData>(detailKey);
+
+    patchFriendQueue((current) =>
+      current.map((candidate) => (
+        candidate.id === task.id
+          ? {
+              ...candidate,
+              proof_request_open: true,
+              proof_requested_at: nowIso,
+              proof_requested_by: user.id,
+              updated_at: nowIso,
+            }
+          : candidate
+      )),
+    );
+    patchTaskDetail(task.id, (current) => ({
+      ...current,
+      task: current.task
+        ? {
+            ...current.task,
+            proof_request_open: true,
+            proof_requested_at: nowIso,
+            proof_requested_by: user.id,
+            updated_at: nowIso,
+          }
+        : current.task,
+    }));
+
     try {
       const actorUserClientInstanceId = await resolveUserClientInstanceId(user.id);
-      const nowIso = new Date().toISOString();
       const { data: updatedRows, error: updateError } = await supabase
         .from('tasks')
         .update({
@@ -532,10 +613,14 @@ export default function FriendsScreen() {
         .select('id');
 
       if (updateError) {
+        if (previousQueue) queryClient.setQueryData(queueKey, previousQueue);
+        if (previousDetail) queryClient.setQueryData(detailKey, previousDetail);
         Alert.alert('Could not request proof', updateError.message);
         return;
       }
       if (!updatedRows || updatedRows.length === 0) {
+        if (previousQueue) queryClient.setQueryData(queueKey, previousQueue);
+        if (previousDetail) queryClient.setQueryData(detailKey, previousDetail);
         Alert.alert('Task changed', 'This task is no longer awaiting voucher response.');
         await Promise.resolve(friendQueue.refetchQueue());
         return;
@@ -553,26 +638,6 @@ export default function FriendsScreen() {
       if (eventError) {
         setActionError('Proof requested, but event logging failed.');
       }
-
-      patchFriendQueue((current) =>
-        current.map((candidate) => (
-          candidate.id === task.id
-            ? { ...candidate, proof_request_open: true }
-            : candidate
-        )),
-      );
-      patchTaskDetail(task.id, (current) => ({
-        ...current,
-        task: current.task
-          ? {
-              ...current.task,
-              proof_request_open: true,
-              proof_requested_at: nowIso,
-              proof_requested_by: user.id,
-              updated_at: nowIso,
-            }
-          : current.task,
-      }));
     } finally {
       updateInFlight(task.id, null);
     }

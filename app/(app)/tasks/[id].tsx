@@ -29,7 +29,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import Toast from 'react-native-toast-message';
 import { supabase } from '@/lib/supabase';
 import { purgeTaskProofForFinalState, removeTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
-import { undoCompleteTask } from '@/lib/tasks/task-actions';
+import { stopTaskRepetitions, undoCompleteTask } from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import { colors, radius, spacing, typography } from '@/lib/theme';
 import { StatusPill, STATUS_COLOR } from '@/components/StatusPill';
@@ -393,6 +393,7 @@ export default function TaskDetailScreen() {
   const [proofRemoving, setProofRemoving] = useState(false);
   const [isOverriding, setIsOverriding] = useState(false);
   const [isUndoingComplete, setIsUndoingComplete] = useState(false);
+  const [isStoppingRepetitions, setIsStoppingRepetitions] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const {
     session: activePomoSession,
@@ -796,6 +797,34 @@ export default function TaskDetailScreen() {
     );
   }
 
+  async function handleStopRepetitions() {
+    if (!task || isStoppingRepetitions) return;
+
+    setIsStoppingRepetitions(true);
+    try {
+      const result = await stopTaskRepetitions(task.id);
+      if (!result.success) {
+        Alert.alert('Could not stop repetitions', result.error ?? 'Please try again.');
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
+        ...previous,
+        task: previous.task
+          ? {
+              ...previous.task,
+              recurrence_rule_id: null,
+              updated_at: nowIso,
+            }
+          : previous.task,
+      } : previous);
+      invalidateDerivedTaskViews();
+    } finally {
+      setIsStoppingRepetitions(false);
+    }
+  }
+
   function updateCustomReminderDatePart(dateValue: Date) {
     setCustomReminderDate((prev) => {
       const next = new Date(prev);
@@ -1177,9 +1206,9 @@ export default function TaskDetailScreen() {
                 <ActionBtn
                   allowed
                   token={BTN.stopRepeating}
-                  label="Stop repetitions"
+                  label={isStoppingRepetitions ? 'Stopping…' : 'Stop repetitions'}
                   icon="repeat"
-                  onPress={() => { /* TODO: stop recurrence edge function */ }}
+                  onPress={() => { void handleStopRepetitions(); }}
                   onDeny={() => {}}
                   containerStyle={{ flex: 1 }}
                 />

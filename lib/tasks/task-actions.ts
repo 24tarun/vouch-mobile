@@ -226,6 +226,29 @@ export async function deleteTask(taskId: string): Promise<TaskMutationResult> {
   const userId = await getAuthenticatedUserId();
   if (!userId) return { success: false, error: 'Please sign in again and retry.' };
 
+  const { data: task, error: taskFetchError } = await supabase
+    .from('tasks')
+    .select('id, recurrence_rule_id')
+    .eq('id', taskId)
+    .eq('user_id', userId)
+    .single();
+
+  if (taskFetchError || !task) {
+    return { success: false, userId, error: taskFetchError?.message ?? 'Task not found.' };
+  }
+
+  if (task.recurrence_rule_id) {
+    const { error: ruleDeleteError } = await supabase
+      .from('recurrence_rules')
+      .delete()
+      .eq('id', task.recurrence_rule_id)
+      .eq('user_id', userId);
+
+    if (ruleDeleteError) {
+      return { success: false, userId, error: ruleDeleteError.message };
+    }
+  }
+
   const nowIso = new Date().toISOString();
   const { error } = await supabase
     .from('tasks')
@@ -239,6 +262,48 @@ export async function deleteTask(taskId: string): Promise<TaskMutationResult> {
   if (!purgeResult.success) {
     return { success: false, userId, error: `Task deleted, but proof cleanup failed: ${purgeResult.error}` };
   }
+
+  return { success: true, userId };
+}
+
+export async function stopTaskRepetitions(taskId: string): Promise<TaskMutationResult> {
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { success: false, error: 'Please sign in again and retry.' };
+
+  const actorUserClientInstanceId = await resolveUserClientInstanceId(userId);
+  const { data: task, error: taskFetchError } = await supabase
+    .from('tasks')
+    .select('id, status, recurrence_rule_id')
+    .eq('id', taskId)
+    .eq('user_id', userId)
+    .single();
+
+  if (taskFetchError || !task) {
+    return { success: false, userId, error: taskFetchError?.message ?? 'Task not found.' };
+  }
+
+  if (!task.recurrence_rule_id) {
+    return { success: true, userId };
+  }
+
+  const { error: ruleDeleteError } = await supabase
+    .from('recurrence_rules')
+    .delete()
+    .eq('id', task.recurrence_rule_id)
+    .eq('user_id', userId);
+
+  if (ruleDeleteError) {
+    return { success: false, userId, error: ruleDeleteError.message };
+  }
+
+  await supabase.from('task_events').insert({
+    task_id: task.id,
+    event_type: 'REPETITION_STOPPED',
+    actor_id: userId,
+    actor_user_client_instance_id: actorUserClientInstanceId,
+    from_status: task.status,
+    to_status: task.status,
+  });
 
   return { success: true, userId };
 }

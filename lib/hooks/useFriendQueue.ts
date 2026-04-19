@@ -25,10 +25,14 @@ export interface VoucherTaskRow {
   proof_request_open: boolean;
   has_proof: boolean;
   proof: TaskProof | null;
+  updated_at: string;
+  deadline: string;
+  voucher_response_deadline: string | null;
   user: {
     id: string;
     username: string;
     voucher_can_view_active_tasks: boolean;
+    currency: string;
   } | null;
 }
 
@@ -95,10 +99,14 @@ async function fetchFriendQueue(userId: string): Promise<VoucherTaskRow[]> {
       failure_cost_cents,
       proof_request_open,
       has_proof,
+      updated_at,
+      deadline,
+      voucher_response_deadline,
       user:profiles!tasks_user_id_fkey(
         id,
         username,
-        voucher_can_view_active_tasks
+        voucher_can_view_active_tasks,
+        currency
       )
     `)
     .eq('voucher_id', userId)
@@ -115,6 +123,7 @@ async function fetchFriendQueue(userId: string): Promise<VoucherTaskRow[]> {
       id?: string;
       username?: string;
       voucher_can_view_active_tasks?: boolean;
+      currency?: string;
     } | null;
 
     return {
@@ -125,11 +134,15 @@ async function fetchFriendQueue(userId: string): Promise<VoucherTaskRow[]> {
       proof_request_open: Boolean(row.proof_request_open),
       has_proof: Boolean(row.has_proof),
       proof: null,
+      updated_at: (row.updated_at as string) ?? new Date().toISOString(),
+      deadline: (row.deadline as string) ?? new Date().toISOString(),
+      voucher_response_deadline: (row.voucher_response_deadline as string | null) ?? null,
       user: owner?.id
         ? {
             id: owner.id,
             username: owner.username ?? 'Unknown owner',
             voucher_can_view_active_tasks: Boolean(owner.voucher_can_view_active_tasks),
+            currency: (owner.currency as string) ?? 'EUR',
           }
         : null,
     } satisfies VoucherTaskRow;

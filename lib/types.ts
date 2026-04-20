@@ -90,7 +90,18 @@ export interface Profile {
   display_rp_bar_on_dashboard: boolean;
   abandoned_commitments_count: number;
   ai_friend_opt_in: boolean;
+  charity_enabled: boolean;
+  selected_charity_id: string | null;
+  timezone: string;
+  timezone_user_set: boolean;
   created_at: string;
+}
+
+export interface Charity {
+  id: string;
+  key: string;
+  name: string;
+  is_active: boolean;
 }
 
 export interface Friendship {

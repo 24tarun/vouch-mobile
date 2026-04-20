@@ -424,6 +424,9 @@ const styles = StyleSheet.create({
     fontSize: typography.base,
     color: colors.text,
   },
+  pickerRowLabelDisabled: {
+    color: colors.textSubtle,
+  },
 });
 
 export { styles };

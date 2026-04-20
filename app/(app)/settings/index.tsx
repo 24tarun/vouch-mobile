@@ -22,7 +22,7 @@ import { unregisterForPushNotificationsAsync } from '@/lib/notifications';
 import { useAuth } from '@/hooks/useAuth';
 import { colors } from '@/lib/theme';
 import { styles } from '@/components/settings/styles';
-import { Currency } from '@/lib/types';
+import { Charity, Currency } from '@/lib/types';
 import { PageHeader } from '@/components/PageHeader';
 import { StatsOverview } from '@/components/StatsOverview';
 import {
@@ -48,12 +48,14 @@ import {
   normalizeSearchCandidate,
   normalizeVoucherOption,
 } from '@/lib/settings/relationships';
+import { formatTimeZoneLabel, getTimeZoneOptions } from '@/lib/timezones';
 
-type PickerType = 'voucher' | 'currency' | null;
+type PickerType = 'voucher' | 'currency' | 'timezone' | 'charity' | null;
 
 interface PickerOption {
   label: string;
   value: string;
+  disabled?: boolean;
 }
 
 interface VoucherOption {
@@ -162,6 +164,10 @@ export default function SettingsScreen() {
   const [defaultFailureCostInput, setDefaultFailureCostInput] = useState('10');
   const [defaultVoucherId, setDefaultVoucherId] = useState<string | null>(null);
   const [currency, setCurrency] = useState<Currency>('USD');
+  const [timeZone, setTimeZone] = useState('UTC');
+  const [timeZoneUserSet, setTimeZoneUserSet] = useState(false);
+  const [charityEnabled, setCharityEnabled] = useState(false);
+  const [selectedCharityId, setSelectedCharityId] = useState<string | null>(null);
   const [oneHourReminderEnabled, setOneHourReminderEnabled] = useState(true);
   const [tenMinuteReminderEnabled, setTenMinuteReminderEnabled] = useState(true);
 
@@ -188,6 +194,8 @@ export default function SettingsScreen() {
   const [savingVoucherVisibility, setSavingVoucherVisibility] = useState(false);
   const [voucherVisibilityError, setVoucherVisibilityError] = useState<string | null>(null);
   const [voucherVisibilitySuccess, setVoucherVisibilitySuccess] = useState<string | null>(null);
+  const [charities, setCharities] = useState<Charity[]>([]);
+  const [charitiesError, setCharitiesError] = useState<string | null>(null);
   const emailSavedRef = useRef<string | null>(null);
   const usernameSavedRef = useRef<string | null>(null);
   const defaultsSavedRef = useRef<string | null>(null);
@@ -205,6 +213,14 @@ export default function SettingsScreen() {
   const statsLoading = settingsStatsQuery.loading;
   const statsError = settingsStatsQuery.error;
   const voucherLoading = relationshipsLoading || blockedUsersLoading;
+  const deviceTimeZone = useMemo(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    [],
+  );
+  const timeZoneOptions = useMemo(() => {
+    const options = getTimeZoneOptions();
+    return options.includes(timeZone) ? options : [timeZone, ...options];
+  }, [timeZone]);
 
   const voucherOptions = useMemo(() => {
     if (!user) return [];
@@ -217,6 +233,14 @@ export default function SettingsScreen() {
     }
     return Array.from(byId.values());
   }, [blockedUsers, friends, user]);
+  const defaultCharityId = useMemo(() => {
+    const donateToDeveloper = charities.find(
+      (charity) => charity.key === 'donate_to_developer' && charity.is_active,
+    );
+    if (donateToDeveloper) return donateToDeveloper.id;
+    const firstActiveCharity = charities.find((charity) => charity.is_active);
+    return firstActiveCharity?.id ?? null;
+  }, [charities]);
 
   useEffect(() => {
     if (!profile || !user) return;
@@ -231,6 +255,10 @@ export default function SettingsScreen() {
     const nextTenMinuteReminder = profile.deadline_final_warning_enabled ?? true;
     const nextAiVoucherEnabled = profile.ai_friend_opt_in ?? false;
     const nextVoucherCanViewActiveTasks = profile.voucher_can_view_active_tasks ?? true;
+    const nextTimeZone = profile.timezone ?? 'UTC';
+    const nextTimeZoneUserSet = profile.timezone_user_set ?? false;
+    const nextCharityEnabled = profile.charity_enabled ?? false;
+    const nextSelectedCharityId = profile.selected_charity_id ?? null;
 
     setUsernameDraft(nextUsername);
     setDefaultPomoInput(String(nextPomo));
@@ -245,6 +273,10 @@ export default function SettingsScreen() {
     setTenMinuteReminderEnabled(nextTenMinuteReminder);
     setAiVoucherEnabled(nextAiVoucherEnabled);
     setVoucherCanViewActiveTasks(nextVoucherCanViewActiveTasks);
+    setTimeZone(nextTimeZone);
+    setTimeZoneUserSet(nextTimeZoneUserSet);
+    setCharityEnabled(nextCharityEnabled);
+    setSelectedCharityId(nextSelectedCharityId);
 
     emailSavedRef.current = nextEmail;
     usernameSavedRef.current = nextUsername;
@@ -255,6 +287,10 @@ export default function SettingsScreen() {
       currency: nextCurrency,
       oneHourReminderEnabled: nextOneHourReminder,
       tenMinuteReminderEnabled: nextTenMinuteReminder,
+      timeZone: nextTimeZone,
+      timeZoneUserSet: nextTimeZoneUserSet,
+      charityEnabled: nextCharityEnabled,
+      selectedCharityId: nextSelectedCharityId,
     });
     aiFeaturesSavedRef.current = nextAiVoucherEnabled;
     voucherVisibilitySavedRef.current = nextVoucherCanViewActiveTasks;
@@ -270,6 +306,53 @@ export default function SettingsScreen() {
     setDeleteAccountError(null);
     setDeleteAccountSuccess(false);
   }, [profile, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    async function loadCharities() {
+      const { data, error } = await supabase
+        .from('charities')
+        .select('id, key, name, is_active')
+        .order('name', { ascending: true });
+
+      if (cancelled) return;
+      if (error) {
+        setCharities([]);
+        setCharitiesError(error.message);
+        return;
+      }
+
+      setCharities(((data ?? []) as Charity[]));
+      setCharitiesError(null);
+    }
+
+    void loadCharities();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (timeZoneUserSet) return;
+    if (!deviceTimeZone || deviceTimeZone === timeZone) return;
+    if (!timeZoneOptions.includes(deviceTimeZone)) return;
+    setTimeZone(deviceTimeZone);
+  }, [deviceTimeZone, timeZone, timeZoneOptions, timeZoneUserSet]);
+
+  useEffect(() => {
+    if (!charityEnabled) return;
+    const activeSelectedCharity = charities.find((charity) => charity.id === selectedCharityId) ?? null;
+    if (!selectedCharityId || !activeSelectedCharity || !activeSelectedCharity.is_active) {
+      if (defaultCharityId) {
+        setSelectedCharityId(defaultCharityId);
+        return;
+      }
+      setCharityEnabled(false);
+      setSelectedCharityId(null);
+    }
+  }, [charities, charityEnabled, defaultCharityId, selectedCharityId]);
 
   useEffect(() => {
     const query = friendSearchQuery.trim();
@@ -673,6 +756,18 @@ export default function SettingsScreen() {
         refreshRelationshipsAndSearch(),
         blockedUsersQuery.refetch(),
         settingsStatsQuery.refetch(),
+        supabase
+          .from('charities')
+          .select('id, key, name, is_active')
+          .order('name', { ascending: true })
+          .then(({ data, error }) => {
+            if (error) {
+              setCharitiesError(error.message);
+              return;
+            }
+            setCharities(((data ?? []) as Charity[]));
+            setCharitiesError(null);
+          }),
       ]);
     } finally {
       setRefreshing(false);
@@ -1000,27 +1095,62 @@ export default function SettingsScreen() {
     failureCostBounds,
     currencySymbol,
   ]);
+  const selectedCharity = useMemo(
+    () => charities.find((charity) => charity.id === selectedCharityId) ?? null,
+    [charities, selectedCharityId],
+  );
+  const charityValidationError = useMemo(() => {
+    if (!charityEnabled) return null;
+    if (!selectedCharityId) return 'Select one charity when Charity Choice is enabled.';
+    if (!selectedCharity || !selectedCharity.is_active) {
+      return 'Selected charity is unavailable. Choose an active charity.';
+    }
+    return null;
+  }, [charityEnabled, selectedCharity, selectedCharityId]);
 
   const voucherPickerOptions: PickerOption[] = useMemo(
     () => voucherOptions.map((option) => ({ label: option.username, value: option.id })),
     [voucherOptions],
   );
+  const timeZonePickerOptions: PickerOption[] = useMemo(
+    () => timeZoneOptions.map((zone) => ({ label: formatTimeZoneLabel(zone), value: zone })),
+    [timeZoneOptions],
+  );
+  const charityPickerOptions: PickerOption[] = useMemo(
+    () => [
+      { label: 'No charity selected', value: '__none__' },
+      ...charities.map((charity) => ({
+        label: charity.is_active ? charity.name : `${charity.name} (Unavailable)`,
+        value: charity.id,
+        disabled: !charity.is_active,
+      })),
+    ],
+    [charities],
+  );
 
   const pickerOptions: PickerOption[] = useMemo(() => {
     if (activePicker === 'voucher') return voucherPickerOptions;
     if (activePicker === 'currency') return CURRENCY_OPTIONS;
+    if (activePicker === 'timezone') return timeZonePickerOptions;
+    if (activePicker === 'charity') return charityPickerOptions;
     return [];
-  }, [activePicker, voucherPickerOptions]);
+  }, [activePicker, charityPickerOptions, timeZonePickerOptions, voucherPickerOptions]);
 
   const pickerTitle = useMemo(() => {
     if (activePicker === 'voucher') return 'Default Voucher';
     if (activePicker === 'currency') return 'Currency';
+    if (activePicker === 'timezone') return 'Timezone';
+    if (activePicker === 'charity') return 'Charity';
     return '';
   }, [activePicker]);
 
   const defaultVoucherLabel = useMemo(
     () => voucherOptions.find((option) => option.id === defaultVoucherId)?.username ?? 'Select voucher',
     [voucherOptions, defaultVoucherId],
+  );
+  const selectedCharityLabel = useMemo(
+    () => charities.find((charity) => charity.id === selectedCharityId)?.name ?? 'Select one charity',
+    [charities, selectedCharityId],
   );
   const defaultsSnapshot = useMemo(
     () =>
@@ -1031,6 +1161,10 @@ export default function SettingsScreen() {
         currency,
         oneHourReminderEnabled,
         tenMinuteReminderEnabled,
+        timeZone,
+        timeZoneUserSet,
+        charityEnabled,
+        selectedCharityId,
       }),
     [
       parsedPomoMinutes,
@@ -1039,6 +1173,10 @@ export default function SettingsScreen() {
       currency,
       oneHourReminderEnabled,
       tenMinuteReminderEnabled,
+      timeZone,
+      timeZoneUserSet,
+      charityEnabled,
+      selectedCharityId,
     ],
   );
 
@@ -1052,6 +1190,20 @@ export default function SettingsScreen() {
   function applyPicker(value: string) {
     if (activePicker === 'voucher') setDefaultVoucherId(value);
     if (activePicker === 'currency') setCurrency(value as Currency);
+    if (activePicker === 'timezone') {
+      setTimeZone(value);
+      setTimeZoneUserSet(true);
+    }
+    if (activePicker === 'charity') {
+      if (value === '__none__') {
+        setSelectedCharityId(null);
+        setCharityEnabled(false);
+        setActivePicker(null);
+        return;
+      }
+      setSelectedCharityId(value);
+      setCharityEnabled(true);
+    }
     setActivePicker(null);
   }
 
@@ -1125,12 +1277,24 @@ export default function SettingsScreen() {
       setDefaultsSuccess(null);
       return;
     }
+    if (!timeZone || !timeZoneOptions.includes(timeZone)) {
+      setDefaultsError('Timezone is invalid.');
+      setDefaultsSuccess(null);
+      return;
+    }
+    if (charityValidationError) {
+      setDefaultsError(charityValidationError);
+      setDefaultsSuccess(null);
+      return;
+    }
 
     setDefaultsError(null);
     let cancelled = false;
     const timer = setTimeout(async () => {
       setSavingDefaults(true);
       setDefaultsSuccess(null);
+      const resolvedCharityEnabled = charityEnabled && Boolean(selectedCharityId);
+      const resolvedSelectedCharityId = resolvedCharityEnabled ? selectedCharityId : null;
       const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
       queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) => current ? {
         ...current,
@@ -1138,6 +1302,10 @@ export default function SettingsScreen() {
         default_failure_cost_cents: parsedFailureCostCents,
         default_voucher_id: resolvedDefaultVoucherId,
         currency,
+        timezone: timeZone,
+        timezone_user_set: timeZoneUserSet,
+        charity_enabled: resolvedCharityEnabled,
+        selected_charity_id: resolvedSelectedCharityId,
         deadline_one_hour_warning_enabled: oneHourReminderEnabled,
         deadline_final_warning_enabled: tenMinuteReminderEnabled,
       } : current);
@@ -1149,6 +1317,10 @@ export default function SettingsScreen() {
           default_failure_cost_cents: parsedFailureCostCents,
           default_voucher_id: resolvedDefaultVoucherId,
           currency,
+          timezone: timeZone,
+          timezone_user_set: timeZoneUserSet,
+          charity_enabled: resolvedCharityEnabled,
+          selected_charity_id: resolvedSelectedCharityId,
           deadline_one_hour_warning_enabled: oneHourReminderEnabled,
           deadline_final_warning_enabled: tenMinuteReminderEnabled,
         })
@@ -1179,6 +1351,12 @@ export default function SettingsScreen() {
     currency,
     oneHourReminderEnabled,
     tenMinuteReminderEnabled,
+    timeZone,
+    timeZoneOptions,
+    timeZoneUserSet,
+    charityEnabled,
+    selectedCharityId,
+    charityValidationError,
     defaultsSnapshot,
     pomoValidationError,
     failureCostValidationError,
@@ -1444,6 +1622,20 @@ export default function SettingsScreen() {
               </View>
 
               <View style={styles.defaultsField}>
+                <Text style={styles.defaultsLabel}>Timezone</Text>
+                <TouchableOpacity
+                  style={styles.selectButton}
+                  onPress={() => setActivePicker('timezone')}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Select timezone"
+                >
+                  <Text style={styles.selectLabel}>{formatTimeZoneLabel(timeZone)}</Text>
+                  <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.defaultsField}>
                 <Text style={styles.defaultsLabel}>Default pomo duration</Text>
                 <TextInput
                   style={styles.textInput}
@@ -1548,6 +1740,57 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Charity Choice</Text>
+          <View style={styles.card}>
+            <View style={styles.defaultsContent}>
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}>
+                  <Text style={styles.toggleTitle}>Enable charity mode</Text>
+                </View>
+                <Switch
+                  value={charityEnabled}
+                  onValueChange={(nextEnabled) => {
+                    setCharityEnabled(nextEnabled);
+                    if (!nextEnabled) {
+                      setSelectedCharityId(null);
+                      if (activePicker === 'charity') {
+                        setActivePicker(null);
+                      }
+                      return;
+                    }
+                    if (!selectedCharityId || !selectedCharity || !selectedCharity.is_active) {
+                      setSelectedCharityId(defaultCharityId);
+                    }
+                    setActivePicker('charity');
+                  }}
+                  trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                  thumbColor={colors.text}
+                />
+              </View>
+
+              {charityEnabled ? (
+                <View style={styles.defaultsField}>
+                  <Text style={styles.defaultsLabel}>Charity</Text>
+                  <TouchableOpacity
+                    style={styles.selectButton}
+                    onPress={() => setActivePicker('charity')}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Select charity"
+                  >
+                    <Text style={styles.selectLabel}>{selectedCharityLabel}</Text>
+                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              <Text style={styles.toggleSub}>No payment is processed in app; you pay manually outside the app.</Text>
+              {charitiesError ? <Text style={styles.errorText}>{charitiesError}</Text> : null}
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionLabel}>AI-Features</Text>
           <View style={styles.card}>
             <View style={styles.defaultsContent}>
@@ -1629,10 +1872,16 @@ export default function SettingsScreen() {
                 <TouchableOpacity
                   key={option.value}
                   style={styles.pickerRow}
-                  onPress={() => applyPicker(option.value)}
+                  onPress={() => {
+                    if (option.disabled) return;
+                    applyPicker(option.value);
+                  }}
                   activeOpacity={0.75}
+                  disabled={option.disabled}
                 >
-                  <Text style={styles.pickerRowLabel}>{option.label}</Text>
+                  <Text style={[styles.pickerRowLabel, option.disabled ? styles.pickerRowLabelDisabled : null]}>
+                    {option.label}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>

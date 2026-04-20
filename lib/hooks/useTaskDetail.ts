@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import type { Task, TaskEvent, TaskReminder } from '@/lib/types';
+import type { RecurrenceRule, Task, TaskEvent, TaskReminder } from '@/lib/types';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
 
@@ -15,6 +15,7 @@ export interface TaskProofData {
 
 export interface TaskDetailData {
   task: Task | null;
+  recurrenceRule: RecurrenceRule | null;
   voucherUsername: string | null;
   reminders: TaskReminder[];
   events: TaskEvent[];
@@ -59,6 +60,21 @@ async function fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
 
   if (proofError) throw new Error(proofError.message);
 
+  let recurrenceRule: RecurrenceRule | null = null;
+  const recurrenceRuleId = (taskData as any)?.recurrence_rule_id as string | null | undefined;
+  if (recurrenceRuleId) {
+    const { data: recurrenceData, error: recurrenceError } = await supabase
+      .from('recurrence_rules')
+      .select('*')
+      .eq('id', recurrenceRuleId)
+      .single();
+
+    // Don't fail task detail if recurrence rule lookup is unavailable.
+    if (!recurrenceError && recurrenceData) {
+      recurrenceRule = recurrenceData as RecurrenceRule;
+    }
+  }
+
   let proof: TaskProofData | null = null;
   const proofRow = (proofRows?.[0] ?? null) as {
     bucket?: string | null;
@@ -88,6 +104,7 @@ async function fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
 
   return {
     task: taskData as Task,
+    recurrenceRule,
     voucherUsername: ((taskData as any)?.voucher?.username as string | null) ?? null,
     reminders: (remindersRes.data ?? []) as TaskReminder[],
     events: (eventsRes.data ?? []) as TaskEvent[],

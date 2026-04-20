@@ -1,0 +1,33 @@
+diff --git a/node_modules/rn-swiper-list/lib/module/SwiperCard/index.js b/node_modules/rn-swiper-list/lib/module/SwiperCard/index.js
+index 71e4073..5950a9c 100644
+--- a/node_modules/rn-swiper-list/lib/module/SwiperCard/index.js
++++ b/node_modules/rn-swiper-list/lib/module/SwiperCard/index.js
+@@ -156,7 +156,8 @@ const SwipeableCard = /*#__PURE__*/forwardRef(function SwipeableCard(props, ref)
+       scheduleOnRN(onPress);
+     }
+   });
+-  const pan = Gesture.Pan().onBegin(() => {
++  const allSwipesDisabled = Boolean(disableLeftSwipe) && Boolean(disableRightSwipe) && Boolean(disableTopSwipe) && Boolean(disableBottomSwipe);
++  const pan = Gesture.Pan().enabled(!allSwipesDisabled).onBegin(() => {
+     nextActiveIndex.value = Math.floor(activeIndex.value);
+     if (onSwipeStart) scheduleOnRN(onSwipeStart);
+   }).onUpdate(event => {
+diff --git a/node_modules/rn-swiper-list/src/SwiperCard/index.tsx b/node_modules/rn-swiper-list/src/SwiperCard/index.tsx
+index 7e248b1..adc6532 100644
+--- a/node_modules/rn-swiper-list/src/SwiperCard/index.tsx
++++ b/node_modules/rn-swiper-list/src/SwiperCard/index.tsx
+@@ -216,7 +216,14 @@ const SwipeableCard = forwardRef(function SwipeableCard<T>(
+     }
+   });
+ 
++  const allSwipesDisabled =
++    Boolean(disableLeftSwipe) &&
++    Boolean(disableRightSwipe) &&
++    Boolean(disableTopSwipe) &&
++    Boolean(disableBottomSwipe);
++
+   const pan = Gesture.Pan()
++    .enabled(!allSwipesDisabled)
+     .onBegin(() => {
+       nextActiveIndex.value = Math.floor(activeIndex.value);
+       if (onSwipeStart) scheduleOnRN(onSwipeStart);

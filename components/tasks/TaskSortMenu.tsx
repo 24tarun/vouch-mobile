@@ -4,6 +4,14 @@ import { colors, spacing } from '@/lib/theme';
 import type { DashboardSortMode } from '@/lib/hooks/useTasks';
 import { styles } from './styles';
 
+const localStyles = StyleSheet.create({
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 29,
+    elevation: 13,
+  },
+});
+
 interface SortAnchor {
   pageX: number;
   pageY: number;
@@ -41,7 +49,7 @@ export function TaskSortMenu({
 
   return (
     <>
-      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <Pressable style={localStyles.backdrop} onPress={onClose} />
       <View
         style={[
           styles.sortDropdown,

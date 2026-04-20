@@ -18,6 +18,19 @@ interface TaskTopBarProps {
   openSortMenu: () => void;
 }
 
+function toSuperscriptOrdinal(ordinal: string): string {
+  switch (ordinal.toLowerCase()) {
+    case 'st':
+      return 'ˢᵗ';
+    case 'nd':
+      return 'ⁿᵈ';
+    case 'rd':
+      return 'ʳᵈ';
+    default:
+      return 'ᵗʰ';
+  }
+}
+
 export function TaskTopBar({
   displayName,
   todayParts,
@@ -31,14 +44,15 @@ export function TaskTopBar({
   expandCreator,
   openSortMenu,
 }: TaskTopBarProps) {
+  const superscriptOrdinal = toSuperscriptOrdinal(todayParts.ordinal);
+
   return (
     <>
       <View style={styles.taskHeader}>
         <Text style={styles.taskGreeting}>Hello, {displayName}</Text>
         <View style={styles.taskDateRow}>
-          <Text style={styles.taskDateIts}>Its</Text>
-          <Text style={styles.taskDate}>{todayParts.dayName} {todayParts.day}</Text>
-          <Text style={styles.taskDateOrdinal}>{todayParts.ordinal}</Text>
+          <Text style={styles.taskDateIts}>It&apos;s</Text>
+          <Text style={styles.taskDate}>{todayParts.dayName} {todayParts.day}{superscriptOrdinal}</Text>
           <Text style={styles.taskDate}> {todayParts.monthName}.</Text>
         </View>
       </View>

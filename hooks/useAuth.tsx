@@ -107,6 +107,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [queryClient]);
 
+  // Keep AuthContext.profile in sync with React Query cache writes.
+  // Settings applies optimistic profile updates via setQueryData(currentProfile),
+  // and this bridge ensures those updates are reflected immediately in screens
+  // that consume useAuth().profile.
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId) return;
+
+    const key = queryKeys.currentProfile(userId);
+    const cachedProfile = queryClient.getQueryData<Profile | null>(key);
+    if (cachedProfile !== undefined) {
+      setProfile(cachedProfile ?? null);
+    }
+
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (!event?.query) return;
+      const queryKey = event.query.queryKey;
+      if (!Array.isArray(queryKey) || queryKey[0] !== 'current-profile' || queryKey[1] !== userId) {
+        return;
+      }
+      const next = event.query.state.data as Profile | null | undefined;
+      if (next !== undefined) {
+        setProfile(next ?? null);
+      }
+    });
+
+    return unsubscribe;
+  }, [queryClient, session?.user?.id]);
+
   const value = useMemo(
     () => ({ session, user: session?.user ?? null, profile, authInitialized, loading }),
     [session, profile, authInitialized, loading],

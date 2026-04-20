@@ -34,7 +34,7 @@ import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import { colors, radius, spacing, typography } from '@/lib/theme';
 import { StatusPill, STATUS_COLOR } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
-import type { TaskEvent, TaskReminder } from '@/lib/types';
+import type { RecurrenceRule, Task, TaskEvent, TaskReminder } from '@/lib/types';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { AI_PROFILE_ID, AI_PROFILE_USERNAME } from '@/lib/constants/ai-profile';
 import { TASK_AWAITING_STATUSES } from '@/lib/constants/task-status';
@@ -303,6 +303,60 @@ function formatCost(cents: number, currency: string): string {
   return `${symbol}${formatted}`;
 }
 
+function weekdayName(day: number): string {
+  const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return names[((day % 7) + 7) % 7];
+}
+
+function formatListWithAnd(values: string[]): string {
+  if (values.length === 0) return '';
+  if (values.length === 1) return values[0];
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
+}
+
+function formatDeadlineTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function buildRecurrenceSummary(task: Task, recurrenceRule: RecurrenceRule | null): string | null {
+  if (!task.recurrence_rule_id) return null;
+
+  const config = recurrenceRule?.rule_config ?? null;
+  const frequency = config?.frequency ?? null;
+  const timeOfDay = config?.time_of_day ?? formatDeadlineTime(task.deadline);
+
+  if (!frequency) return `Deadline at ${timeOfDay}`;
+
+  switch (frequency) {
+    case 'DAILY':
+      return `Every day with deadline at ${timeOfDay}`;
+    case 'WEEKDAYS':
+      return `Every weekday with deadline at ${timeOfDay}`;
+    case 'MONTHLY':
+      return `Every month with deadline at ${timeOfDay}`;
+    case 'YEARLY':
+      return `Every year with deadline at ${timeOfDay}`;
+    case 'WEEKLY':
+    case 'CUSTOM': {
+      const days = (config?.days_of_week ?? [])
+        .map((day) => Number(day))
+        .filter((day) => Number.isFinite(day))
+        .map((day) => weekdayName(day));
+
+      if (days.length > 0) {
+        return `${formatListWithAnd(days)} with deadline at ${timeOfDay}`;
+      }
+
+      return `${weekdayName(new Date(task.deadline).getDay())} with deadline at ${timeOfDay}`;
+    }
+    default:
+      return `Deadline at ${timeOfDay}`;
+  }
+}
+
 function VideoProofPreview({
   signedUrl,
   overlayTimestampText,
@@ -409,6 +463,7 @@ export default function TaskDetailScreen() {
   const events = detail.data?.events ?? [];
   const totalFocusedSeconds = detail.data?.totalFocusedSeconds ?? 0;
   const proof = detail.data?.proof ?? null;
+  const recurrenceRule = detail.data?.recurrenceRule ?? null;
   const proofPreviewWidth = screenWidth - spacing.lg * 2;
 
   useFocusEffect(
@@ -1031,6 +1086,7 @@ export default function TaskDetailScreen() {
   const isSelfVouch = task.voucher_id === task.user_id;
   const isCurrentTaskPomo = activePomoSession?.task_id === task.id;
   const currentTaskPomoStatus = isCurrentTaskPomo ? activePomoSession?.status : null;
+  const recurrenceSummary = buildRecurrenceSummary(task, recurrenceRule);
 
   const handlePomoPress = () => {
     if (isCurrentTaskPomo) {
@@ -1065,10 +1121,20 @@ export default function TaskDetailScreen() {
       >
 
         {/* Title */}
-        <Text style={styles.title}>{task.title}</Text>
-        {task.recurrence_rule_id && task.iteration_number != null && (
-          <Text style={styles.iterationBadge}>Recurrence #{task.iteration_number}</Text>
+        {task.recurrence_rule_id && task.iteration_number != null ? (
+          <Text style={styles.title}>
+            <Text style={styles.iterationInline}>#{task.iteration_number} </Text>
+            {task.title}
+          </Text>
+        ) : (
+          <Text style={styles.title}>{task.title}</Text>
         )}
+        {recurrenceSummary ? (
+          <View style={styles.recurrenceSummaryRow}>
+            <Feather name="repeat" size={16} color="#C084FC" style={styles.recurrenceSummaryIconInline} />
+            <Text style={styles.recurrenceSummaryText}>{recurrenceSummary}</Text>
+          </View>
+        ) : null}
 
         {/* Info block */}
         <View style={styles.infoBlock}>
@@ -1266,15 +1332,25 @@ export default function TaskDetailScreen() {
                       />
                     )}
                     <TouchableOpacity
-                      style={[styles.addReminderInlineBtn, isMutatingReminder && styles.addReminderInlineBtnDisabled]}
+                      style={styles.addReminderInlineBtn}
+                      activeOpacity={0.85}
+                      onPress={openAddReminderFlow}
+                      disabled={isMutatingReminder}
+                      accessibilityRole="button"
+                      accessibilityLabel="Add reminders"
+                    >
+                      <Text style={styles.addReminderInlineText}>Add reminders</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.reminderActionSlot, isMutatingReminder && styles.addReminderInlineBtnDisabled]}
                       activeOpacity={0.85}
                       onPress={openAddReminderFlow}
                       disabled={isMutatingReminder}
                       accessibilityRole="button"
                       accessibilityLabel="Add reminder"
+                      hitSlop={8}
                     >
-                      <Feather name="plus" size={14} color={BTN.reminders.text} />
-                      <Text style={styles.addReminderInlineText}>Add reminder</Text>
+                      <Feather name="plus" size={16} color={BTN.reminders.text} />
                     </TouchableOpacity>
                   </View>
                   {reminders.length === 0
@@ -1292,6 +1368,7 @@ export default function TaskDetailScreen() {
                               </Text>
                             </View>
                             <TouchableOpacity
+                              style={styles.reminderActionSlot}
                               onPress={() => { void handleDeleteReminder(r); }}
                               activeOpacity={0.75}
                               accessibilityRole="button"
@@ -1614,7 +1691,10 @@ const styles = StyleSheet.create({
   retryBtn: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surface2 },
   retryText: { fontSize: typography.sm, color: colors.text },
   title: { fontSize: typography.xl, fontWeight: typography.bold, color: colors.text, lineHeight: 32, letterSpacing: -0.5, textAlign: 'center' },
-  iterationBadge: { fontSize: typography.xs, color: colors.textMuted, marginTop: -spacing.sm },
+  iterationInline: { color: '#C084FC' },
+  recurrenceSummaryRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: spacing.xs },
+  recurrenceSummaryIconInline: { marginRight: spacing.xs, transform: [{ translateY: 1 }] },
+  recurrenceSummaryText: { fontSize: typography.sm, color: '#C084FC', fontWeight: typography.semibold, letterSpacing: 0.2, lineHeight: 19, flex: 1 },
   infoBlock: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, overflow: 'hidden' },
   infoRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: 13, gap: spacing.sm },
   infoLabel: { fontSize: typography.sm, color: colors.textMuted, width: 110, flexShrink: 0 },
@@ -1667,25 +1747,23 @@ const styles = StyleSheet.create({
   toggleEmpty: { fontSize: typography.sm, color: colors.textMuted, textAlign: 'center', paddingVertical: spacing.md },
   reminderToolbar: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     paddingBottom: spacing.xs,
   },
   addReminderInlineBtn: {
-    height: 34,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: BTN.reminders.border,
-    backgroundColor: BTN.reminders.bg,
-    paddingHorizontal: spacing.sm,
+    minHeight: 24,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'flex-start',
+    flex: 1,
+    paddingHorizontal: 0,
   },
   addReminderInlineBtnDisabled: { opacity: 0.6 },
   addReminderInlineText: {
-    fontSize: typography.xs,
+    fontSize: typography.sm,
     fontWeight: typography.semibold,
     color: BTN.reminders.text,
   },
@@ -1699,6 +1777,7 @@ const styles = StyleSheet.create({
   reminderRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: 11, gap: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
   reminderTime: { fontSize: typography.sm, color: colors.text },
   reminderRowActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  reminderActionSlot: { width: 20, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   reminderStatusPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, flexShrink: 0 },
   reminderStatusSent: { backgroundColor: '#FBBF2420' },
   reminderStatusScheduled: { backgroundColor: '#60A5FA20' },

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   Image,
   Modal,
   Pressable,
@@ -19,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
+import { Swiper, type SwiperCardRefType } from 'rn-swiper-list';
 import { supabase } from '@/lib/supabase';
 import { colors, radius, spacing, typography } from '@/lib/theme';
 import { useAuth } from '@/hooks/useAuth';
@@ -34,6 +34,7 @@ import type { TaskDetailData } from '@/lib/hooks/useTaskDetail';
 
 type DecisionAction = 'accept' | 'deny' | 'proof';
 type TabView = 'pending' | 'history';
+type DeckIntent = 'accept' | 'deny' | 'next';
 
 interface TaskProof {
   signedUrl: string;
@@ -157,15 +158,27 @@ function VideoProofPlayer({ signedUrl, overlayTimestampText }: { signedUrl: stri
 
 function MediaBox({ proof, taskId, onExpand }: { proof: TaskProof | null; taskId: string; onExpand: () => void }) {
   const filename = proof ? (proof.mediaKind === 'video' ? 'proof_video.mp4' : 'proof_photo.jpg') : null;
+  const mediaKey = proof
+    ? `${taskId}:${proof.mediaKind}:${proof.signedUrl}`
+    : `${taskId}:placeholder`;
 
   return (
-    <View style={styles.mediaBox}>
+    <View style={styles.mediaBox} key={mediaKey}>
       {proof ? (
         <>
           {proof.mediaKind === 'image' ? (
-            <Image source={{ uri: proof.signedUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            <Image
+              source={{ uri: proof.signedUrl }}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+              fadeDuration={0}
+            />
           ) : (
-            <VideoProofPlayer signedUrl={proof.signedUrl} overlayTimestampText={proof.overlayTimestampText} />
+            <VideoProofPlayer
+              key={proof.signedUrl}
+              signedUrl={proof.signedUrl}
+              overlayTimestampText={proof.overlayTimestampText}
+            />
           )}
           {proof.overlayTimestampText && proof.mediaKind === 'image' ? (
             <View style={styles.timestampWrap}>
@@ -183,7 +196,7 @@ function MediaBox({ proof, taskId, onExpand }: { proof: TaskProof | null; taskId
           </TouchableOpacity>
         </>
       ) : (
-        <GeometricPlaceholder seed={taskId} />
+        <GeometricPlaceholder key={`${taskId}:placeholder`} seed={taskId} />
       )}
     </View>
   );
@@ -308,119 +321,252 @@ function DeckActions({
 
 // ─── Friend deck ──────────────────────────────────────────────────────────────
 
-function FriendDeck({
-  friendId,
+function CardContent({
+  task,
   friend,
-  tasks,
-  activeIndex,
-  slideAnim,
-  inFlightByTaskId,
+  inFlight,
+  isActionable,
+  hasNext,
   onAccept,
   onDeny,
   onProof,
   onCycle,
   onExpand,
 }: {
-  friendId: string;
+  task: VoucherTaskRow;
+  friend: VoucherTaskRow['user'];
+  inFlight: DecisionAction | null;
+  isActionable: boolean;
+  hasNext: boolean;
+  onAccept: () => void;
+  onDeny: () => void;
+  onProof: () => void;
+  onCycle: () => void;
+  onExpand: (proof: TaskProof) => void;
+}) {
+  const username = friend?.username ?? 'Unknown';
+  return (
+    <>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardHeaderLeft}>
+          <FriendAvatar username={username} size={32} />
+          <View style={styles.cardHeaderMeta}>
+            <Text style={styles.cardFriendName}>{username.toLowerCase()}</Text>
+            <Text style={styles.cardSubmittedTime}>{timeAgo(task.updated_at)}</Text>
+          </View>
+        </View>
+        <StatusPill status={task.status} />
+      </View>
+      <MediaBox
+        proof={task.proof}
+        taskId={task.id}
+        onExpand={() => { if (task.proof) onExpand(task.proof); }}
+      />
+      <View style={styles.cardBody}>
+        <Text style={styles.cardTaskTitle} numberOfLines={2}>{task.title}</Text>
+        <View style={styles.cardChips}>
+          {task.failure_cost_cents > 0 && (
+            <View style={styles.chip}>
+              <Text style={[styles.chipText, { color: '#FBBF24', fontFamily: 'monospace' }]}>
+                {formatCost(task.failure_cost_cents, task.user?.currency)}
+              </Text>
+            </View>
+          )}
+          <View style={styles.chip}>
+            <Feather name="clock" size={11} color={colors.textMuted} />
+            <Text style={[styles.chipText, { fontFamily: 'monospace' }]}>
+              {formatVoucherDeadline(task.voucher_response_deadline)}
+            </Text>
+          </View>
+        </View>
+        {task.proof_request_open && !task.has_proof ? (
+          <View style={styles.proofReqBadge}>
+            <Feather name="alert-circle" size={11} color={colors.warning} />
+            <Text style={styles.proofReqText}>Proof requested</Text>
+          </View>
+        ) : null}
+      </View>
+      <View style={styles.cardDivider} />
+      <DeckActions
+        task={task}
+        inFlightAction={inFlight}
+        isActionable={isActionable}
+        hasNext={hasNext}
+        onAccept={onAccept}
+        onDeny={onDeny}
+        onProof={onProof}
+        onNext={onCycle}
+      />
+    </>
+  );
+}
+
+function getDeckCardSignature(task: VoucherTaskRow): string {
+  const proof = task.proof;
+  const proofKind = proof?.mediaKind ?? 'none';
+  const proofUrl = proof?.signedUrl ?? 'placeholder';
+  const proofRequest = task.proof_request_open ? 'proofreq' : 'noreq';
+  return `${task.id}:${proofKind}:${proofUrl}:${proofRequest}`;
+}
+
+function FriendDeck({
+  friend,
+  tasks,
+  inFlightByTaskId,
+  onAccept,
+  onDeny,
+  onProof,
+  onExpand,
+}: {
   friend: VoucherTaskRow['user'];
   tasks: VoucherTaskRow[];
-  activeIndex: number;
-  slideAnim: Animated.Value;
   inFlightByTaskId: Record<string, DecisionAction | null>;
   onAccept: (t: VoucherTaskRow) => void;
   onDeny: (t: VoucherTaskRow) => void;
   onProof: (t: VoucherTaskRow) => void;
-  onCycle: (id: string) => void;
   onExpand: (proof: TaskProof) => void;
 }) {
-  const task = tasks[activeIndex];
-  if (!task) return null;
+  const swiperRef = useRef<SwiperCardRefType>(undefined);
+  const pendingIntentRef = useRef<DeckIntent | null>(null);
+  const pendingTaskIdRef = useRef<string | null>(null);
+  const measuredCardHeightsRef = useRef<Record<string, number>>({});
+  const [deckHeight, setDeckHeight] = useState(1);
+  const hasNext = tasks.length > 1;
 
-  const total = tasks.length;
-  const isActionable = VOUCHER_ACTIONABLE_STATUSES.includes(task.status);
-  const inFlight = inFlightByTaskId[task.id] ?? null;
-  const username = friend?.username ?? 'Unknown';
+  // Must be after all hooks — early return here would violate Rules of Hooks.
+  useEffect(() => {
+    const activeTaskIds = new Set(tasks.map((task) => task.id));
+    const nextHeights: Record<string, number> = {};
+    for (const [taskId, height] of Object.entries(measuredCardHeightsRef.current)) {
+      if (activeTaskIds.has(taskId)) {
+        nextHeights[taskId] = height;
+      }
+    }
+    measuredCardHeightsRef.current = nextHeights;
 
-  // Derive opacity from absolute distance from centre so both exit and enter fade naturally
-  const opacity = slideAnim.interpolate({
-    inputRange: [-60, 0, 60],
-    outputRange: [0, 1, 0],
-    extrapolate: 'clamp',
-  });
+    // Don't collapse to 1px while waiting for the replacement card's onLayout.
+    // Keep the previous height until at least one measurement is available.
+    if (Object.keys(nextHeights).length > 0) {
+      setDeckHeight(Math.max(...Object.values(nextHeights)));
+    }
+  }, [tasks]);
+
+  if (tasks.length === 0) return null;
+
+  function handleCardLayout(taskId: string, measuredHeight: number) {
+    const normalizedHeight = Math.max(1, Math.ceil(measuredHeight));
+    if (measuredCardHeightsRef.current[taskId] === normalizedHeight) return;
+
+    measuredCardHeightsRef.current[taskId] = normalizedHeight;
+    const maxMeasuredHeight = Math.max(1, ...Object.values(measuredCardHeightsRef.current));
+    if (maxMeasuredHeight !== deckHeight) {
+      setDeckHeight(maxMeasuredHeight);
+    }
+  }
+
+  function clearPendingSwipeIntent() {
+    pendingIntentRef.current = null;
+    pendingTaskIdRef.current = null;
+  }
+
+  function resolveSwipeTask(cardIndex: number): VoucherTaskRow | null {
+    if (cardIndex < 0 || cardIndex >= tasks.length) return null;
+    return tasks[cardIndex] ?? null;
+  }
+
+  function triggerDeckSwipe(intent: DeckIntent, task: VoucherTaskRow) {
+    // With loop=true and a single card, updateActiveIndex resets activeIndex to 0 on
+    // the JS thread while SwiperCard.swipeRight schedules activeIndex++ on the UI thread.
+    // The UI thread increment fires after the reset, leaving activeIndex=1 with no refs[1].
+    // Subsequent presses silently no-op. Bypass the swipe library for single-card decks.
+    if (!hasNext) {
+      if (intent === 'accept') onAccept(task);
+      else if (intent === 'deny') onDeny(task);
+      return;
+    }
+
+    const swiper = swiperRef.current;
+    if (!swiper) {
+      if (intent === 'accept') onAccept(task);
+      else if (intent === 'deny') onDeny(task);
+      return;
+    }
+
+    pendingIntentRef.current = intent;
+    pendingTaskIdRef.current = task.id;
+
+    if (intent === 'accept') {
+      swiper.swipeRight();
+      return;
+    }
+
+    swiper.swipeLeft();
+  }
+
+  function handleSwipeRight(cardIndex: number) {
+    const swipedTask = resolveSwipeTask(cardIndex);
+    const intent = pendingIntentRef.current;
+    const pendingTaskId = pendingTaskIdRef.current;
+    clearPendingSwipeIntent();
+
+    if (!swipedTask || intent !== 'accept') return;
+    if (pendingTaskId && pendingTaskId !== swipedTask.id) return;
+    onAccept(swipedTask);
+  }
+
+  function handleSwipeLeft(cardIndex: number) {
+    const swipedTask = resolveSwipeTask(cardIndex);
+    const intent = pendingIntentRef.current;
+    const pendingTaskId = pendingTaskIdRef.current;
+    clearPendingSwipeIntent();
+
+    if (!swipedTask) return;
+    if (pendingTaskId && pendingTaskId !== swipedTask.id) return;
+    if (intent === 'deny') onDeny(swipedTask);
+  }
 
   return (
     <View style={styles.deckOuter}>
-      {/* Stacked ghost cards */}
-      {total > 2 && <View style={styles.ghostCard3} />}
-      {total > 1 && <View style={styles.ghostCard2} />}
-      <View style={styles.ghostCard1} />
+      <View style={[styles.deckClip, { height: deckHeight }]}>
+        <Swiper
+          key={tasks[0]?.id ?? 'empty'}
+          ref={swiperRef}
+          data={tasks}
+          keyExtractor={(task) => getDeckCardSignature(task)}
+          renderCard={(task) => {
+            const isActionable = VOUCHER_ACTIONABLE_STATUSES.includes(task.status);
+            const inFlight = inFlightByTaskId[task.id] ?? null;
 
-      {/* Clip wrapper so the slide stays within card bounds */}
-      <View style={styles.deckClip}>
-      {/* Main animated card */}
-      <Animated.View style={[styles.mainCard, { opacity, transform: [{ translateX: slideAnim }] }]}>
-        {/* Card header */}
-        <View style={styles.cardHeader}>
-          <View style={styles.cardHeaderLeft}>
-            <FriendAvatar username={username} size={32} />
-            <View style={styles.cardHeaderMeta}>
-              <Text style={styles.cardFriendName}>{username.toLowerCase()}</Text>
-              <Text style={styles.cardSubmittedTime}>{timeAgo(task.updated_at)}</Text>
-            </View>
-          </View>
-          <StatusPill status={task.status} />
-        </View>
-
-        {/* Media */}
-        <MediaBox
-          proof={task.proof}
-          taskId={task.id}
-          onExpand={() => { if (task.proof) onExpand(task.proof); }}
-        />
-
-        {/* Task info */}
-        <View style={styles.cardBody}>
-          <Text style={styles.cardTaskTitle} numberOfLines={3}>{task.title}</Text>
-
-          <View style={styles.cardChips}>
-            {task.failure_cost_cents > 0 && (
-              <View style={styles.chip}>
-                <Text style={[styles.chipText, { color: '#FBBF24', fontFamily: 'monospace' }]}>
-                  {formatCost(task.failure_cost_cents, task.user?.currency)}
-                </Text>
+            return (
+              <View
+                style={styles.cardContentWrap}
+                onLayout={(event) => handleCardLayout(task.id, event.nativeEvent.layout.height)}
+              >
+                <CardContent
+                  task={task}
+                  friend={friend}
+                  inFlight={inFlight}
+                  isActionable={isActionable}
+                  hasNext={hasNext}
+                  onAccept={() => triggerDeckSwipe('accept', task)}
+                  onDeny={() => triggerDeckSwipe('deny', task)}
+                  onProof={() => onProof(task)}
+                  onCycle={() => triggerDeckSwipe('next', task)}
+                  onExpand={onExpand}
+                />
               </View>
-            )}
-            <View style={styles.chip}>
-              <Feather name="clock" size={11} color={colors.textMuted} />
-              <Text style={[styles.chipText, { fontFamily: 'monospace' }]}>
-                {formatVoucherDeadline(task.voucher_response_deadline)}
-              </Text>
-            </View>
-          </View>
-
-          {task.proof_request_open && !task.has_proof ? (
-            <View style={styles.proofReqBadge}>
-              <Feather name="alert-circle" size={11} color={colors.warning} />
-              <Text style={styles.proofReqText}>Proof requested</Text>
-            </View>
-          ) : null}
-        </View>
-
-        {/* Divider */}
-        <View style={styles.cardDivider} />
-
-        {/* Actions */}
-        <DeckActions
-          task={task}
-          inFlightAction={inFlight}
-          isActionable={isActionable}
-          hasNext={total > 1}
-          onAccept={() => onAccept(task)}
-          onDeny={() => onDeny(task)}
-          onProof={() => onProof(task)}
-          onNext={() => onCycle(friendId)}
+            );
+          }}
+          cardStyle={deckHeight > 1 ? [styles.mainCard, { height: deckHeight }] : styles.mainCard}
+          prerenderItems={2}
+          loop
+          disableLeftSwipe
+          disableRightSwipe
+          disableTopSwipe
+          disableBottomSwipe
+          onSwipeRight={handleSwipeRight}
+          onSwipeLeft={handleSwipeLeft}
         />
-      </Animated.View>
       </View>
     </View>
   );
@@ -486,8 +632,6 @@ export default function FriendsScreen() {
   const [inFlightByTaskId, setInFlightByTaskId] = useState<Record<string, DecisionAction | null>>({});
   const [inFlightRectifyByTaskId, setInFlightRectifyByTaskId] = useState<Record<string, boolean>>({});
   const [activeTab, setActiveTab] = useState<TabView>('pending');
-  const [deckIndices, setDeckIndices] = useState<Record<string, number>>({});
-  const deckSlideAnims = useRef<Record<string, Animated.Value>>({});
   const [lightboxProof, setLightboxProof] = useState<TaskProof | null>(null);
 
   const tasks = friendQueue.tasks;
@@ -513,28 +657,6 @@ export default function FriendsScreen() {
     }
     return Array.from(map.entries()).map(([friendId, group]) => ({ friendId, ...group }));
   }, [awaitingVoucherTasks]);
-
-  function getDeckSlideAnim(friendId: string): Animated.Value {
-    if (!deckSlideAnims.current[friendId]) {
-      deckSlideAnims.current[friendId] = new Animated.Value(0);
-    }
-    return deckSlideAnims.current[friendId];
-  }
-
-  function cycleDeck(friendId: string) {
-    const group = decksByFriend.find((d) => d.friendId === friendId);
-    if (!group || group.tasks.length < 2) return;
-    const current = deckIndices[friendId] ?? 0;
-    const next = (current + 1) % group.tasks.length;
-    const anim = getDeckSlideAnim(friendId);
-    // Slide current card out to the left
-    Animated.timing(anim, { toValue: -60, duration: 180, useNativeDriver: true }).start(() => {
-      // Snap to right side, update index, then spring in from right
-      anim.setValue(60);
-      setDeckIndices((prev) => ({ ...prev, [friendId]: next }));
-      Animated.spring(anim, { toValue: 0, tension: 75, friction: 10, useNativeDriver: true }).start();
-    });
-  }
 
   function updateInFlight(taskId: string, action: DecisionAction | null) {
     setInFlightByTaskId((prev) => ({ ...prev, [taskId]: action }));
@@ -870,16 +992,12 @@ export default function FriendsScreen() {
                 {decksByFriend.map(({ friendId, friend, tasks: groupTasks }) => (
                   <FriendDeck
                     key={friendId}
-                    friendId={friendId}
                     friend={friend}
                     tasks={groupTasks}
-                    activeIndex={deckIndices[friendId] ?? 0}
-                    slideAnim={getDeckSlideAnim(friendId)}
                     inFlightByTaskId={inFlightByTaskId}
                     onAccept={(t) => { void handleAccept(t); }}
                     onDeny={(t) => { void handleDeny(t); }}
                     onProof={(t) => { void handleRequestProof(t); }}
-                    onCycle={cycleDeck}
                     onExpand={setLightboxProof}
                   />
                 ))}
@@ -1185,42 +1303,42 @@ const styles = StyleSheet.create({
   },
   deckOuter: {
     position: 'relative',
-    paddingTop: 14,
   },
-  ghostCard3: {
+  backStackCard: {
+    position: 'absolute',
+    top: -7,
+    left: 8,
+    right: 8,
+    height: 24,
+    borderRadius: CARD_RADIUS,
+    backgroundColor: '#122033',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.11)',
+    opacity: 0.9,
+    zIndex: 0,
+  },
+  ghostCard: {
+    position: 'absolute',
+    top: -13,
+    left: 16,
+    right: 16,
+    height: 18,
+    borderRadius: CARD_RADIUS,
+    backgroundColor: '#0B1628',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    zIndex: 0,
+  },
+  backCard: {
     position: 'absolute',
     top: 0,
-    left: 12,
-    right: 12,
-    height: 20,
-    borderRadius: CARD_RADIUS,
-    backgroundColor: '#0C1623',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.04)',
-  },
-  ghostCard2: {
-    position: 'absolute',
-    top: 5,
-    left: 7,
-    right: 7,
-    height: 20,
-    borderRadius: CARD_RADIUS,
-    backgroundColor: '#0F1C2C',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-  },
-  ghostCard1: {
-    position: 'absolute',
-    top: 9,
-    left: 3,
-    right: 3,
-    height: 20,
-    borderRadius: CARD_RADIUS,
-    backgroundColor: '#132032',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1,
   },
   mainCard: {
+    width: '100%',
     backgroundColor: '#0F172A',
     borderRadius: CARD_RADIUS,
     borderWidth: 1,
@@ -1342,8 +1460,13 @@ const styles = StyleSheet.create({
 
   // Deck clip wrapper — keeps slide animation within card bounds
   deckClip: {
+    position: 'relative',
     overflow: 'hidden',
     borderRadius: CARD_RADIUS,
+    zIndex: 2,
+  },
+  cardContentWrap: {
+    width: '100%',
   },
 
   // Action buttons — all 4 equal flex: 1 so they fill the row uniformly

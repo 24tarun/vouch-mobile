@@ -1,7 +1,9 @@
+import 'react-native-gesture-handler';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
@@ -109,7 +111,7 @@ const toastConfig: ToastConfig = {
 };
 
 function AuthGuard() {
-  const { session, authInitialized } = useAuth();
+  const { session, authInitialized, loading } = useAuth();
   const router = useRouter();
   const segments = useSegments();
   const notificationListener = useRef<Notifications.Subscription | null>(null);
@@ -172,13 +174,14 @@ function AuthGuard() {
 
   useEffect(() => {
     if (!routeReady || splashHidden) return;
+    if (session && loading) return;
 
     SplashScreen.hideAsync()
       .catch(() => {})
       .finally(() => {
         setSplashHidden(true);
       });
-  }, [routeReady, splashHidden]);
+  }, [routeReady, splashHidden, session, loading]);
 
   // Register for push notifications once the user is authenticated.
   useEffect(() => {
@@ -217,23 +220,28 @@ function AuthGuard() {
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <AppQueryProvider>
-        <AuthProvider>
-          <PomodoroProvider>
-            <View style={styles.root}>
-              <StatusBar style="light" />
-              <AuthGuard />
-              <Toast config={toastConfig} />
-            </View>
-          </PomodoroProvider>
-        </AuthProvider>
-      </AppQueryProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={styles.gestureRoot}>
+      <SafeAreaProvider>
+        <AppQueryProvider>
+          <AuthProvider>
+            <PomodoroProvider>
+              <View style={styles.root}>
+                <StatusBar style="light" />
+                <AuthGuard />
+                <Toast config={toastConfig} />
+              </View>
+            </PomodoroProvider>
+          </AuthProvider>
+        </AppQueryProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
   root: {
     flex: 1,
     backgroundColor: colors.bg,

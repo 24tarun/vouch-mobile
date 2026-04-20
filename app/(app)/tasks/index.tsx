@@ -242,13 +242,11 @@ export default function TasksScreen() {
   const [customReminderPickerMode, setCustomReminderPickerMode] = useState<'date' | 'time'>('date');
   const [showCustomReminderAndroidPicker, setShowCustomReminderAndroidPicker] = useState(false);
   const [showCustomReminderIosModal, setShowCustomReminderIosModal] = useState(false);
-  const [reminderNowMs, setReminderNowMs] = useState(Date.now());
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>('');
   const [showCustomRecurrenceDays, setShowCustomRecurrenceDays] = useState(false);
   const [recurrenceDays, setRecurrenceDays] = useState<number[]>([]);
   const [requiresProof, setRequiresProof] = useState(false);
   const [eventSyncEnabled, setEventSyncEnabled] = useState(false);
-  const [androidKeyboardHeight, setAndroidKeyboardHeight] = useState(0);
   const [draftSubtasks, setDraftSubtasks] = useState<DraftSubtask[]>([]);
   const [newSubtaskDraft, setNewSubtaskDraft] = useState('');
   const subtaskInputRef = useRef<TextInput | null>(null);
@@ -396,13 +394,6 @@ export default function TasksScreen() {
       setDeadlineDate(next);
     }
   }
-
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      setReminderNowMs(Date.now());
-    }, 30000);
-    return () => clearInterval(intervalId);
-  }, []);
 
   useEffect(() => {
     const presetReminders: DraftReminder[] = [];
@@ -959,9 +950,6 @@ function updateCustomReminderDatePart(dateValue: Date) {
 
       keyboardTopYRef.current = nextScreenY;
       setTaskListKeyboardInset(nextHeight);
-      if (Platform.OS === 'android') {
-        setAndroidKeyboardHeight(nextHeight);
-      }
 
       const focusedBottomY = focusedSubtaskInputBottomYRef.current;
       if (focusedBottomY != null) {
@@ -974,9 +962,6 @@ function updateCustomReminderDatePart(dateValue: Date) {
     const hide = Keyboard.addListener(hideEvent, () => {
       keyboardTopYRef.current = Number.POSITIVE_INFINITY;
       setTaskListKeyboardInset(0);
-      if (Platform.OS === 'android') {
-        setAndroidKeyboardHeight(0);
-      }
     });
 
     return () => {
@@ -1018,7 +1003,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
     : profile?.currency === 'INR' ? '₹'
     : '$';
   const isAiVoucherSelected = voucherValue === AI_PROFILE_ID;
-  const displayName = (authProfile?.username || user?.email?.split('@')[0] || 'there').trim();
+  const displayName = (authProfile?.username ?? 'there').trim() || 'there';
   const todayParts = getTodayParts();
 
   function handlePostponeTask(task: TaskRowData) {
@@ -1156,6 +1141,32 @@ function updateCustomReminderDatePart(dateValue: Date) {
 
     if (optimisticallyCompletingTaskIds.includes(taskId)) return;
 
+    type TaskListsCache = {
+      dueSoonTasks: TaskRowData[];
+      futureTasks: TaskRowData[];
+      pastTasks: TaskRowData[];
+      hasMorePast: boolean;
+    };
+    const taskListKey = queryKeys.taskLists(user?.id, sortMode);
+    const cachedLists = queryClient.getQueryData<TaskListsCache>(taskListKey);
+    const allCached = [
+      ...(cachedLists?.dueSoonTasks ?? []),
+      ...(cachedLists?.futureTasks ?? []),
+      ...(cachedLists?.pastTasks ?? []),
+      ...optimisticTasks,
+    ];
+    const task = allCached.find((t) => t.id === taskId);
+    if (task && (task.subtaskTotal ?? 0) > 0 && (task.subtaskCompleted ?? 0) < (task.subtaskTotal ?? 0)) {
+      Toast.show({
+        type: 'error',
+        text1: 'All subtasks must be completed',
+        position: 'bottom',
+        bottomOffset: 84,
+        visibilityTime: 2500,
+      });
+      return;
+    }
+
     if (confettiHideTimeoutRef.current) {
       clearTimeout(confettiHideTimeoutRef.current);
     }
@@ -1169,13 +1180,6 @@ function updateCustomReminderDatePart(dateValue: Date) {
     setOptimisticallyCompletingTaskIds((prev) => (prev.includes(taskId) ? prev : [...prev, taskId]));
     setOptimisticTasks((prev) => prev.filter((task) => task.id !== taskId));
 
-    type TaskListsCache = {
-      dueSoonTasks: TaskRowData[];
-      futureTasks: TaskRowData[];
-      pastTasks: TaskRowData[];
-      hasMorePast: boolean;
-    };
-    const taskListKey = queryKeys.taskLists(user?.id, sortMode);
     const previousTaskLists = queryClient.getQueryData<TaskListsCache>(taskListKey);
     queryClient.setQueryData<TaskListsCache>(taskListKey, (current) => {
       if (!current) return current;
@@ -1244,7 +1248,8 @@ function updateCustomReminderDatePart(dateValue: Date) {
         onTitleChange={handleTitleChange}
         isTitleFocused={isTitleFocused}
         setIsTitleFocused={setIsTitleFocused}
-        androidKeyboardHeight={androidKeyboardHeight}
+        keyboardHeight={taskListKeyboardInset}
+        keyboardVisible={taskListKeyboardInset > 0}
         draftSubtasks={draftSubtasks}
         onToggleDraftSubtask={handleToggleDraftSubtask}
         onDeleteDraftSubtask={handleDeleteDraftSubtask}
@@ -1272,7 +1277,6 @@ function updateCustomReminderDatePart(dateValue: Date) {
         failureCostSelection={failureCostSelection}
         setFailureCostSelection={setFailureCostSelection}
         draftReminders={draftReminders}
-        reminderNowMs={reminderNowMs}
         onRemoveReminder={handleRemoveReminder}
         showCustomReminderAndroidPicker={showCustomReminderAndroidPicker}
         customReminderDate={customReminderDate}

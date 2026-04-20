@@ -3,6 +3,7 @@ import { ActionSheetIOS, ActivityIndicator, Alert, Platform, Pressable, StyleShe
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { useQueryClient } from '@tanstack/react-query';
 import { colors, radius, spacing, typography } from '@/lib/theme';
 import { StatusPill } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
@@ -67,6 +68,7 @@ export function TaskRow({
   onSubtaskComposerFocus,
 }: TaskRowProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const {
     session: activePomoSession,
     isLoading: pomoLoading,
@@ -156,10 +158,29 @@ export function TaskRow({
   async function handleToggleSubtask(subtask: Subtask) {
     const nowCompleted = !subtask.is_completed;
     const completedAt = nowCompleted ? new Date().toISOString() : null;
+    const delta = nowCompleted ? 1 : -1;
+
+    type TaskListCache = { dueSoonTasks: TaskRowData[]; futureTasks: TaskRowData[]; pastTasks: TaskRowData[]; hasMorePast: boolean };
+    const patchTaskListCache = (d: number) => {
+      queryClient.setQueriesData<TaskListCache>(
+        { queryKey: ['task-lists'], exact: false },
+        (current) => {
+          if (!current) return current;
+          const patch = (tasks: TaskRowData[]) =>
+            tasks.map((t) =>
+              t.id === task.id
+                ? { ...t, subtaskCompleted: Math.max(0, (t.subtaskCompleted ?? 0) + d) }
+                : t,
+            );
+          return { ...current, dueSoonTasks: patch(current.dueSoonTasks), futureTasks: patch(current.futureTasks), pastTasks: patch(current.pastTasks) };
+        },
+      );
+    };
 
     setSubtasks((prev) =>
       prev.map((s) => (s.id === subtask.id ? { ...s, is_completed: nowCompleted, completed_at: completedAt } : s)),
     );
+    patchTaskListCache(delta);
 
     try {
       const { error } = await supabase
@@ -170,9 +191,11 @@ export function TaskRow({
 
       if (error) {
         setSubtasks((prev) => prev.map((s) => (s.id === subtask.id ? subtask : s)));
+        patchTaskListCache(-delta);
       }
     } catch {
       setSubtasks((prev) => prev.map((s) => (s.id === subtask.id ? subtask : s)));
+      patchTaskListCache(-delta);
     }
   }
 
@@ -607,8 +630,9 @@ export function TaskRow({
                   onPress={() => { void handleDeleteSubtask(subtask.id); }}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   activeOpacity={0.7}
+                  accessibilityLabel="Delete subtask"
                 >
-                  <Feather name="x" size={14} color={colors.textMuted} />
+                  <Feather name="trash-2" size={14} color={colors.destructive} />
                 </TouchableOpacity>
               </View>
             ))}

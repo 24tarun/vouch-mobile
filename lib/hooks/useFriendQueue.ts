@@ -243,10 +243,10 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
     channelName: `friend-queue:${userId ?? 'anon'}`,
     enabled: Boolean(userId),
     subscriptions,
-    invalidateKeys: [
-      queryKeys.friendQueue(userId),
-      queryKeys.friendHistory(userId, searchQuery),
-    ],
+    // Direct refetch instead of invalidate — invalidateQueries doesn't reliably
+    // trigger a background refetch in React Native when the app is already focused.
+    onPayload: userId ? () => { void queueQuery.refetch(); } : undefined,
+    invalidateKeys: [queryKeys.friendHistory(userId, searchQuery)],
   });
 
   return {

@@ -2,10 +2,10 @@ import { useMemo, type Dispatch, type RefObject, type SetStateAction } from 'rea
 import {
   ActivityIndicator,
   Animated,
+  Keyboard,
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   Switch,
   Text,
   TextInput,
@@ -13,8 +13,10 @@ import {
   View,
 } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
-import { colors, radius, spacing } from '@/lib/theme';
+import { colors, radius } from '@/lib/theme';
 import { titleHasDeadlineToken } from '@/lib/task-title-parser';
 import {
   formatReminderDateChip,
@@ -51,7 +53,8 @@ interface TaskCreatorOverlayProps {
   onTitleChange: (text: string) => void;
   isTitleFocused: boolean;
   setIsTitleFocused: Dispatch<SetStateAction<boolean>>;
-  androidKeyboardHeight: number;
+  keyboardHeight: number;
+  keyboardVisible: boolean;
   draftSubtasks: DraftSubtask[];
   onToggleDraftSubtask: (id: string) => void;
   onDeleteDraftSubtask: (id: string) => void;
@@ -79,7 +82,6 @@ interface TaskCreatorOverlayProps {
   failureCostSelection: { start: number; end: number } | undefined;
   setFailureCostSelection: Dispatch<SetStateAction<{ start: number; end: number } | undefined>>;
   draftReminders: DraftReminder[];
-  reminderNowMs: number;
   onRemoveReminder: (reminder: DraftReminder) => void;
   showCustomReminderAndroidPicker: boolean;
   customReminderDate: Date;
@@ -117,7 +119,8 @@ export function TaskCreatorOverlay({
   onTitleChange,
   isTitleFocused,
   setIsTitleFocused,
-  androidKeyboardHeight,
+  keyboardHeight,
+  keyboardVisible,
   draftSubtasks,
   onToggleDraftSubtask,
   onDeleteDraftSubtask,
@@ -145,7 +148,6 @@ export function TaskCreatorOverlay({
   failureCostSelection,
   setFailureCostSelection,
   draftReminders,
-  reminderNowMs,
   onRemoveReminder,
   showCustomReminderAndroidPicker,
   customReminderDate,
@@ -169,48 +171,53 @@ export function TaskCreatorOverlay({
   setEventSyncEnabled,
 }: TaskCreatorOverlayProps) {
   const hasDeadlineToken = useMemo(() => titleHasDeadlineToken(title), [title]);
+  const footerBottomOffset = keyboardVisible ? keyboardHeight : 0;
+
+  function handleDismissGesture() {
+    if (keyboardVisible) {
+      Keyboard.dismiss();
+      return;
+    }
+    onCancel();
+  }
 
   if (!visible || !anchor) {
     return null;
   }
 
+  const footerActions = (
+    <View style={styles.creatorFooterActions}>
+      <TouchableOpacity
+        style={styles.creatorFooterCancelButton}
+        onPress={onCancel}
+        activeOpacity={0.8}
+      >
+        <BlurView intensity={38} tint="dark" style={styles.creatorFooterButtonBlur} />
+        <View style={styles.creatorFooterButtonContent}>
+          <Text style={styles.creatorFooterCancelButtonText}>Cancel</Text>
+        </View>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.creatorFooterCreateButton, isCreatingTask && styles.sheetCreateButtonDisabled]}
+        onPress={onCreate}
+        disabled={isCreatingTask}
+        activeOpacity={0.8}
+      >
+        <BlurView intensity={42} tint="light" style={styles.creatorFooterButtonBlur} />
+        <View style={styles.creatorFooterCreateTintOverlay} pointerEvents="none" />
+        <View style={styles.creatorFooterButtonContent}>
+          {isCreatingTask
+            ? <ActivityIndicator size="small" color={colors.primaryFg} />
+            : <Text style={styles.creatorFooterCreateButtonText}>Create</Text>
+          }
+        </View>
+      </TouchableOpacity>
+    </View>
+  );
+
   return (
     <>
-      <Pressable style={styles.creatorOverlayBackdrop} onPress={onCancel} />
-      <Animated.View
-        style={[
-          styles.creatorFloatingActions,
-          {
-            top: anchor.y - 78,
-            opacity: expandAnim.interpolate({
-              inputRange: [0.6, 1],
-              outputRange: [0, 1],
-              extrapolate: 'clamp',
-            }),
-          },
-        ]}
-      >
-        <View style={styles.creatorButtonStack}>
-          <TouchableOpacity
-            style={styles.sheetCancelButton}
-            onPress={onCancel}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.sheetCancelButtonText}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.sheetCreateButton, isCreatingTask && styles.sheetCreateButtonDisabled]}
-            onPress={onCreate}
-            disabled={isCreatingTask}
-            activeOpacity={0.8}
-          >
-            {isCreatingTask
-              ? <ActivityIndicator size="small" color={colors.primaryFg} />
-              : <Text style={styles.sheetCreateButtonText}>Create</Text>
-            }
-          </TouchableOpacity>
-        </View>
-      </Animated.View>
+      <Pressable style={styles.creatorOverlayBackdrop} onPress={handleDismissGesture} />
       <Animated.View
         style={[
           styles.creatorOverlay,
@@ -254,87 +261,104 @@ export function TaskCreatorOverlay({
           },
         ]}
       >
-        <Pressable
-          style={[styles.inlineCreatorBar, isTitleFocused && styles.inlineCreatorBarFocused]}
-          onPress={() => titleInputRef.current?.focus()}
-        >
-          <TextInput
-            ref={titleInputRef}
-            style={styles.inlineCreatorTitleInput}
-            placeholder="Task title"
-            placeholderTextColor={colors.textMuted}
-            value={title}
-            onChangeText={onTitleChange}
-            returnKeyType="done"
-            onFocus={() => setIsTitleFocused(true)}
-            onBlur={() => setIsTitleFocused(false)}
-          />
-        </Pressable>
-
-        <ScrollView
+        <KeyboardAwareScrollView
+          style={styles.creatorBody}
+          enableOnAndroid
+          extraHeight={70}
+          extraScrollHeight={24}
+          keyboardOpeningTime={0}
+          showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
-          automaticallyAdjustKeyboardInsets
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[
-            styles.sheetContent,
-            androidKeyboardHeight > 0 && { paddingBottom: androidKeyboardHeight + spacing.xxl },
-          ]}
+          contentContainerStyle={styles.sheetContent}
         >
-          <View style={styles.creatorSubtasksCard}>
-            {draftSubtasks.map((subtask) => (
-              <View key={subtask.id} style={styles.creatorSubtaskItemRow}>
-                <TouchableOpacity
-                  onPress={() => onToggleDraftSubtask(subtask.id)}
-                  style={[styles.creatorSubtaskCircle, subtask.isCompleted && styles.creatorSubtaskCircleCompleted]}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  activeOpacity={0.7}
-                >
-                  {subtask.isCompleted && <Feather name="check" size={11} color={colors.success} />}
-                </TouchableOpacity>
-                <Text
-                  style={[styles.creatorSubtaskItemTitle, subtask.isCompleted && styles.creatorSubtaskItemTitleCompleted]}
-                  numberOfLines={2}
-                >
-                  {subtask.title}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => onDeleteDraftSubtask(subtask.id)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  activeOpacity={0.7}
-                >
-                  <Feather name="x" size={14} color={colors.destructive} />
-                </TouchableOpacity>
-              </View>
-            ))}
+          <View style={styles.creatorTopFields}>
             <Pressable
-              style={[styles.creatorSubtaskComposerRow, isSubtaskFocused && styles.creatorSubtaskComposerRowFocused]}
-              onPress={() => subtaskInputRef.current?.focus()}
+              style={[styles.creatorTitleField, isTitleFocused && styles.creatorTitleFieldFocused]}
+              onPress={() => titleInputRef.current?.focus()}
             >
-              <Feather name="plus" size={16} color={isSubtaskFocused ? colors.accentCyan : colors.textMuted} />
               <TextInput
-                ref={subtaskInputRef}
-                style={styles.creatorSubtaskInput}
-                placeholder="Add subtask..."
+                ref={titleInputRef}
+                style={styles.creatorTitleInput}
+                placeholder="Task title"
                 placeholderTextColor={colors.textMuted}
-                value={newSubtaskDraft}
-                onChangeText={setNewSubtaskDraft}
+                value={title}
+                onChangeText={onTitleChange}
                 returnKeyType="done"
-                blurOnSubmit={false}
-                onSubmitEditing={onAddDraftSubtask}
-                onFocus={() => setIsSubtaskFocused(true)}
-                onBlur={() => setIsSubtaskFocused(false)}
+                onFocus={() => setIsTitleFocused(true)}
+                onBlur={() => setIsTitleFocused(false)}
               />
-              {newSubtaskDraft.trim().length > 0 && (
-                <TouchableOpacity
-                  onPress={onAddDraftSubtask}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  activeOpacity={0.7}
-                >
-                  <Feather name="check" size={16} color={colors.success} />
-                </TouchableOpacity>
-              )}
             </Pressable>
+
+            <View style={styles.creatorSubtasksCard}>
+              {draftSubtasks.map((subtask) => (
+                <View key={subtask.id} style={styles.creatorSubtaskItemRow}>
+                  <View style={styles.creatorSubtaskLeadingSlot}>
+                    <TouchableOpacity
+                      onPress={() => onToggleDraftSubtask(subtask.id)}
+                      style={[styles.creatorSubtaskCircle, subtask.isCompleted && styles.creatorSubtaskCircleCompleted]}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      activeOpacity={0.7}
+                    >
+                      {subtask.isCompleted && <Feather name="check" size={11} color={colors.success} />}
+                    </TouchableOpacity>
+                  </View>
+                  <Text
+                    style={[styles.creatorSubtaskItemTitle, subtask.isCompleted && styles.creatorSubtaskItemTitleCompleted]}
+                    numberOfLines={2}
+                  >
+                    {subtask.title}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => onDeleteDraftSubtask(subtask.id)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    activeOpacity={0.7}
+                  >
+                    <Feather name="trash-2" size={16} color={colors.destructive} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <Pressable
+                style={[styles.creatorSubtaskComposerRow, isSubtaskFocused && styles.creatorSubtaskComposerRowFocused]}
+                onPress={() => subtaskInputRef.current?.focus()}
+              >
+                <View style={styles.creatorSubtaskLeadingSlot}>
+                  <TouchableOpacity
+                    onPress={onAddDraftSubtask}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add subtask"
+                  >
+                    <Feather name="plus" size={16} color={isSubtaskFocused ? colors.accentCyan : colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  ref={subtaskInputRef}
+                  style={styles.creatorSubtaskInput}
+                  placeholder="Add subtask..."
+                  placeholderTextColor={colors.textMuted}
+                  value={newSubtaskDraft}
+                  onChangeText={setNewSubtaskDraft}
+                  returnKeyType="done"
+                  blurOnSubmit={false}
+                  onSubmitEditing={onAddDraftSubtask}
+                  onFocus={() => setIsSubtaskFocused(true)}
+                  onBlur={() => setIsSubtaskFocused(false)}
+                />
+                {newSubtaskDraft.trim().length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => setNewSubtaskDraft('')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear subtask draft"
+                  >
+                    <Feather name="trash-2" size={16} color={colors.destructive} />
+                  </TouchableOpacity>
+                )}
+              </Pressable>
+            </View>
           </View>
 
           <View style={styles.section}>
@@ -437,23 +461,37 @@ export function TaskCreatorOverlay({
           <View style={styles.section}>
             <View style={styles.reminderCard}>
               <View style={styles.reminderHeaderRow}>
-                <Text style={styles.placeholderRowTitle}>Reminders</Text>
+                <TouchableOpacity
+                  style={styles.addReminderButton}
+                  activeOpacity={0.85}
+                  onPress={onOpenAddReminderFlow}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add reminders"
+                >
+                  <Text style={styles.addReminderText}>Add reminders</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.reminderActionSlot}
+                  activeOpacity={0.85}
+                  onPress={onOpenAddReminderFlow}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add reminder"
+                  hitSlop={8}
+                >
+                  <Feather name="plus" size={16} color="#FBBF24" />
+                </TouchableOpacity>
               </View>
               {draftReminders.length === 0 ? (
                 <Text style={styles.reminderEmpty}>No reminders set.</Text>
               ) : (
-                draftReminders.map((reminder, index) => {
-                  const sent = reminder.reminderAt.getTime() <= reminderNowMs;
-                  return (
+                <View style={styles.reminderRows}>
+                  {draftReminders.map((reminder, index) => (
                     <View key={reminder.id} style={styles.reminderRow}>
-                      <View style={styles.reminderIndexWrap}>
-                        <Text style={styles.reminderIndex}>#{index + 1}</Text>
-                      </View>
                       <View style={styles.reminderBody}>
                         <Text style={styles.reminderAt}>{formatReminderDateTimeLabel(reminder.reminderAt)}</Text>
                       </View>
-                      <Text style={styles.reminderStatus}>{sent ? 'Sent' : 'Scheduled'}</Text>
                       <TouchableOpacity
+                        style={styles.reminderActionSlot}
                         onPress={() => onRemoveReminder(reminder)}
                         activeOpacity={0.75}
                         accessibilityRole="button"
@@ -463,30 +501,18 @@ export function TaskCreatorOverlay({
                         <Feather name="trash-2" size={16} color={colors.destructive} />
                       </TouchableOpacity>
                     </View>
-                  );
-                })
+                  ))}
+                </View>
               )}
-              <View style={styles.reminderComposer}>
-                {showCustomReminderAndroidPicker && (
-                  <DateTimePicker
-                    value={customReminderDate}
-                    mode={customReminderPickerMode}
-                    display="default"
-                    minimumDate={customReminderPickerMode === 'date' ? new Date() : undefined}
-                    onChange={onCustomReminderAndroidPickerChange}
-                  />
-                )}
-                <TouchableOpacity
-                  style={styles.addReminderButton}
-                  activeOpacity={0.85}
-                  onPress={onOpenAddReminderFlow}
-                  accessibilityRole="button"
-                  accessibilityLabel="Add reminder"
-                >
-                  <Feather name="plus" size={16} color="#FBBF24" />
-                  <Text style={styles.addReminderText}>Add reminder</Text>
-                </TouchableOpacity>
-              </View>
+              {showCustomReminderAndroidPicker ? (
+                <DateTimePicker
+                  value={customReminderDate}
+                  mode={customReminderPickerMode}
+                  display="default"
+                  minimumDate={customReminderPickerMode === 'date' ? new Date() : undefined}
+                  onChange={onCustomReminderAndroidPickerChange}
+                />
+              ) : null}
             </View>
 
             {Platform.OS === 'ios' && (
@@ -576,7 +602,6 @@ export function TaskCreatorOverlay({
                   activeOpacity={0.8}
                   onPress={onToggleCustomRecurrenceDays}
                 >
-                  <Feather name="repeat" size={12} color={showCustomRecurrenceDays ? '#C084FC' : colors.textMuted} />
                   <Text style={[styles.recurrenceChipText, showCustomRecurrenceDays && styles.recurrenceChipTextActive]}>Custom</Text>
                 </TouchableOpacity>
               </View>
@@ -626,7 +651,18 @@ export function TaskCreatorOverlay({
               />
             </View>
           </View>
-        </ScrollView>
+          {!keyboardVisible ? (
+            <View style={styles.creatorFooterInline}>
+              {footerActions}
+            </View>
+          ) : null}
+        </KeyboardAwareScrollView>
+
+        {keyboardVisible ? (
+          <View style={[styles.creatorFooter, { bottom: footerBottomOffset }]}>
+            {footerActions}
+          </View>
+        ) : null}
       </Animated.View>
     </>
   );

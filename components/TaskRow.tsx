@@ -263,6 +263,7 @@ export function TaskRow({
   const deadlineLabel = formatDeadline(task.deadline, isFuture);
   const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : NaN;
   const canDeleteByAge = Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) <= DELETE_WINDOW_MS;
+  const canPostpone = Boolean(onPostpone) && !task.postponed_at && !isPostponing;
   const isCurrentTaskPomo = activePomoSession?.task_id === task.id;
   const currentTaskPomoStatus = isCurrentTaskPomo ? activePomoSession?.status : null;
 
@@ -561,15 +562,17 @@ export function TaskRow({
               <Feather name={task.has_proof ? 'refresh-cw' : 'camera'} size={20} color="#F472B6" />
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.actionBtn}
+              style={[styles.actionBtn, !canPostpone && styles.actionBtnDisabled]}
               activeOpacity={0.65}
               accessibilityLabel="Postpone"
+              accessibilityState={{ disabled: !canPostpone }}
               onPress={() => { void handlePostponePress(); }}
+              disabled={!canPostpone}
             >
               {isPostponing ? (
                 <ActivityIndicator size="small" color="#F59E0B" />
               ) : (
-                <Feather name="alert-triangle" size={20} color="#F59E0B" />
+                <Feather name="alert-triangle" size={20} color={canPostpone ? '#F59E0B' : colors.textMuted} />
               )}
             </TouchableOpacity>
             <TouchableOpacity

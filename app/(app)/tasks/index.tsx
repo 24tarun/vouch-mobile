@@ -71,6 +71,29 @@ function getFutureBoundaryMs(): number {
   return boundary.getTime();
 }
 
+function formatTimeUntilDeadline(deadlineIso: string, now: Date = new Date()): string {
+  const deadlineMs = new Date(deadlineIso).getTime();
+  if (!Number.isFinite(deadlineMs)) return 'Until deadline';
+
+  const totalMinutes = Math.max(1, Math.floor((deadlineMs - now.getTime()) / 60000));
+  const minutesPerHour = 60;
+  const minutesPerDay = 24 * minutesPerHour;
+  const days = Math.floor(totalMinutes / minutesPerDay);
+  const remainderAfterDays = totalMinutes % minutesPerDay;
+  const hours = Math.floor(remainderAfterDays / minutesPerHour);
+  const minutes = remainderAfterDays % minutesPerHour;
+
+  if (days > 0) {
+    return `${days} ${days === 1 ? 'day' : 'days'} ${hours} ${hours === 1 ? 'hour' : 'hours'} and ${minutes} mins until deadline`;
+  }
+
+  if (hours > 0) {
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'} and ${minutes} mins until deadline`;
+  }
+
+  return `${totalMinutes} mins until deadline`;
+}
+
 export default function TasksScreen() {
   const { profile: authProfile, user } = useAuth();
   const queryClient = useQueryClient();
@@ -636,9 +659,13 @@ function updateCustomReminderDatePart(dateValue: Date) {
 
     const nowIso = new Date().toISOString();
     const deadlineIso = deadlineDate.toISOString();
+    const pendingSubtaskTitle = newSubtaskDraft.trim();
     const trimmedSubtaskTitles = draftSubtasks
       .map((subtask) => subtask.title.trim())
       .filter((subtaskTitle) => subtaskTitle.length > 0);
+    if (pendingSubtaskTitle.length > 0) {
+      trimmedSubtaskTitles.push(pendingSubtaskTitle);
+    }
 
     const optimisticTaskId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const optimisticTask: TaskRowData = {
@@ -656,6 +683,13 @@ function updateCustomReminderDatePart(dateValue: Date) {
 
     setOptimisticTasks((prev) => [optimisticTask, ...prev]);
     collapseCreator();
+    Toast.show({
+      type: 'proofSuccess',
+      text1: formatTimeUntilDeadline(deadlineIso),
+      position: 'bottom',
+      bottomOffset: 84,
+      visibilityTime: 2600,
+    });
 
     setIsCreatingTask(true);
     let createdTaskId: string | null = null;
@@ -720,7 +754,13 @@ function updateCustomReminderDatePart(dateValue: Date) {
 
         if (recurrenceRuleInsertError || !insertedRule?.id) {
           setOptimisticTasks((prev) => prev.filter((task) => task.id !== optimisticTaskId));
-          Alert.alert('Could not create task', recurrenceRuleInsertError?.message ?? 'Recurrence rule insert failed.');
+          Toast.show({
+            type: 'proofError',
+            text1: 'A task failed to create',
+            position: 'bottom',
+            bottomOffset: 84,
+            visibilityTime: 2600,
+          });
           return;
         }
         recurrenceRuleId = insertedRule.id as string;
@@ -757,7 +797,13 @@ function updateCustomReminderDatePart(dateValue: Date) {
             .eq('user_id', currentUserId);
         }
         setOptimisticTasks((prev) => prev.filter((task) => task.id !== optimisticTaskId));
-        Alert.alert('Could not create task', taskInsertError?.message ?? 'Task insert failed.');
+        Toast.show({
+          type: 'proofError',
+          text1: 'A task failed to create',
+          position: 'bottom',
+          bottomOffset: 84,
+          visibilityTime: 2600,
+        });
         return;
       }
 
@@ -803,7 +849,13 @@ function updateCustomReminderDatePart(dateValue: Date) {
           setOptimisticTasks((prev) => prev.filter((task) => (
             task.id !== optimisticTaskId && task.id !== createdTask.id
           )));
-          Alert.alert('Could not create task', subtaskInsertError.message);
+          Toast.show({
+            type: 'proofError',
+            text1: 'A task failed to create',
+            position: 'bottom',
+            bottomOffset: 84,
+            visibilityTime: 2600,
+          });
           return;
         }
       }
@@ -842,7 +894,13 @@ function updateCustomReminderDatePart(dateValue: Date) {
           setOptimisticTasks((prev) => prev.filter((task) => (
             task.id !== optimisticTaskId && task.id !== createdTask.id
           )));
-          Alert.alert('Could not create task', reminderInsertError.message);
+          Toast.show({
+            type: 'proofError',
+            text1: 'A task failed to create',
+            position: 'bottom',
+            bottomOffset: 84,
+            visibilityTime: 2600,
+          });
           return;
         }
       }
@@ -853,7 +911,13 @@ function updateCustomReminderDatePart(dateValue: Date) {
       setOptimisticTasks((prev) => prev.filter((task) => (
         task.id !== optimisticTaskId && task.id !== createdTaskId
       )));
-      Alert.alert('Could not create task', error?.message ?? 'Unknown error');
+      Toast.show({
+        type: 'proofError',
+        text1: 'A task failed to create',
+        position: 'bottom',
+        bottomOffset: 84,
+        visibilityTime: 2600,
+      });
     } finally {
       setIsCreatingTask(false);
     }

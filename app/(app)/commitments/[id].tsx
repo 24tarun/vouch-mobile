@@ -14,7 +14,8 @@ import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { type Colors, radius, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { useCommitments, type CommitmentListItem } from '@/lib/hooks/useCommitments';
 import { queryKeys } from '@/lib/query/keys';
 import {
@@ -28,6 +29,8 @@ import {
 } from '@/components/commitments/shared';
 
 export default function CommitmentDetailScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -321,7 +324,7 @@ export default function CommitmentDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   header: {

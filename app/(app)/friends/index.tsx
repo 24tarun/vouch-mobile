@@ -20,20 +20,22 @@ import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Swiper, type SwiperCardRefType } from 'rn-swiper-list';
 import { supabase } from '@/lib/supabase';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { type Colors, radius, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { StatusPill } from '@/components/StatusPill';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { queryKeys } from '@/lib/query/keys';
 import { purgeTaskProofForFinalState } from '@/lib/task-proof-upload';
-import { VOUCHER_ACTIONABLE_STATUSES } from '@/lib/constants/task-status';
+import { VOUCHER_ACTIONABLE_STATUSES, VOUCHER_ACTIVE_VIEW_STATUSES } from '@/lib/constants/task-status';
 import { useFriendQueue, type VoucherTaskRow, type VouchHistoryTaskRow } from '@/lib/hooks/useFriendQueue';
 import type { TaskDetailData } from '@/lib/hooks/useTaskDetail';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type DecisionAction = 'accept' | 'deny' | 'proof';
-type TabView = 'pending' | 'history';
+type TabView = 'pending' | 'active' | 'history';
 type DeckIntent = 'accept' | 'deny' | 'next';
 
 interface TaskProof {
@@ -75,6 +77,18 @@ function formatVoucherDeadline(deadline: string | null): string {
   return `${days}d ${remHrs}h`;
 }
 
+function formatActiveDeadline(deadline: string): string {
+  const parsed = new Date(deadline);
+  if (Number.isNaN(parsed.getTime())) return 'No deadline';
+  return parsed.toLocaleString(undefined, {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
 const AVATAR_PALETTE = [
   '#7C3AED', '#2563EB', '#059669', '#B45309',
   '#DC2626', '#0891B2', '#7E22CE', '#065F46',
@@ -99,6 +113,8 @@ function getInitials(username: string): string {
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
 function FriendAvatar({ username, size = 34 }: { username: string; size?: number }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: getAvatarColor(username) }]}>
       <Text style={[styles.avatarText, { fontSize: Math.round(size * 0.38) }]}>
@@ -111,6 +127,8 @@ function FriendAvatar({ username, size = 34 }: { username: string; size?: number
 // ─── Geometric placeholder ────────────────────────────────────────────────────
 
 function GeometricPlaceholder({ seed }: { seed: string }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const hue = (seed.split('').reduce((a, c) => a + c.charCodeAt(0), 0) * 137) % 360;
   const bg = `hsl(${hue}, 22%, 12%)`;
   const accent = `hsl(${(hue + 60) % 360}, 28%, 22%)`;
@@ -129,6 +147,8 @@ function GeometricPlaceholder({ seed }: { seed: string }) {
 // ─── Video player ─────────────────────────────────────────────────────────────
 
 function VideoProofPlayer({ signedUrl, overlayTimestampText }: { signedUrl: string; overlayTimestampText: string }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const player = useVideoPlayer(signedUrl, (p) => { p.loop = false; p.muted = false; });
   const [playing, setPlaying] = useState(false);
 
@@ -157,6 +177,8 @@ function VideoProofPlayer({ signedUrl, overlayTimestampText }: { signedUrl: stri
 // ─── Media box ────────────────────────────────────────────────────────────────
 
 function MediaBox({ proof, taskId, onExpand }: { proof: TaskProof | null; taskId: string; onExpand: () => void }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const filename = proof ? (proof.mediaKind === 'video' ? 'proof_video.mp4' : 'proof_photo.jpg') : null;
   const mediaKey = proof
     ? `${taskId}:${proof.mediaKind}:${proof.signedUrl}`
@@ -202,40 +224,6 @@ function MediaBox({ proof, taskId, onExpand }: { proof: TaskProof | null; taskId
   );
 }
 
-// ─── Segmented control ────────────────────────────────────────────────────────
-
-function SegmentedControl({
-  labels,
-  activeIndex,
-  badge,
-  onSelect,
-}: {
-  labels: string[];
-  activeIndex: number;
-  badge?: number;
-  onSelect: (i: number) => void;
-}) {
-  return (
-    <View style={styles.segControl}>
-      {labels.map((label, i) => (
-        <TouchableOpacity
-          key={label}
-          style={[styles.segOption, i === activeIndex && styles.segOptionActive]}
-          onPress={() => onSelect(i)}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.segLabel, i === activeIndex && styles.segLabelActive]}>{label}</Text>
-          {i === 0 && badge != null && badge > 0 ? (
-            <View style={styles.segBadge}>
-              <Text style={styles.segBadgeText}>{badge > 99 ? '99+' : badge}</Text>
-            </View>
-          ) : null}
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
-
 // ─── Deck action buttons ──────────────────────────────────────────────────────
 
 function DeckActions({
@@ -257,6 +245,8 @@ function DeckActions({
   onProof: () => void;
   onNext: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const busy = Boolean(inFlightAction);
   const dimmed = !isActionable;
 
@@ -344,6 +334,8 @@ function CardContent({
   onCycle: () => void;
   onExpand: (proof: TaskProof) => void;
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const username = friend?.username ?? 'Unknown';
   return (
     <>
@@ -426,6 +418,8 @@ function FriendDeck({
   onProof: (t: VoucherTaskRow) => void;
   onExpand: (proof: TaskProof) => void;
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const swiperRef = useRef<SwiperCardRefType>(undefined);
   const pendingIntentRef = useRef<DeckIntent | null>(null);
   const pendingTaskIdRef = useRef<string | null>(null);
@@ -587,6 +581,8 @@ function HistoryRow({
   onPress: () => void;
   onRectify: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const username = task.user?.username ?? 'Unknown';
   return (
     <TouchableOpacity style={styles.historyRow} activeOpacity={0.75} onPress={onPress} accessibilityRole="button">
@@ -618,9 +614,30 @@ function HistoryRow({
   );
 }
 
+function ActiveRow({ task }: { task: VoucherTaskRow }) {
+  const styles = makeStyles(useTheme().colors);
+  const username = task.user?.username ?? 'Unknown';
+  return (
+    <View style={styles.activeRow}>
+      <FriendAvatar username={username} size={28} />
+      <View style={styles.activeRowBody}>
+        <Text style={styles.historyTaskTitle} numberOfLines={1}>{task.title}</Text>
+        <Text style={styles.historyTaskMeta} numberOfLines={1}>
+          {username.toLowerCase()} · due {formatActiveDeadline(task.deadline)}
+        </Text>
+      </View>
+      <View style={styles.activeRowRight}>
+        <StatusPill status={task.status} />
+      </View>
+    </View>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function FriendsScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -632,6 +649,8 @@ export default function FriendsScreen() {
   const [inFlightByTaskId, setInFlightByTaskId] = useState<Record<string, DecisionAction | null>>({});
   const [inFlightRectifyByTaskId, setInFlightRectifyByTaskId] = useState<Record<string, boolean>>({});
   const [activeTab, setActiveTab] = useState<TabView>('pending');
+  const [hasInitializedTab, setHasInitializedTab] = useState(false);
+  const [hasUserSelectedTab, setHasUserSelectedTab] = useState(false);
   const [lightboxProof, setLightboxProof] = useState<TaskProof | null>(null);
 
   const tasks = friendQueue.tasks;
@@ -646,6 +665,18 @@ export default function FriendsScreen() {
     () => tasks.filter((t) => VOUCHER_ACTIONABLE_STATUSES.includes(t.status)),
     [tasks],
   );
+  const activeTasks = useMemo(
+    () => tasks.filter((t) => VOUCHER_ACTIVE_VIEW_STATUSES.includes(t.status)),
+    [tasks],
+  );
+  const hasPending = awaitingVoucherTasks.length > 0;
+
+  useEffect(() => {
+    if (loading) return;
+    if (hasInitializedTab || hasUserSelectedTab) return;
+    setActiveTab(hasPending ? 'pending' : 'active');
+    setHasInitializedTab(true);
+  }, [hasInitializedTab, hasPending, hasUserSelectedTab, loading]);
 
   // Group only actionable tasks by friend for deck layout
   const decksByFriend = useMemo(() => {
@@ -934,11 +965,15 @@ export default function FriendsScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Friends</Text>
         <SegmentedControl
-          labels={['Pending', 'History']}
-          activeIndex={activeTab === 'pending' ? 0 : 1}
-          badge={awaitingVoucherTasks.length}
-          onSelect={(i) => {
-            const tab: TabView = i === 0 ? 'pending' : 'history';
+          items={[
+            { key: 'active', label: 'Active', showBadge: false },
+            { key: 'pending', label: 'Pending', badgeCount: awaitingVoucherTasks.length },
+            { key: 'history', label: 'History', showBadge: false },
+          ]}
+          activeKey={activeTab}
+          onChange={(key) => {
+            setHasUserSelectedTab(true);
+            const tab = key as TabView;
             setActiveTab(tab);
             if (tab === 'history' && historyTasks.length === 0 && !historyLoading) {
               void friendQueue.refetchHistory();
@@ -1004,6 +1039,20 @@ export default function FriendsScreen() {
               </View>
             )
 
+          ) : activeTab === 'active' ? (
+            activeTasks.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Feather name="activity" size={30} color={colors.textSubtle} />
+                <Text style={styles.emptyTitle}>No active tasks</Text>
+                <Text style={styles.emptyText}>No shared active tasks from your friends right now.</Text>
+              </View>
+            ) : (
+              <View style={styles.activeList}>
+                {activeTasks.map((task) => (
+                  <ActiveRow key={task.id} task={task} />
+                ))}
+              </View>
+            )
           ) : (
             /* ── History tab ── */
             historyLoading ? (
@@ -1081,7 +1130,7 @@ export default function FriendsScreen() {
 const CARD_RADIUS = 16;
 const MEDIA_HEIGHT = 186;
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.bg,
@@ -1103,48 +1152,6 @@ const styles = StyleSheet.create({
     fontWeight: typography.bold,
     color: colors.text,
     letterSpacing: -0.5,
-  },
-
-  // Segmented control
-  segControl: {
-    flexDirection: 'row',
-    backgroundColor: '#111827',
-    borderRadius: 999,
-    padding: 3,
-    gap: 2,
-  },
-  segOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 999,
-  },
-  segOptionActive: {
-    backgroundColor: '#1E293B',
-  },
-  segLabel: {
-    fontSize: typography.sm,
-    fontWeight: typography.medium,
-    color: colors.textSubtle,
-  },
-  segLabelActive: {
-    color: colors.text,
-  },
-  segBadge: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#F97316',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  segBadgeText: {
-    fontSize: 10,
-    fontWeight: typography.bold,
-    color: '#fff',
   },
 
   // Body
@@ -1192,9 +1199,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
     marginBottom: spacing.sm,
-    backgroundColor: '#221717',
+    backgroundColor: colors.destructiveMuted,
     borderWidth: 1,
-    borderColor: '#4A1D1D',
+    borderColor: colors.destructive,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
@@ -1311,9 +1318,9 @@ const styles = StyleSheet.create({
     right: 8,
     height: 24,
     borderRadius: CARD_RADIUS,
-    backgroundColor: '#122033',
+    backgroundColor: colors.surface2,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.11)',
+    borderColor: colors.border,
     opacity: 0.9,
     zIndex: 0,
   },
@@ -1324,9 +1331,9 @@ const styles = StyleSheet.create({
     right: 16,
     height: 18,
     borderRadius: CARD_RADIUS,
-    backgroundColor: '#0B1628',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: colors.border,
     zIndex: 0,
   },
   backCard: {
@@ -1339,15 +1346,14 @@ const styles = StyleSheet.create({
   },
   mainCard: {
     width: '100%',
-    backgroundColor: '#0F172A',
+    backgroundColor: colors.surface,
     borderRadius: CARD_RADIUS,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
+    borderColor: colors.border,
     overflow: 'hidden',
-    // Subtle shadow for depth
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 8,
   },
@@ -1429,9 +1435,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: colors.surface2,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
+    borderColor: colors.border,
     paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 6,
@@ -1454,7 +1460,7 @@ const styles = StyleSheet.create({
   },
   cardDivider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: 'rgba(255,255,255,0.07)',
+    backgroundColor: colors.border,
     marginHorizontal: spacing.md,
   },
 
@@ -1503,8 +1509,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(251, 191, 36, 0.45)',
   },
   actionBtnNext: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
   },
   actionBtnHidden: {
     opacity: 0,
@@ -1516,6 +1522,27 @@ const styles = StyleSheet.create({
   // History
   historyList: {
     gap: 1,
+  },
+  activeList: {
+    gap: 1,
+  },
+  activeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  activeRowBody: {
+    flex: 1,
+  },
+  activeRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexShrink: 0,
   },
   historyRow: {
     flexDirection: 'row',

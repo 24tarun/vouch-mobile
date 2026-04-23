@@ -20,8 +20,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { unregisterForPushNotificationsAsync } from '@/lib/notifications';
 import { useAuth } from '@/hooks/useAuth';
-import { colors } from '@/lib/theme';
-import { styles } from '@/components/settings/styles';
+import { useTheme } from '@/lib/ThemeContext';
+import { makeStyles } from '@/components/settings/styles';
 import { Charity, Currency } from '@/lib/types';
 import { PageHeader } from '@/components/PageHeader';
 import { StatsOverview } from '@/components/StatsOverview';
@@ -91,6 +91,54 @@ function buildUserSummaryFromCandidate(candidate: SearchCandidate): UserSummary 
   };
 }
 
+type ThemeMode = 'light' | 'dark' | 'system';
+
+function AppearanceSection() {
+  const { colors, theme, setTheme } = useTheme();
+  const styles = makeStyles(colors);
+  const options: { value: ThemeMode; label: string; icon: React.ComponentProps<typeof Feather>['name'] }[] = [
+    { value: 'light', label: 'Light', icon: 'sun' },
+    { value: 'dark', label: 'Dark', icon: 'moon' },
+    { value: 'system', label: 'System', icon: 'smartphone' },
+  ];
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>Appearance</Text>
+      <View style={styles.card}>
+        <View style={{ flexDirection: 'row', gap: 8, padding: 12 }}>
+          {options.map((opt) => {
+            const active = theme === opt.value;
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                onPress={() => setTheme(opt.value)}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel={`${opt.label} theme`}
+                style={{
+                  flex: 1,
+                  alignItems: 'center',
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: active ? colors.accentCyan : colors.border,
+                  backgroundColor: active ? 'rgba(0,217,255,0.08)' : colors.surface,
+                  gap: 5,
+                }}
+              >
+                <Feather name={opt.icon} size={18} color={active ? colors.accentCyan : colors.textMuted} />
+                <Text style={{ fontSize: 12, fontWeight: '600', color: active ? colors.accentCyan : colors.textMuted }}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 interface RowProps {
   icon: React.ComponentProps<typeof Feather>['name'];
   label: string;
@@ -112,6 +160,8 @@ function SettingsRow({
   disabled = false,
   accessibilityHint,
 }: RowProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const tint = destructive ? colors.destructive : colors.text;
   return (
     <TouchableOpacity
@@ -148,6 +198,8 @@ function SettingsRow({
 }
 
 export default function SettingsScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const { user, profile } = useAuth();
   const queryClient = useQueryClient();
   const relationshipsQuery = useRelationships(user?.id);
@@ -414,7 +466,7 @@ export default function SettingsScreen() {
         supabase.from('tasks' as any).select('id, title, description, failure_cost_cents, deadline, status, postponed_at, marked_completed_at, recurrence_rule_id, iteration_number, start_at, is_strict, required_pomo_minutes, requires_proof, has_proof, resubmit_count, created_at, updated_at').eq('user_id', user.id).order('created_at', { ascending: false }),
         supabase.from('task_subtasks' as any).select('id, parent_task_id, title, is_completed, completed_at, created_at').eq('user_id', user.id),
         supabase.from('task_reminders' as any).select('id, parent_task_id, reminder_at, source, notified_at, created_at').eq('user_id', user.id),
-        supabase.from('task_events' as any).select('id, task_id, event_type, from_status, to_status, created_at').eq('user_id', user.id).order('created_at', { ascending: true }),
+        supabase.from('task_events' as any).select('id, task_id, event_type, from_status, to_status, created_at, task:tasks!inner(user_id)').eq('tasks.user_id', user.id).order('created_at', { ascending: true }),
         supabase.from('ledger_entries' as any).select('id, task_id, period, amount_cents, entry_type, created_at').eq('user_id', user.id).order('created_at', { ascending: true }),
         supabase.from('recurrence_rules' as any).select('id, title, description, failure_cost_cents, required_pomo_minutes, requires_proof, rule_config, timezone, latest_iteration, created_at, updated_at').eq('user_id', user.id),
         supabase.from('pomo_sessions' as any).select('id, task_id, duration_minutes, elapsed_seconds, is_strict, status, started_at, completed_at, created_at').eq('user_id', user.id).order('created_at', { ascending: false }),
@@ -463,7 +515,7 @@ export default function SettingsScreen() {
           subtasks: subtasksByTask[t.id] ?? [],
           reminders: remindersByTask[t.id] ?? [],
         })),
-        task_events: taskEventsRes.data ?? [],
+        task_events: ((taskEventsRes.data ?? []) as any[]).map(({ task: _task, ...e }) => e),
         ledger_entries: ledgerRes.data ?? [],
         recurrence_rules: recurrenceRulesRes.data ?? [],
         pomo_sessions: pomoRes.data ?? [],
@@ -1649,9 +1701,6 @@ export default function SettingsScreen() {
                     setDefaultsSuccess(null);
                   }}
                 />
-                <Text style={styles.toggleSub}>
-                  Range: {POMO_MIN_MINUTES} - {POMO_MAX_MINUTES} minutes
-                </Text>
               </View>
 
               <View style={styles.defaultsField}>
@@ -1668,11 +1717,6 @@ export default function SettingsScreen() {
                     setDefaultsSuccess(null);
                   }}
                 />
-                <Text style={styles.toggleSub}>
-                  Range: {currencySymbol}
-                  {failureCostBounds.minMajor} - {currencySymbol}
-                  {failureCostBounds.maxMajor}
-                </Text>
               </View>
 
               <View style={styles.defaultsField}>
@@ -1695,7 +1739,6 @@ export default function SettingsScreen() {
               <View style={styles.toggleRow}>
                 <View style={styles.toggleTextWrap}>
                   <Text style={styles.toggleTitle}>1 hour reminder</Text>
-                  <Text style={styles.toggleSub}>Default warning one hour before deadline.</Text>
                 </View>
                 <Switch
                   value={oneHourReminderEnabled}
@@ -1708,7 +1751,6 @@ export default function SettingsScreen() {
               <View style={styles.toggleRow}>
                 <View style={styles.toggleTextWrap}>
                   <Text style={styles.toggleTitle}>10 minute reminder</Text>
-                  <Text style={styles.toggleSub}>Default final warning ten minutes before deadline.</Text>
                 </View>
                 <Switch
                   value={tenMinuteReminderEnabled}
@@ -1721,7 +1763,6 @@ export default function SettingsScreen() {
               <View style={styles.toggleRow}>
                 <View style={styles.toggleTextWrap}>
                   <Text style={styles.toggleTitle}>Allow vouchers to view my active tasks</Text>
-                  <Text style={styles.toggleSub}>Controls whether selected vouchers can see your tasks in ACTIVE or POSTPONED status.</Text>
                 </View>
                 <Switch
                   value={voucherCanViewActiveTasks}
@@ -1784,7 +1825,6 @@ export default function SettingsScreen() {
                 </View>
               ) : null}
 
-              <Text style={styles.toggleSub}>No payment is processed in app; you pay manually outside the app.</Text>
               {charitiesError ? <Text style={styles.errorText}>{charitiesError}</Text> : null}
             </View>
           </View>
@@ -1797,7 +1837,6 @@ export default function SettingsScreen() {
               <View style={styles.toggleRow}>
                 <View style={styles.toggleTextWrap}>
                   <Text style={styles.toggleTitle}>AI-voucher</Text>
-                  <Text style={styles.toggleSub}>Enable or disable AI-voucher for your account.</Text>
                 </View>
                 <Switch
                   value={aiVoucherEnabled}
@@ -1821,6 +1860,8 @@ export default function SettingsScreen() {
           unblockingUserId={unblockingUserId}
           onUnblockUser={handleUnblockUser}
         />
+
+        <AppearanceSection />
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Session</Text>

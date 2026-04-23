@@ -4,7 +4,8 @@ import {
   Text,
   View,
 } from 'react-native';
-import { colors, spacing, typography } from '@/lib/theme';
+import { spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 function formatFocusedTime(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
@@ -17,12 +18,13 @@ interface QuickStatItemProps {
   value: string;
   valueColor: string;
   glowColor: string;
+  labelColor: string;
 }
 
-function QuickStatItem({ label, value, valueColor, glowColor }: QuickStatItemProps) {
+function QuickStatItem({ label, value, valueColor, glowColor, labelColor }: QuickStatItemProps) {
   return (
     <View style={styles.item}>
-      <Text style={styles.itemLabel}>{label}</Text>
+      <Text style={[styles.itemLabel, { color: labelColor }]}>{label}</Text>
       <Text
         style={[
           styles.itemValue,
@@ -56,6 +58,8 @@ export function StatsOverview({
   loading = false,
   error = null,
 }: StatsOverviewProps) {
+  const { colors } = useTheme();
+
   const stats = useMemo(
     () => [
       {
@@ -100,7 +104,7 @@ export function StatsOverview({
 
   return (
     <View style={styles.container}>
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {error && <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>}
       <View style={styles.grid}>
         {stats.map((stat) => (
           <QuickStatItem
@@ -109,6 +113,7 @@ export function StatsOverview({
             value={stat.value}
             valueColor={stat.valueColor}
             glowColor={stat.glowColor}
+            labelColor={colors.textMuted}
           />
         ))}
       </View>
@@ -135,7 +140,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textTransform: 'uppercase',
     letterSpacing: 0.9,
-    color: colors.textMuted,
     fontWeight: typography.bold,
     lineHeight: 14,
   },
@@ -148,7 +152,6 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 12,
-    color: colors.destructive,
     marginBottom: spacing.xs,
   },
 });

@@ -1,8 +1,8 @@
 import { View } from 'react-native';
-import { colors } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 // AuthGuard in _layout.tsx owns all boot-time auth routing.
 export default function Index() {
-  // Keep a static background so there's never an auth/app flash at root.
+  const { colors } = useTheme();
   return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
 }

@@ -1,6 +1,7 @@
 import { Text, TouchableOpacity, View } from 'react-native';
 import type { BlockedUserOption } from '@/lib/settings/relationships';
-import { styles } from './styles';
+import { useTheme } from '@/lib/ThemeContext';
+import { makeStyles } from './styles';
 
 interface BlockedUsersSectionProps {
   blockedUsersLoading: boolean;
@@ -17,21 +18,15 @@ export function BlockedUsersSection({
   unblockingUserId,
   onUnblockUser,
 }: BlockedUsersSectionProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <View style={styles.section}>
       <Text style={styles.sectionLabel}>Blocked Users</Text>
       <View style={styles.card}>
         <View style={styles.defaultsContent}>
-          <Text style={styles.toggleSub}>
-            Unblock people you previously blocked so they can send friend requests again.
-          </Text>
-
           {blockedUsersLoading ? <Text style={styles.savingText}>Loading blocked users...</Text> : null}
           {blockedUsersError ? <Text style={styles.errorText}>{blockedUsersError}</Text> : null}
-
-          {!blockedUsersLoading && blockedUsers.length === 0 ? (
-            <Text style={styles.toggleSub}>No blocked users.</Text>
-          ) : null}
 
           {blockedUsers.map((blockedUser) => (
             <View key={blockedUser.id} style={styles.blockedUserRow}>

@@ -1,12 +1,19 @@
 import { Pressable, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import type { TodayParts } from './types';
-import { colors } from '@/lib/theme';
-import { styles } from './styles';
+import { useTheme } from '@/lib/ThemeContext';
+import { makeStyles } from './styles';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+
+type TasksSegment = 'active' | 'future' | 'past';
 
 interface TaskTopBarProps {
   displayName: string;
   todayParts: TodayParts;
+  selectedSegment: TasksSegment;
+  onChangeSegment: (segment: TasksSegment) => void;
+  activeCount: number;
+  futureCount: number;
   creatorAnchorRef: React.RefObject<View | null>;
   sortButtonRef: React.RefObject<View | null>;
   searchInputRef: React.RefObject<TextInput | null>;
@@ -18,22 +25,21 @@ interface TaskTopBarProps {
   openSortMenu: () => void;
 }
 
-function toSuperscriptOrdinal(ordinal: string): string {
-  switch (ordinal.toLowerCase()) {
-    case 'st':
-      return 'ˢᵗ';
-    case 'nd':
-      return 'ⁿᵈ';
-    case 'rd':
-      return 'ʳᵈ';
-    default:
-      return 'ᵗʰ';
-  }
+function OrdinalSuffix({ ordinal }: { ordinal: string }): React.ReactElement {
+  return (
+    <Text style={{ fontSize: 10, lineHeight: 12, marginBottom: 4, transform: [{ translateY: -2 }] }}>
+      {ordinal.toLowerCase()}
+    </Text>
+  );
 }
 
 export function TaskTopBar({
   displayName,
   todayParts,
+  selectedSegment,
+  onChangeSegment,
+  activeCount,
+  futureCount,
   creatorAnchorRef,
   sortButtonRef,
   searchInputRef,
@@ -44,7 +50,8 @@ export function TaskTopBar({
   expandCreator,
   openSortMenu,
 }: TaskTopBarProps) {
-  const superscriptOrdinal = toSuperscriptOrdinal(todayParts.ordinal);
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
 
   return (
     <>
@@ -52,9 +59,24 @@ export function TaskTopBar({
         <Text style={styles.taskGreeting}>Hello, {displayName}</Text>
         <View style={styles.taskDateRow}>
           <Text style={styles.taskDateIts}>It&apos;s</Text>
-          <Text style={styles.taskDate}>{todayParts.dayName} {todayParts.day}{superscriptOrdinal}</Text>
+          <Text style={styles.taskDate}>{todayParts.dayName} {todayParts.day}<OrdinalSuffix ordinal={todayParts.ordinal} /></Text>
           <Text style={styles.taskDate}> {todayParts.monthName}.</Text>
         </View>
+      </View>
+
+      <View style={styles.taskSegmenterInlineWrap}>
+        <SegmentedControl
+          items={[
+            { key: 'active', label: 'Active', badgeCount: activeCount, color: '#22C55E' },
+            { key: 'future', label: 'Future', badgeCount: futureCount, color: '#F97316' },
+            { key: 'past', label: 'Past', showBadge: false, color: '#EF4444' },
+          ]}
+          activeKey={selectedSegment}
+          onChange={(key) => onChangeSegment(key as TasksSegment)}
+          variant="traffic"
+          trafficOrientation="horizontal"
+          trafficStandalone
+        />
       </View>
 
       <View ref={creatorAnchorRef} collapsable={false} style={styles.inlineCreatorWrap}>

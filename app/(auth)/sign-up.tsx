@@ -12,13 +12,16 @@ import { signInWithApple, signInWithGoogle } from '@/lib/auth-social';
 import { EMAIL_CONFIRMATION_URL } from '@/lib/auth-urls';
 import { Button, TextButton } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { colors, spacing, typography } from '@/lib/theme';
+import { type Colors, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { AuthScreenShell } from '@/components/auth/AuthScreenShell';
 import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
 
 const PRIVACY_POLICY_URL = 'https://tas.tarunh.com/privacy-policy';
 
 export default function SignUpScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -227,7 +230,7 @@ export default function SignUpScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.bg,

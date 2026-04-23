@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   FlatList,
@@ -13,7 +13,8 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { type Colors, radius, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const ONBOARDING_KEY = 'vouch_onboarding_seen';
@@ -30,47 +31,11 @@ interface Slide {
   body: string;
 }
 
-const SLIDES: Slide[] = [
-  {
-    id: 'welcome',
-    wordmark: true,
-    iconColor: colors.accentCyan,
-    headline: 'hold yourself\naccountable.',
-    body: 'The only commitment app with real consequences.',
-  },
-  {
-    id: 'tasks',
-    icon: 'clock',
-    iconColor: colors.accentCyan,
-    iconBg: 'rgba(0, 217, 255, 0.07)',
-    headline: 'Set a deadline.',
-    body: 'Create tasks with a hard deadline and a failure cost — real money on the line.',
-  },
-  {
-    id: 'voucher',
-    icon: 'users',
-    iconColor: '#A78BFA',
-    iconBg: 'rgba(167, 139, 250, 0.07)',
-    headline: 'Pick a voucher.',
-    body: 'A trusted friend who verifies your work and decides if you\'ve earned the pass.',
-  },
-  {
-    id: 'stakes',
-    icon: 'zap',
-    iconColor: colors.warning,
-    iconBg: 'rgba(245, 158, 11, 0.07)',
-    headline: 'Skin in the game.',
-    body: 'Miss the deadline? Your voucher decides. The stakes make the commitment stick.',
-  },
-];
-
 async function markSeen() {
   await AsyncStorage.setItem(ONBOARDING_KEY, '1');
 }
 
-// ─── Slide ────────────────────────────────────────────────────────────────────
-
-function SlideView({ item }: { item: Slide }) {
+function SlideView({ item, styles }: { item: Slide; styles: ReturnType<typeof makeStyles> }) {
   return (
     <View style={styles.slide}>
       <View style={styles.visual}>
@@ -89,9 +54,44 @@ function SlideView({ item }: { item: Slide }) {
   );
 }
 
-// ─── Screen ───────────────────────────────────────────────────────────────────
-
 export default function OnboardingScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
+
+  const SLIDES: Slide[] = useMemo(() => [
+    {
+      id: 'welcome',
+      wordmark: true,
+      iconColor: colors.accentCyan,
+      headline: 'hold yourself\naccountable.',
+      body: 'The only commitment app with real consequences.',
+    },
+    {
+      id: 'tasks',
+      icon: 'clock' as FeatherName,
+      iconColor: colors.accentCyan,
+      iconBg: 'rgba(0, 217, 255, 0.07)',
+      headline: 'Set a deadline.',
+      body: 'Create tasks with a hard deadline and a failure cost — real money on the line.',
+    },
+    {
+      id: 'voucher',
+      icon: 'users' as FeatherName,
+      iconColor: '#A78BFA',
+      iconBg: 'rgba(167, 139, 250, 0.07)',
+      headline: 'Pick a voucher.',
+      body: "A trusted friend who verifies your work and decides if you've earned the pass.",
+    },
+    {
+      id: 'stakes',
+      icon: 'zap' as FeatherName,
+      iconColor: colors.warning,
+      iconBg: 'rgba(245, 158, 11, 0.07)',
+      headline: 'Skin in the game.',
+      body: 'Miss the deadline? Your voucher decides. The stakes make the commitment stick.',
+    },
+  ], [colors.accentCyan, colors.warning]);
+
   const router = useRouter();
   const listRef = useRef<FlatList<Slide>>(null);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -125,12 +125,11 @@ export default function OnboardingScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      {/* Slides */}
       <FlatList
         ref={listRef}
         data={SLIDES}
         keyExtractor={(s) => s.id}
-        renderItem={({ item }: ListRenderItemInfo<Slide>) => <SlideView item={item} />}
+        renderItem={({ item }: ListRenderItemInfo<Slide>) => <SlideView item={item} styles={styles} />}
         horizontal
         pagingEnabled
         bounces={false}
@@ -141,16 +140,13 @@ export default function OnboardingScreen() {
         style={styles.list}
       />
 
-      {/* Footer */}
       <View style={styles.footer}>
-        {/* Dot indicators */}
         <View style={styles.dots}>
           {SLIDES.map((_, i) => (
             <View key={i} style={[styles.dot, i === activeIndex && styles.dotActive]} />
           ))}
         </View>
 
-        {/* Primary CTA */}
         <TouchableOpacity
           style={styles.nextButton}
           onPress={handleNext}
@@ -167,7 +163,6 @@ export default function OnboardingScreen() {
           )}
         </TouchableOpacity>
 
-        {/* Sign-in link — always visible so existing users aren't stuck */}
         <TouchableOpacity
           onPress={handleSignIn}
           activeOpacity={0.6}
@@ -183,9 +178,7 @@ export default function OnboardingScreen() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.bg,
@@ -193,8 +186,6 @@ const styles = StyleSheet.create({
   list: {
     flex: 1,
   },
-
-  // ── Slide ────────────────────────────────────────────────────────────────
   slide: {
     width: SCREEN_W,
     flex: 1,
@@ -203,8 +194,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.xxl,
   },
-
-  // Visual area — wordmark or icon
   visual: {
     marginBottom: spacing.xl + spacing.md,
     alignItems: 'center',
@@ -223,8 +212,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
   },
-
-  // Text
   headline: {
     fontSize: typography.xxl + 4,
     fontWeight: typography.bold,
@@ -241,16 +228,12 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     maxWidth: 300,
   },
-
-  // ── Footer ───────────────────────────────────────────────────────────────
   footer: {
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
     gap: spacing.md,
     alignItems: 'center',
   },
-
-  // Dots
   dots: {
     flexDirection: 'row',
     gap: spacing.xs,
@@ -267,8 +250,6 @@ const styles = StyleSheet.create({
     width: 22,
     backgroundColor: colors.text,
   },
-
-  // Next button
   nextButton: {
     width: '100%',
     height: 52,
@@ -284,8 +265,6 @@ const styles = StyleSheet.create({
     color: colors.primaryFg,
     letterSpacing: 0.1,
   },
-
-  // Sign-in link
   signInRow: {
     minHeight: 36,
     alignItems: 'center',

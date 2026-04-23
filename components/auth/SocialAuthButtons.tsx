@@ -1,6 +1,7 @@
 import { ActivityIndicator, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, spacing } from '@/lib/theme';
+import { radius, spacing } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 interface SocialAuthButtonsProps {
   mode: 'sign-in' | 'sign-up';
@@ -14,12 +15,13 @@ export function SocialAuthButtons({
   onGooglePress,
   onApplePress,
 }: SocialAuthButtonsProps) {
+  const { colors } = useTheme();
   const showApple = Platform.OS === 'ios';
 
   return (
     <View style={[styles.row, !showApple && styles.rowCentered]}>
       <TouchableOpacity
-        style={styles.iconButton}
+        style={[styles.iconButton, { borderColor: colors.border }]}
         onPress={onGooglePress}
         disabled={loadingProvider !== null}
         activeOpacity={0.75}
@@ -35,7 +37,7 @@ export function SocialAuthButtons({
 
       {showApple && (
         <TouchableOpacity
-          style={styles.iconButton}
+          style={[styles.iconButton, { borderColor: colors.border }]}
           onPress={onApplePress}
           disabled={loadingProvider !== null}
           activeOpacity={0.75}
@@ -66,7 +68,6 @@ const styles = StyleSheet.create({
     height: 50,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },

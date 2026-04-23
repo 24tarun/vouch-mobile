@@ -18,7 +18,8 @@ import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { type Colors, radius, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import {
   useCommitments,
   type CommitmentListItem,
@@ -68,6 +69,8 @@ function CommitmentCard({
   item: CommitmentListItem;
   currency: Currency;
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const router = useRouter();
   const daysAccomplished = item.day_statuses.filter((entry) => entry.status === 'passed').length;
   const earnedLabel = formatCents(item.earned_so_far_cents, currency);
@@ -130,6 +133,8 @@ function CreateModal({
   currency: Currency;
   onClose: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -450,6 +455,8 @@ function CreateModal({
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
 function EmptyState({ onNew }: { onNew: () => void }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <View style={styles.emptyWrap}>
       <Feather name="target" size={40} color={colors.textSubtle} />
@@ -465,6 +472,8 @@ function EmptyState({ onNew }: { onNew: () => void }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CommitmentsPage() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const { commitments, currency, loading, error, refetch } = useCommitments();
   const [refreshing, setRefreshing] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -546,7 +555,7 @@ export default function CommitmentsPage() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
 
   // Page header

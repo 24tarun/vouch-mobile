@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import type { ImagePickerAsset } from 'expo-image-picker';
-import { colors, spacing, typography } from '@/lib/theme';
+import { spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { TaskRow } from '@/components/TaskRow';
 import type { TaskRowData } from '@/components/TaskRow';
 
@@ -37,6 +38,7 @@ export function CollapsibleSection({
   defaultPomoDurationMinutes = 25,
   onSubtaskComposerFocus,
 }: CollapsibleSectionProps) {
+  const { colors } = useTheme();
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   if (tasks.length === 0) return null;
@@ -57,7 +59,7 @@ export function CollapsibleSection({
           size={16}
           color={colors.textMuted}
         />
-        <Text style={styles.label}>{title}</Text>
+        <Text style={[styles.label, { color: colors.textMuted }]}>{title}</Text>
       </TouchableOpacity>
 
       {isOpen && (
@@ -78,7 +80,7 @@ export function CollapsibleSection({
 
           {hasMore && (
             <TouchableOpacity
-              style={styles.loadMoreBtn}
+              style={[styles.loadMoreBtn, { borderTopColor: colors.border }]}
               onPress={onLoadMore}
               disabled={loadingMore}
               activeOpacity={0.7}
@@ -88,7 +90,7 @@ export function CollapsibleSection({
               {loadingMore ? (
                 <ActivityIndicator size="small" color={colors.textMuted} />
               ) : (
-                <Text style={styles.loadMoreText}>Load more</Text>
+                <Text style={[styles.loadMoreText, { color: colors.textMuted }]}>Load more</Text>
               )}
             </TouchableOpacity>
           )}
@@ -112,17 +114,6 @@ const styles = StyleSheet.create({
   label: {
     fontSize: typography.sm,
     fontWeight: '600',
-    color: colors.textMuted,
-  },
-  badge: {
-    backgroundColor: colors.surface,
-    borderRadius: 10,
-    paddingHorizontal: 7,
-    paddingVertical: 1,
-  },
-  badgeText: {
-    fontSize: typography.xs,
-    color: colors.textMuted,
   },
   list: {
     paddingBottom: spacing.sm,
@@ -133,10 +124,8 @@ const styles = StyleSheet.create({
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
   },
   loadMoreText: {
     fontSize: typography.sm,
-    color: colors.textMuted,
   },
 });

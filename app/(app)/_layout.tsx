@@ -10,7 +10,8 @@ import {
   getFriendsVouchRequestsSeenStorageKey,
   getSettingsFriendRequestsSeenStorageKey,
 } from '@/lib/settings-badge';
-import { colors } from '@/lib/theme';
+import { type Colors } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { taskCreatorState } from '@/lib/taskCreatorState';
 import { createRealtimeRateLimiter } from '@/lib/query/realtimeRateLimiter';
 
@@ -39,6 +40,8 @@ function TabIcon({
   focused: boolean;
   badgeCount?: number;
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const tint = focused ? colors.tabActive : colors.tabInactive;
   const badgeText = badgeCount > 99 ? '99+' : badgeCount > 0 ? String(badgeCount) : null;
 
@@ -55,6 +58,8 @@ function TabIcon({
 }
 
 export default function AppLayout() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const { user } = useAuth();
@@ -302,7 +307,7 @@ export default function AppLayout() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   tabBar: {
     backgroundColor: colors.tabBar,
     borderTopWidth: 1,

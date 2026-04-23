@@ -1,8 +1,9 @@
 import { Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { colors, spacing } from '@/lib/theme';
+import { spacing } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import type { DashboardSortMode } from '@/lib/hooks/useTasks';
-import { styles } from './styles';
+import { makeStyles } from './styles';
 
 const localStyles = StyleSheet.create({
   backdrop: {
@@ -43,6 +44,8 @@ export function TaskSortMenu({
   onChangeSortMode,
   onClose,
 }: TaskSortMenuProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   if (!open || !anchor) {
     return null;
   }

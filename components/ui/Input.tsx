@@ -8,12 +8,13 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { colors, radius, typography } from '@/lib/theme';
+import { radius, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 interface InputProps extends TextInputProps {
   label?: string;
   error?: string;
-  secureToggle?: boolean; // show/hide password eye icon
+  secureToggle?: boolean;
 }
 
 export function Input({
@@ -24,23 +25,25 @@ export function Input({
   style,
   ...rest
 }: InputProps) {
+  const { colors } = useTheme();
   const [focused, setFocused] = useState(false);
   const [hidden, setHidden] = useState(secureTextEntry ?? false);
   const eyeLabel = hidden ? 'Show password' : 'Hide password';
 
   return (
     <View style={styles.wrapper}>
-      {label ? <Text style={styles.label}>{label}</Text> : null}
+      {label ? <Text style={[styles.label, { color: colors.textMuted }]}>{label}</Text> : null}
 
       <View
         style={[
           styles.inputRow,
-          focused && styles.inputRowFocused,
-          !!error && styles.inputRowError,
+          { backgroundColor: colors.inputBg, borderColor: colors.inputBorder },
+          focused && { borderColor: colors.inputBorderFocus },
+          !!error && { borderColor: colors.destructive },
         ]}
       >
         <TextInput
-          style={[styles.input, style]}
+          style={[styles.input, { color: colors.text }, style]}
           placeholderTextColor={colors.inputPlaceholder}
           selectionColor={colors.text}
           secureTextEntry={secureToggle ? hidden : secureTextEntry}
@@ -69,7 +72,7 @@ export function Input({
         ) : null}
       </View>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
     </View>
   );
 }
@@ -81,29 +84,19 @@ const styles = StyleSheet.create({
   label: {
     fontSize: typography.sm,
     fontWeight: typography.medium,
-    color: colors.textMuted,
     letterSpacing: 0.3,
   },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.inputBg,
     borderWidth: 1,
-    borderColor: colors.inputBorder,
     borderRadius: radius.md,
     paddingHorizontal: 14,
-  },
-  inputRowFocused: {
-    borderColor: colors.inputBorderFocus,
-  },
-  inputRowError: {
-    borderColor: colors.destructive,
   },
   input: {
     flex: 1,
     height: 50,
     fontSize: typography.base,
-    color: colors.text,
   },
   eyeButton: {
     width: 44,
@@ -114,7 +107,6 @@ const styles = StyleSheet.create({
   },
   error: {
     fontSize: typography.xs,
-    color: colors.destructive,
     marginTop: 2,
   },
 });

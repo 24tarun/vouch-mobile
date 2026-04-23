@@ -14,7 +14,8 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { type Colors, radius, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { type CommitmentListItem, type DayStatus } from '@/lib/hooks/useCommitments';
 import type { CommitmentStatus, Currency } from '@/lib/types';
 import {
@@ -34,14 +35,15 @@ export function formatCents(cents: number, currency: Currency): string {
 
 export { toDateOnly };
 
-const STATUS_CFG: Record<CommitmentStatus, { label: string; color: string; bg: string }> = {
-  ACTIVE: { label: 'Active', color: colors.accentCyan, bg: 'rgba(0,217,255,0.12)' },
-  DRAFT: { label: 'Draft', color: colors.textMuted, bg: colors.surface2 },
-  COMPLETED: { label: 'Completed', color: colors.success, bg: 'rgba(34,197,94,0.12)' },
-  FAILED: { label: 'Failed', color: colors.destructive, bg: 'rgba(239,68,68,0.12)' },
-};
-
 export function StatusBadge({ status }: { status: CommitmentStatus }) {
+  const { colors } = useTheme();
+  const styles = makeSharedCommitmentStyles(colors);
+  const STATUS_CFG: Record<CommitmentStatus, { label: string; color: string; bg: string }> = {
+    ACTIVE: { label: 'Active', color: colors.accentCyan, bg: 'rgba(0,217,255,0.12)' },
+    DRAFT: { label: 'Draft', color: colors.textMuted, bg: colors.surface2 },
+    COMPLETED: { label: 'Completed', color: colors.success, bg: 'rgba(34,197,94,0.12)' },
+    FAILED: { label: 'Failed', color: colors.destructive, bg: 'rgba(239,68,68,0.12)' },
+  };
   const cfg = STATUS_CFG[status] ?? STATUS_CFG.DRAFT;
   return (
     <View style={[styles.badge, { backgroundColor: cfg.bg }]}>
@@ -50,14 +52,15 @@ export function StatusBadge({ status }: { status: CommitmentStatus }) {
   );
 }
 
-const DAY_COLORS: Record<DayStatus, string> = {
-  passed: colors.success,
-  failed: colors.destructive,
-  pending: colors.accentCyan,
-  future: colors.textSubtle,
-};
-
 export function DayStrip({ item }: { item: CommitmentListItem }) {
+  const { colors } = useTheme();
+  const styles = makeSharedCommitmentStyles(colors);
+  const DAY_COLORS: Record<DayStatus, string> = {
+    passed: colors.success,
+    failed: colors.destructive,
+    pending: colors.accentCyan,
+    future: colors.textSubtle,
+  };
   const { start_date, end_date, day_statuses } = item;
   const { width: screenWidth } = useWindowDimensions();
   const scrollRef = useRef<ScrollView | null>(null);
@@ -173,6 +176,8 @@ export function LinkedTaskRow({
   onOpenTask?: (taskId: string) => void;
   index: number;
 }) {
+  const { colors } = useTheme();
+  const styles = makeSharedCommitmentStyles(colors);
   return (
     <View style={[styles.linkedRow, index % 2 === 0 ? styles.linkedRowEven : styles.linkedRowOdd]}>
       <View style={styles.linkedTextWrap}>
@@ -296,6 +301,8 @@ export function TaskPickerModal({
   onClose: () => void;
   onLinked: (linked: LinkedTask) => void;
 }) {
+  const { colors } = useTheme();
+  const styles = makeSharedCommitmentStyles(colors);
   const [items, setItems] = useState<
     ({ id: string; title: string; deadline?: string; type: 'task'; failureCostCents: number } | { id: string; title: string; type: 'rule'; failureCostCents: number })[]
   >([]);
@@ -446,7 +453,7 @@ export function TaskPickerModal({
   );
 }
 
-const sharedCommitmentStyles = StyleSheet.create({
+const makeSharedCommitmentStyles = (colors: Colors) => StyleSheet.create({
   badge: { borderRadius: radius.full, paddingHorizontal: 8, paddingVertical: 2 },
   badgeText: { fontSize: typography.xs, fontWeight: typography.semibold },
   dayStripWrap: { marginBottom: spacing.md },
@@ -534,4 +541,3 @@ const sharedCommitmentStyles = StyleSheet.create({
   pickerRowSub: { fontSize: typography.xs, color: colors.textMuted, marginTop: 2 },
 });
 
-const styles = sharedCommitmentStyles;

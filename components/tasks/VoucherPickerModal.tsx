@@ -1,8 +1,8 @@
 import { Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import type { FriendOption } from '@/lib/hooks/useFriends';
-import { colors } from '@/lib/theme';
-import { styles } from './styles';
+import { useTheme } from '@/lib/ThemeContext';
+import { makeStyles } from './styles';
 
 interface Anchor {
   pageX: number;
@@ -40,6 +40,8 @@ export function VoucherPickerModal({
   friendsError,
   filteredFriends,
 }: VoucherPickerModalProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <Modal
       visible={visible && anchor != null}

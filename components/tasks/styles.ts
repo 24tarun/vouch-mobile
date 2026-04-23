@@ -1,7 +1,7 @@
 import { StyleSheet } from 'react-native';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { type Colors, radius, spacing, typography } from '@/lib/theme';
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.bg,
@@ -9,11 +9,16 @@ const styles = StyleSheet.create({
   taskHeader: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
-    paddingBottom: spacing.md,
+    paddingBottom: 0,
     gap: spacing.xs,
   },
+  taskSegmenterInlineWrap: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    marginBottom: 30,
+  },
   taskGreeting: {
-    width: '100%',
+    width: 'auto',
     flexShrink: 1,
     flexWrap: 'wrap',
     fontSize: 32,
@@ -38,7 +43,7 @@ const styles = StyleSheet.create({
   taskDate: {
     fontSize: 26,
     fontWeight: typography.bold,
-    color: '#BEF264',
+    color: colors.accentCyan,
     letterSpacing: -0.5,
     textShadowColor: 'rgba(190,242,100,0.4)',
     textShadowOffset: { width: 0, height: 0 },
@@ -47,7 +52,7 @@ const styles = StyleSheet.create({
   taskDateOrdinal: {
     fontSize: 11,
     fontWeight: typography.bold,
-    color: '#BEF264',
+    color: colors.accentCyan,
     lineHeight: 11,
     marginLeft: 1,
     position: 'relative',
@@ -56,7 +61,7 @@ const styles = StyleSheet.create({
   },
   inlineCreatorWrap: {
     marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
+    marginTop: 0,
     marginBottom: spacing.md,
     borderRadius: radius.lg,
     borderWidth: 1,
@@ -172,6 +177,22 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textAlign: 'center',
     marginTop: spacing.xxl,
+  },
+  loadMoreButton: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  loadMoreButtonText: {
+    fontSize: typography.sm,
+    color: colors.text,
+    fontWeight: typography.semibold,
   },
   searchResultRow: {
     flexDirection: 'row',
@@ -956,4 +977,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export { styles };
+export { makeStyles };

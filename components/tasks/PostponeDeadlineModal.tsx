@@ -1,8 +1,8 @@
 import { Modal, Platform, Pressable, Text, TouchableOpacity, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { TaskRowData } from '@/components/TaskRow';
-import { colors } from '@/lib/theme';
-import { styles } from './styles';
+import { useTheme } from '@/lib/ThemeContext';
+import { makeStyles } from './styles';
 
 interface PostponeDeadlineModalProps {
   task: TaskRowData | null;
@@ -23,6 +23,8 @@ export function PostponeDeadlineModal({
   onAndroidTimeChange,
   onConfirm,
 }: PostponeDeadlineModalProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <Modal
       visible={task !== null}

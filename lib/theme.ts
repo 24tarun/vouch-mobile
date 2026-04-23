@@ -1,28 +1,24 @@
-// Dark theme — exact match to vouch-web's slate dark-mode palette
-// Web body background: #020617 (slate-950)
-// Web uses Tailwind slate-* throughout: slate-900=#0F172A, slate-800=#1E293B, etc.
+export const darkColors = {
+  // Backgrounds
+  bg: '#020617',
+  surface: '#0F172A',
+  surface2: '#1E293B',
 
-export const colors = {
-  // Backgrounds — slate-950 / slate-900 / slate-800
-  bg: '#020617',          // slate-950: web body background
-  surface: '#0F172A',     // slate-900: card / sheet surface
-  surface2: '#1E293B',    // slate-800: elevated surface (modals, popovers)
+  // Borders
+  border: '#1E293B',
+  borderStrong: '#334155',
 
-  // Borders — slate-800 / slate-700
-  border: '#1E293B',      // slate-800: default border
-  borderStrong: '#334155', // slate-700: stronger separator
-
-  // Text — slate-50 / slate-400 / slate-600
-  text: '#F8FAFC',        // slate-50: primary text
-  textMuted: '#94A3B8',   // slate-400: secondary / placeholder text
-  textSubtle: '#475569',  // slate-600: disabled / very muted
+  // Text
+  text: '#F8FAFC',
+  textMuted: '#94A3B8',
+  textSubtle: '#475569',
 
   // Interactive
-  primary: '#FFFFFF',     // white primary button
-  primaryFg: '#020617',   // slate-950 for contrast on white
-  accentCyan: '#00D9FF',  // signature Vouch cyan (unchanged)
+  primary: '#FFFFFF',
+  primaryFg: '#020617',
+  accentCyan: '#00D9FF',
 
-  // Inputs — slate-900 bg, slate-700 border
+  // Inputs
   inputBg: '#0F172A',
   inputBorder: '#334155',
   inputBorderFocus: '#475569',
@@ -36,10 +32,54 @@ export const colors = {
   warning: '#F59E0B',
 
   // Tab bar
-  tabBar: '#020617',      // slate-950: same as bg
+  tabBar: '#020617',
   tabActive: '#FFFFFF',
-  tabInactive: '#475569', // slate-600
+  tabInactive: '#475569',
 } as const;
+
+export const lightColors = {
+  // Backgrounds
+  bg: '#F2F2F7',
+  surface: '#FFFFFF',
+  surface2: '#E5E5EA',
+
+  // Borders
+  border: '#D1D1D6',
+  borderStrong: '#AEAEB2',
+
+  // Text
+  text: '#1C1C1E',
+  textMuted: '#636366',
+  textSubtle: '#AEAEB2',
+
+  // Interactive
+  primary: '#1C1C1E',
+  primaryFg: '#FFFFFF',
+  accentCyan: '#00B8D9',
+
+  // Inputs
+  inputBg: '#FFFFFF',
+  inputBorder: '#D1D1D6',
+  inputBorderFocus: '#636366',
+  inputPlaceholder: '#AEAEB2',
+
+  // Semantic
+  destructive: '#DC2626',
+  destructiveMuted: '#FEE2E2',
+  success: '#16A34A',
+  successMuted: '#DCFCE7',
+  warning: '#D97706',
+
+  // Tab bar
+  tabBar: '#F2F2F7',
+  tabActive: '#1C1C1E',
+  tabInactive: '#AEAEB2',
+} as const;
+
+export type Colors = { [K in keyof typeof darkColors]: string };
+
+// Kept for backwards compatibility in static style files — prefer useTheme().colors in components
+export const colors = darkColors;
 
 export const spacing = {
   xs: 4,

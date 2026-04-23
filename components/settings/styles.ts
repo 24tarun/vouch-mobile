@@ -1,7 +1,7 @@
 import { StyleSheet } from 'react-native';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { type Colors, radius, spacing, typography } from '@/lib/theme';
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.bg,
@@ -429,4 +429,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export { styles };
+export { makeStyles };

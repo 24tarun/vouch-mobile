@@ -4,7 +4,8 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useQueryClient } from '@tanstack/react-query';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { type Colors, radius, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { StatusPill } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
 import { supabase } from '@/lib/supabase';
@@ -67,6 +68,8 @@ export function TaskRow({
   defaultPomoDurationMinutes = 25,
   onSubtaskComposerFocus,
 }: TaskRowProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const router = useRouter();
   const queryClient = useQueryClient();
   const {
@@ -668,7 +671,7 @@ export function TaskRow({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   container: {},
   containerExpanded: {
     backgroundColor: colors.surface,

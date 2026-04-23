@@ -11,9 +11,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { Button, TextButton } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { colors, spacing, typography } from '@/lib/theme';
+import { type Colors, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 export default function ForgotPasswordScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
@@ -97,7 +100,7 @@ export default function ForgotPasswordScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   kav: { flex: 1 },
   container: {

@@ -31,7 +31,8 @@ import { supabase } from '@/lib/supabase';
 import { purgeTaskProofForFinalState, removeTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
 import { stopTaskRepetitions, undoCompleteTask } from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { type Colors, radius, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { StatusPill, STATUS_COLOR } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
 import type { RecurrenceRule, Task, TaskEvent, TaskReminder } from '@/lib/types';
@@ -282,11 +283,11 @@ function buildTimelineEntries(event: TaskEvent): TimelineEntry[] {
   ];
 }
 
-function getTimelineEntryColor(entry: TimelineEntry): string {
+function getTimelineEntryColor(entry: TimelineEntry, textMuted: string): string {
   const styleKey = entry.tone
     ?? (entry.preserveStatus ? entry.status : (entry.status === 'MARKED_COMPLETE' ? 'AWAITING_VOUCHER' : entry.status))
     ?? 'NEUTRAL';
-  return STATUS_COLOR[styleKey] ?? colors.textMuted;
+  return STATUS_COLOR[styleKey] ?? textMuted;
 }
 
 function formatFocusedTime(totalSeconds: number): string {
@@ -370,6 +371,8 @@ function VideoProofPreview({
     p.loop = false;
     p.muted = false;
   });
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
@@ -415,6 +418,8 @@ function VideoProofPreview({
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function TaskDetailScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const { id, back } = useLocalSearchParams<{ id: string; back?: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -1501,7 +1506,7 @@ export default function TaskDetailScreen() {
               {timelineEntries.map((entry, idx) => {
                 const isRightSide = idx % 2 === 0;
                 const isLast = idx === timelineEntries.length - 1;
-                const entryColor = getTimelineEntryColor(entry);
+                const entryColor = getTimelineEntryColor(entry, colors.textMuted);
 
                 const pill = entry.renderAsPill === false ? (
                   <Text style={[styles.timelineEventLabel, { color: entryColor }]} numberOfLines={2}>
@@ -1625,6 +1630,8 @@ function ActionBtn({ allowed, token, label, icon, onPress, onDeny, containerStyl
   onDeny: () => void;
   containerStyle?: object | object[];
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <ShakeBtn
       allowed={allowed}
@@ -1653,6 +1660,8 @@ function InfoRow({
   value: string;
   iconSet?: 'feather' | 'ionicons';
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <View style={styles.infoRow}>
       {iconSet === 'ionicons' ? (
@@ -1667,10 +1676,14 @@ function InfoRow({
 }
 
 function Divider() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return <View style={styles.infoDivider} />;
 }
 
 function FlagPill({ icon, label, active }: { icon: string; label: string; active: boolean }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <View style={[styles.flagPill, active && styles.flagPillActive]}>
       <Feather name={icon as any} size={12} color={active ? colors.success : colors.textMuted} />
@@ -1681,7 +1694,7 @@ function FlagPill({ icon, label, active }: { icon: string; label: string; active
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
   scroll: { flex: 1 },

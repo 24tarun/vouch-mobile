@@ -10,7 +10,8 @@ import { supabase } from '@/lib/supabase';
 import { signInWithApple, signInWithGoogle } from '@/lib/auth-social';
 import { Button, TextButton } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { colors, spacing, typography } from '@/lib/theme';
+import { type Colors, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { AuthScreenShell } from '@/components/auth/AuthScreenShell';
 import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
 
@@ -32,6 +33,8 @@ async function resolveEmail(input: string): Promise<{ email: string; error: stri
 }
 
 export default function SignInScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const router = useRouter();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -175,7 +178,7 @@ export default function SignInScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   form: {
     gap: spacing.md,
   },

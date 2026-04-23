@@ -11,7 +11,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { colors, spacing, typography } from '@/lib/theme';
+import { type Colors, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { PageHeader } from '@/components/PageHeader';
 import { useLedger } from '@/lib/hooks/useLedger';
@@ -78,7 +79,7 @@ function formatCurrency(cents: number, currency: CurrencyCode): string {
   return `${currencySymbol(currency)}${(Math.abs(cents) / 100).toFixed(2)}`;
 }
 
-function badgeForKind(kind: LedgerEntryKind): { label: string; fg: string; bg: string } {
+function badgeForKind(kind: LedgerEntryKind, colors: Colors): { label: string; fg: string; bg: string } {
   switch (kind) {
     case 'failure':
       return { label: 'MISSED', fg: '#EF4444', bg: 'rgba(239,68,68,0.18)' };
@@ -127,6 +128,8 @@ function Metric({
   value: string;
   color: string;
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <View style={styles.metric}>
       <Text style={styles.metricLabel}>{label}</Text>
@@ -142,8 +145,10 @@ function LedgerEntryRow({
   entry: LedgerEntry;
   currency: CurrencyCode;
 }) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const router = useRouter();
-  const badge = badgeForKind(entry.kind);
+  const badge = badgeForKind(entry.kind, colors);
   const reversal = isReversal(entry.kind, entry.amountCents);
 
   function handlePress() {
@@ -192,6 +197,8 @@ function LedgerEntryRow({
 }
 
 export default function LedgerScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const { user, profile } = useAuth();
   const currency = useMemo(() => resolveCurrency(profile?.currency), [profile?.currency]);
   const ledger = useLedger(user?.id);
@@ -368,7 +375,7 @@ export default function LedgerScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.bg,

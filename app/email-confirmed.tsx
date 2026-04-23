@@ -1,8 +1,11 @@
 import { Linking, StyleSheet, Text, View } from 'react-native';
 import { OPEN_APP_SIGN_IN_URL, WEBSITE_URL } from '@/lib/auth-urls';
-import { colors, spacing, typography } from '@/lib/theme';
+import { type Colors, spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 export default function EmailConfirmedScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Your email has been verified</Text>
@@ -19,7 +22,7 @@ export default function EmailConfirmedScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg,

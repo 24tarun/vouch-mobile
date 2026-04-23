@@ -16,7 +16,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import ConfettiCannon from 'react-native-confetti-cannon';
 import Toast from 'react-native-toast-message';
 import { spacing } from '@/lib/theme';
-import { styles } from '@/components/tasks/styles';
+import { useTheme } from '@/lib/ThemeContext';
+import { makeStyles } from '@/components/tasks/styles';
 import {
   getTodayParts,
   sortDraftReminders,
@@ -29,7 +30,7 @@ import {
   type RecurrenceType,
 } from '@/components/tasks/types';
 import { TaskTopBar } from '@/components/tasks/TaskTopBar';
-import { TaskContent } from '@/components/tasks/TaskContent';
+import { TaskContent, type TasksSegment } from '@/components/tasks/TaskContent';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
 import { VoucherPickerModal } from '@/components/tasks/VoucherPickerModal';
 import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
@@ -95,6 +96,8 @@ function formatTimeUntilDeadline(deadlineIso: string, now: Date = new Date()): s
 }
 
 export default function TasksScreen() {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const { profile: authProfile, user } = useAuth();
   const queryClient = useQueryClient();
   const rootRef = useRef<View | null>(null);
@@ -112,6 +115,7 @@ export default function TasksScreen() {
   } = useTasks(sortMode);
   const [refreshing, setRefreshing] = useState(false);
   const [creatorExpanded, setCreatorExpanded] = useState(false);
+  const [selectedSegment, setSelectedSegment] = useState<TasksSegment>('active');
   const expandAnim = useRef(new Animated.Value(0)).current;
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -310,6 +314,8 @@ export default function TasksScreen() {
     () => pastTasks.filter((task) => !optimisticallyCompletingTaskIds.includes(task.id)),
     [pastTasks, optimisticallyCompletingTaskIds],
   );
+  const activeCount = mergedDueSoonTasks.length;
+  const futureCount = mergedFutureTasks.length;
 
   useEffect(() => {
     if (optimisticTasks.length === 0) return;
@@ -907,7 +913,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
 
       refetchTasks();
       void syncLocalReminderNotificationsAsync(currentUserId);
-    } catch (error: any) {
+    } catch {
       setOptimisticTasks((prev) => prev.filter((task) => (
         task.id !== optimisticTaskId && task.id !== createdTaskId
       )));
@@ -1378,6 +1384,10 @@ function updateCustomReminderDatePart(dateValue: Date) {
           <TaskTopBar
             displayName={displayName}
             todayParts={todayParts}
+            selectedSegment={selectedSegment}
+            onChangeSegment={setSelectedSegment}
+            activeCount={activeCount}
+            futureCount={futureCount}
             creatorAnchorRef={creatorAnchorRef}
             sortButtonRef={sortButtonRef}
             searchInputRef={searchInputRef}
@@ -1389,6 +1399,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
             openSortMenu={openSortMenu}
           />
         )}
+        selectedSegment={selectedSegment}
         isSearchActive={isSearchActive}
         searchLoading={searchLoading}
         searchError={searchError}

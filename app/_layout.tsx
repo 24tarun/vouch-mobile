@@ -10,7 +10,8 @@ import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import Toast, { BaseToast, type ToastConfig, type ToastConfigParams } from 'react-native-toast-message';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
-import { colors, radius, spacing, typography } from '@/lib/theme';
+import { radius, spacing, typography } from '@/lib/theme';
+import { ThemeProvider, useTheme } from '@/lib/ThemeContext';
 import {
   clearLocalReminderNotificationsAsync,
   getTaskIdFromNotificationResponse,
@@ -218,20 +219,29 @@ function AuthGuard() {
   return <Slot />;
 }
 
+function ThemedRoot() {
+  const { colors, isDark } = useTheme();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <AuthGuard />
+      <Toast config={toastConfig} />
+    </View>
+  );
+}
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={styles.gestureRoot}>
       <SafeAreaProvider>
         <AppQueryProvider>
-          <AuthProvider>
-            <PomodoroProvider>
-              <View style={styles.root}>
-                <StatusBar style="light" />
-                <AuthGuard />
-                <Toast config={toastConfig} />
-              </View>
-            </PomodoroProvider>
-          </AuthProvider>
+          <ThemeProvider>
+            <AuthProvider>
+              <PomodoroProvider>
+                <ThemedRoot />
+              </PomodoroProvider>
+            </AuthProvider>
+          </ThemeProvider>
         </AppQueryProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
@@ -241,9 +251,5 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   gestureRoot: {
     flex: 1,
-  },
-  root: {
-    flex: 1,
-    backgroundColor: colors.bg,
   },
 });

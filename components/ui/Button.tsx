@@ -6,7 +6,8 @@ import {
   TouchableOpacity,
   TouchableOpacityProps,
 } from 'react-native';
-import { colors, radius, typography } from '@/lib/theme';
+import { radius, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 type Variant = 'primary' | 'ghost' | 'destructive';
 
@@ -26,7 +27,20 @@ export function Button({
   style,
   ...rest
 }: ButtonProps) {
+  const { colors } = useTheme();
   const isDisabled = disabled || loading;
+
+  const variantStyle = {
+    primary: { backgroundColor: colors.primary },
+    ghost: { backgroundColor: 'transparent' as const, borderWidth: 1, borderColor: colors.border },
+    destructive: { backgroundColor: colors.destructive },
+  }[variant];
+
+  const labelColor = {
+    primary: colors.primaryFg,
+    ghost: colors.text,
+    destructive: '#FFFFFF',
+  }[variant];
 
   return (
     <TouchableOpacity
@@ -37,7 +51,7 @@ export function Button({
       accessibilityState={{ disabled: !!isDisabled, busy: !!loading }}
       style={[
         styles.base,
-        styles[variant],
+        variantStyle,
         fullWidth && styles.fullWidth,
         isDisabled && styles.disabled,
         style,
@@ -50,7 +64,7 @@ export function Button({
           size="small"
         />
       ) : (
-        <Text style={[styles.label, styles[`${variant}Label`]]}>{label}</Text>
+        <Text style={[styles.label, { color: labelColor }]}>{label}</Text>
       )}
     </TouchableOpacity>
   );
@@ -64,6 +78,7 @@ interface TextButtonProps {
 }
 
 export function TextButton({ label, onPress, muted = false }: TextButtonProps) {
+  const { colors } = useTheme();
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -72,7 +87,7 @@ export function TextButton({ label, onPress, muted = false }: TextButtonProps) {
       accessibilityLabel={label}
       style={styles.textButton}
     >
-      <Text style={[styles.textLink, muted && styles.textLinkMuted]}>{label}</Text>
+      <Text style={[styles.textLink, { color: muted ? colors.textMuted : colors.text }]}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -88,42 +103,14 @@ const styles = StyleSheet.create({
   fullWidth: {
     width: '100%',
   },
-
-  // Variants
-  primary: {
-    backgroundColor: colors.primary,
-  },
-  ghost: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  destructive: {
-    backgroundColor: colors.destructive,
-  },
-
-  // Disabled
   disabled: {
     opacity: 0.4,
   },
-
-  // Labels
   label: {
     fontSize: typography.base,
     fontWeight: typography.semibold,
     letterSpacing: 0.1,
   },
-  primaryLabel: {
-    color: colors.primaryFg,
-  },
-  ghostLabel: {
-    color: colors.text,
-  },
-  destructiveLabel: {
-    color: '#FFFFFF',
-  },
-
-  // Text link — 44pt touch target per HIG
   textButton: {
     minHeight: 44,
     alignItems: 'center',
@@ -133,9 +120,5 @@ const styles = StyleSheet.create({
   textLink: {
     fontSize: typography.sm,
     fontWeight: typography.medium,
-    color: colors.text,
-  },
-  textLinkMuted: {
-    color: colors.textMuted,
   },
 });

@@ -7,14 +7,14 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { colors } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import {
   type IncomingFriendRequest,
   type OutgoingFriendRequest,
   type SearchCandidate,
   type UserSummary,
 } from '@/lib/settings/relationships';
-import { styles } from './styles';
+import { makeStyles } from './styles';
 
 interface FriendsSectionProps {
   friendSearchQuery: string;
@@ -55,6 +55,8 @@ export function FriendsSection({
   onWithdrawFriendRequest,
   onRemoveFriend,
 }: FriendsSectionProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const isSearchActive = friendSearchQuery.trim().length > 0;
 
   return (
@@ -86,9 +88,7 @@ export function FriendsSection({
                 <Text style={styles.savingText}>Searching...</Text>
               ) : friendSearchError ? (
                 <Text style={styles.errorText}>{friendSearchError}</Text>
-              ) : friendSearchResults.length === 0 ? (
-                <Text style={styles.toggleSub}>No matching users found.</Text>
-              ) : (
+              ) : friendSearchResults.length === 0 ? null : (
                 friendSearchResults.map((candidate) => {
                   const sendKey = `send:${candidate.id}`;
                   const blockKey = `search:${candidate.id}:block`;
@@ -158,9 +158,6 @@ export function FriendsSection({
           {!isSearchActive && relationshipsError ? <Text style={styles.errorText}>{relationshipsError}</Text> : null}
           {!isSearchActive && relationshipsLoading ? <Text style={styles.savingText}>Loading friends...</Text> : null}
 
-          {!isSearchActive && !relationshipsLoading && incomingRequests.length === 0 && outgoingRequests.length === 0 && friends.length === 0 ? (
-            <Text style={styles.toggleSub}>No friends yet.</Text>
-          ) : null}
 
           {!isSearchActive && !relationshipsLoading ? (
             <View style={styles.friendsList}>

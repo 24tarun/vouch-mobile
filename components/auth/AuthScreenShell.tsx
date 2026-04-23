@@ -8,7 +8,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, spacing, typography } from '@/lib/theme';
+import { spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 interface AuthScreenShellProps {
   tagline: string;
@@ -16,8 +17,9 @@ interface AuthScreenShellProps {
 }
 
 export function AuthScreenShell({ tagline, children }: AuthScreenShellProps) {
+  const { colors } = useTheme();
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.bg }]} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
         style={styles.kav}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -28,8 +30,8 @@ export function AuthScreenShell({ tagline, children }: AuthScreenShellProps) {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.header}>
-            <Text style={styles.wordmark}>vouch</Text>
-            <Text style={styles.tagline}>{tagline}</Text>
+            <Text style={[styles.wordmark, { color: colors.text }]}>vouch</Text>
+            <Text style={[styles.tagline, { color: colors.textMuted }]}>{tagline}</Text>
           </View>
           {children}
         </ScrollView>
@@ -41,7 +43,6 @@ export function AuthScreenShell({ tagline, children }: AuthScreenShellProps) {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: colors.bg,
   },
   kav: {
     flex: 1,
@@ -58,12 +59,10 @@ const styles = StyleSheet.create({
   wordmark: {
     fontSize: typography.xxxl,
     fontWeight: typography.bold,
-    color: colors.text,
     letterSpacing: -1.5,
   },
   tagline: {
     fontSize: typography.sm,
-    color: colors.textMuted,
     marginTop: 6,
     letterSpacing: 0.2,
   },

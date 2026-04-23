@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, radius } from '@/lib/theme';
+import { radius } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 // Labels — match vouch-web's formatTaskStatusLabel exactly
 const STATUS_LABEL: Record<string, string> = {
@@ -174,6 +175,7 @@ export function StatusPill({
   const styleKey = tone ?? resolvedStatus;
   const style = STATUS_STYLE[styleKey];
   const resolvedLabel = label ?? STATUS_LABEL[resolvedStatus] ?? formatFallbackLabel(resolvedStatus);
+  const { colors } = useTheme();
   const isLarge = size === 'large';
 
   if (!style) {

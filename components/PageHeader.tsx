@@ -1,14 +1,16 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, spacing, typography } from '@/lib/theme';
+import { spacing, typography } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 
 interface PageHeaderProps {
   title: string;
 }
 
 export function PageHeader({ title }: PageHeaderProps) {
+  const { colors } = useTheme();
   return (
-    <View style={styles.header}>
-      <Text style={styles.title} numberOfLines={1}>
+    <View style={[styles.header, { borderBottomColor: colors.border }]}>
+      <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
         {title}
       </Text>
     </View>
@@ -21,12 +23,10 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
   },
   title: {
     fontSize: typography.xl,
     fontWeight: typography.bold,
-    color: colors.text,
     letterSpacing: -0.5,
   },
 });

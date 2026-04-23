@@ -50,10 +50,25 @@ export interface VouchHistoryTaskRow {
 
 const HISTORY_PAGE_SIZE = 10;
 
+function getActiveVisibilityWindow(reference: Date = new Date()): { startOfTodayMs: number; startOfDayAfterTomorrowMs: number } {
+  const startOfToday = new Date(reference);
+  startOfToday.setHours(0, 0, 0, 0);
+  const startOfDayAfterTomorrow = new Date(startOfToday);
+  startOfDayAfterTomorrow.setDate(startOfDayAfterTomorrow.getDate() + 2);
+  return {
+    startOfTodayMs: startOfToday.getTime(),
+    startOfDayAfterTomorrowMs: startOfDayAfterTomorrow.getTime(),
+  };
+}
+
 function canVoucherSeeTask(task: VoucherTaskRow): boolean {
   if (VOUCHER_ACTIONABLE_STATUSES.includes(task.status)) return true;
   if (VOUCHER_ACTIVE_VIEW_STATUSES.includes(task.status)) {
-    return Boolean(task.user?.voucher_can_view_active_tasks);
+    if (!task.user?.voucher_can_view_active_tasks) return false;
+    const deadlineMs = Date.parse(task.deadline);
+    if (Number.isNaN(deadlineMs)) return false;
+    const { startOfTodayMs, startOfDayAfterTomorrowMs } = getActiveVisibilityWindow();
+    return deadlineMs >= startOfTodayMs && deadlineMs < startOfDayAfterTomorrowMs;
   }
   return true;
 }

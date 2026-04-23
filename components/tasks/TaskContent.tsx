@@ -3,14 +3,16 @@ import { Platform, RefreshControl, ScrollView, Text, TouchableOpacity, View } fr
 import { Feather } from '@expo/vector-icons';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { colors } from '@/lib/theme';
-import { styles } from './styles';
+import { useTheme } from '@/lib/ThemeContext';
+import { makeStyles } from './styles';
 import { StatusPill } from '@/components/StatusPill';
 import { TaskRow, type TaskRowData } from '@/components/TaskRow';
-import { CollapsibleSection } from '@/components/CollapsibleSection';
+
+export type TasksSegment = 'active' | 'future' | 'past';
 
 interface TaskContentProps {
   header?: ReactNode;
+  selectedSegment: TasksSegment;
   isSearchActive: boolean;
   searchLoading: boolean;
   searchError: string | null;
@@ -32,11 +34,13 @@ interface TaskContentProps {
   scrollRef?: RefObject<ScrollView | null>;
   onScrollOffsetChange?: (offsetY: number) => void;
   keyboardBottomInset?: number;
+  contentBottomInset?: number;
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
 }
 
 export function TaskContent({
   header,
+  selectedSegment,
   isSearchActive,
   searchLoading,
   searchError,
@@ -58,9 +62,25 @@ export function TaskContent({
   scrollRef,
   onScrollOffsetChange,
   keyboardBottomInset = 0,
+  contentBottomInset = 24,
   onSubtaskComposerFocus,
 }: TaskContentProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const router = useRouter();
+  const selectedTasks = selectedSegment === 'active'
+    ? dueSoonTasks
+    : selectedSegment === 'future'
+      ? futureTasks
+      : pastTasks;
+  const emptyLabel = selectedSegment === 'active'
+    ? 'No active tasks.'
+    : selectedSegment === 'future'
+      ? 'No future tasks.'
+      : 'No past tasks.';
+  const computedBottomInset = keyboardBottomInset > 0
+    ? keyboardBottomInset + 24
+    : contentBottomInset;
 
   return (
     <ScrollView
@@ -68,7 +88,7 @@ export function TaskContent({
       style={styles.body}
       contentContainerStyle={[
         styles.taskList,
-        keyboardBottomInset > 0 && { paddingBottom: keyboardBottomInset + 24 },
+        { paddingBottom: computedBottomInset },
       ]}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
@@ -118,7 +138,9 @@ export function TaskContent({
         <Text style={styles.placeholder}>Your tasks will appear here.</Text>
       ) : (
         <>
-          {dueSoonTasks.map((task) => (
+          {selectedTasks.length === 0 ? (
+            <Text style={styles.placeholder}>{emptyLabel}</Text>
+          ) : selectedTasks.map((task) => (
             <TaskRow
               key={task.id}
               task={task}
@@ -131,31 +153,18 @@ export function TaskContent({
               onSubtaskComposerFocus={onSubtaskComposerFocus}
             />
           ))}
-          <CollapsibleSection
-            title="Future"
-            tasks={futureTasks}
-            onComplete={onComplete}
-            onProofPicked={onProofPicked}
-            onProofRemoved={onProofRemoved}
-            onPostpone={onPostpone}
-            onDelete={onDelete}
-            defaultPomoDurationMinutes={defaultPomoDurationMinutes}
-            onSubtaskComposerFocus={onSubtaskComposerFocus}
-          />
-          <CollapsibleSection
-            title="Past"
-            tasks={pastTasks}
-            hasMore={hasMorePast}
-            loadingMore={loadingMore}
-            onLoadMore={loadMorePastTasks}
-            onComplete={onComplete}
-            onProofPicked={onProofPicked}
-            onProofRemoved={onProofRemoved}
-            onPostpone={onPostpone}
-            onDelete={onDelete}
-            defaultPomoDurationMinutes={defaultPomoDurationMinutes}
-            onSubtaskComposerFocus={onSubtaskComposerFocus}
-          />
+          {selectedSegment === 'past' && hasMorePast ? (
+            <TouchableOpacity
+              style={styles.loadMoreButton}
+              activeOpacity={0.8}
+              onPress={loadMorePastTasks}
+              disabled={loadingMore}
+            >
+              <Text style={styles.loadMoreButtonText}>
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </>
       )}
     </ScrollView>

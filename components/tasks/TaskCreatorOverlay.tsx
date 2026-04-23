@@ -16,7 +16,8 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
-import { colors, radius } from '@/lib/theme';
+import { radius } from '@/lib/theme';
+import { useTheme } from '@/lib/ThemeContext';
 import { titleHasDeadlineToken } from '@/lib/task-title-parser';
 import {
   formatReminderDateChip,
@@ -30,7 +31,7 @@ import {
   WEEKDAY_ORDER,
   WEEKDAY_SHORT,
 } from './types';
-import { styles } from './styles';
+import { makeStyles } from './styles';
 
 interface CreatorAnchor {
   x: number;
@@ -170,6 +171,8 @@ export function TaskCreatorOverlay({
   eventSyncEnabled,
   setEventSyncEnabled,
 }: TaskCreatorOverlayProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const hasDeadlineToken = useMemo(() => titleHasDeadlineToken(title), [title]);
   const footerBottomOffset = keyboardVisible ? keyboardHeight : 0;
 

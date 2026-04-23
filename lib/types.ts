@@ -79,9 +79,11 @@ export interface Profile {
   default_event_duration_minutes: number;
   default_failure_cost_cents: number;
   default_voucher_id: string | null;
+  default_requires_proof_for_all_tasks: boolean;
   strict_pomo_enabled: boolean;
   deadline_one_hour_warning_enabled: boolean;
   deadline_final_warning_enabled: boolean;
+  notification_sound_key: 'default' | 'tone_01' | 'tone_02' | 'tone_03';
   voucher_can_view_active_tasks: boolean;
   mobile_notifications_enabled: boolean;
   hide_tips: boolean;

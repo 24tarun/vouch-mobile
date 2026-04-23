@@ -111,7 +111,7 @@ export function DayStrip({ item }: { item: CommitmentListItem }) {
         contentContainerStyle={styles.dayStripScroll}
       >
         {days.map((date, index) => {
-          const status = (statusByDate.get(date) ?? (date > today ? 'future' : 'future')) as DayStatus;
+          const status = (statusByDate.get(date) ?? (date > today ? 'future' : 'pending')) as DayStatus;
           const parsed = parseDateOnly(date);
           const monthLabel = parsed.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' }).toUpperCase();
           const dayLabel = String(parsed.getDate());
@@ -161,6 +161,30 @@ export interface LinkedTask {
   type: 'task' | 'rule';
   failureCostCents: number;
   deadline?: string;
+}
+
+type PickerTaskItem = {
+  id: string;
+  title: string;
+  deadline?: string;
+  type: 'task';
+  failureCostCents: number;
+};
+
+type PickerRuleItem = {
+  id: string;
+  title: string;
+  type: 'rule';
+  failureCostCents: number;
+};
+
+type PickerItem = PickerTaskItem | PickerRuleItem;
+
+function deadlineToLocalDateOnly(deadline: string | undefined): string | null {
+  if (!deadline) return null;
+  const parsed = new Date(deadline);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return toDateOnly(parsed);
 }
 
 export function LinkedTaskRow({
@@ -291,6 +315,7 @@ export function TaskPickerModal({
   startDate,
   endDate,
   excludedTaskIds = [],
+  excludedRuleIds = [],
   onClose,
   onLinked,
 }: {
@@ -298,14 +323,13 @@ export function TaskPickerModal({
   startDate: string;
   endDate: string;
   excludedTaskIds?: string[];
+  excludedRuleIds?: string[];
   onClose: () => void;
   onLinked: (linked: LinkedTask) => void;
 }) {
   const { colors } = useTheme();
   const styles = makeSharedCommitmentStyles(colors);
-  const [items, setItems] = useState<
-    ({ id: string; title: string; deadline?: string; type: 'task'; failureCostCents: number } | { id: string; title: string; type: 'rule'; failureCostCents: number })[]
-  >([]);
+  const [items, setItems] = useState<PickerItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [linking, setLinking] = useState<string | null>(null);
@@ -313,43 +337,65 @@ export function TaskPickerModal({
   useEffect(() => {
     let cancelled = false;
     async function fetchItems() {
-      const { data: { session } } = await supabase.auth.getSession();
-      const userId = session?.user?.id;
-      if (!userId) return;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const userId = session?.user?.id;
+        if (!userId) {
+          if (!cancelled) {
+            setItems([]);
+          }
+          return;
+        }
 
-      const [tasksRes, rulesRes] = await Promise.all([
-        supabase
-          .from('tasks')
-          .select('id, title, deadline, failure_cost_cents')
-          .eq('user_id', userId)
-          .neq('status', 'DELETED')
-          .gte('deadline', `${startDate}T00:00:00.000Z`)
-          .lte('deadline', `${endDate}T23:59:59.999Z`)
-          .order('deadline', { ascending: true }),
-        supabase
-          .from('recurrence_rules')
-          .select('id, title, failure_cost_cents')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false }),
-      ]);
-
-      if (!cancelled) {
-        setItems([
-          ...((tasksRes.data as any[] ?? []).map((t) => ({
-            id: t.id,
-            title: t.title,
-            deadline: t.deadline,
-            type: 'task' as const,
-            failureCostCents: Number(t.failure_cost_cents ?? 0),
-          }))),
-          ...((rulesRes.data as any[] ?? []).map((r) => ({
-            id: r.id,
-            title: r.title,
-            type: 'rule' as const,
-            failureCostCents: Number(r.failure_cost_cents ?? 0),
-          }))),
+        const [tasksRes, rulesRes] = await Promise.all([
+          supabase
+            .from('tasks')
+            .select('id, title, deadline, failure_cost_cents')
+            .eq('user_id', userId)
+            .in('status', ['ACTIVE', 'POSTPONED'])
+            .order('deadline', { ascending: true }),
+          supabase
+            .from('recurrence_rules')
+            .select('id, title, failure_cost_cents')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false }),
         ]);
-        setLoading(false);
+
+        if (tasksRes.error) {
+          Alert.alert('Error', tasksRes.error.message);
+          if (!cancelled) setItems([]);
+          return;
+        }
+        if (rulesRes.error) {
+          Alert.alert('Error', rulesRes.error.message);
+          if (!cancelled) setItems([]);
+          return;
+        }
+
+        const taskItems = ((tasksRes.data as any[] ?? []).map((t) => ({
+          id: t.id as string,
+          title: t.title as string,
+          deadline: t.deadline as string,
+          type: 'task' as const,
+          failureCostCents: Number(t.failure_cost_cents ?? 0),
+        })))
+          .filter((task) => {
+            const localDate = deadlineToLocalDateOnly(task.deadline);
+            return localDate !== null && localDate >= startDate && localDate <= endDate;
+          });
+
+        const ruleItems = (rulesRes.data as any[] ?? []).map((r) => ({
+          id: r.id as string,
+          title: r.title as string,
+          type: 'rule' as const,
+          failureCostCents: Number(r.failure_cost_cents ?? 0),
+        }));
+
+        if (!cancelled) {
+          setItems([...taskItems, ...ruleItems]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
     fetchItems();
@@ -358,15 +404,57 @@ export function TaskPickerModal({
 
   const filtered = items.filter((item) => {
     if (item.type === 'task' && excludedTaskIds.includes(item.id)) return false;
+    if (item.type === 'rule' && excludedRuleIds.includes(item.id)) return false;
     return item.title.toLowerCase().includes(search.toLowerCase());
   });
 
   async function linkItem(item: { id: string; title: string; type: 'task' | 'rule'; failureCostCents: number }) {
-    setLinking(item.id);
+    const linkKey = `${item.type}:${item.id}`;
+    if (
+      (item.type === 'task' && excludedTaskIds.includes(item.id))
+      || (item.type === 'rule' && excludedRuleIds.includes(item.id))
+      || linking === linkKey
+    ) {
+      return;
+    }
+
+    setLinking(linkKey);
     try {
       if (!commitmentId) {
         onLinked({
           linkId: item.id,
+          sourceId: item.id,
+          title: item.title,
+          type: item.type,
+          failureCostCents: item.failureCostCents,
+        });
+        return;
+      }
+
+      const existingQuery = item.type === 'task'
+        ? supabase
+            .from('commitment_task_links')
+            .select('id')
+            .eq('commitment_id', commitmentId)
+            .eq('task_id', item.id)
+            .is('recurrence_rule_id', null)
+            .maybeSingle()
+        : supabase
+            .from('commitment_task_links')
+            .select('id')
+            .eq('commitment_id', commitmentId)
+            .eq('recurrence_rule_id', item.id)
+            .is('task_id', null)
+            .maybeSingle();
+
+      const { data: existingLink, error: existingLinkError } = await existingQuery;
+      if (existingLinkError) {
+        Alert.alert('Error', existingLinkError.message);
+        return;
+      }
+      if (existingLink?.id) {
+        onLinked({
+          linkId: existingLink.id,
           sourceId: item.id,
           title: item.title,
           type: item.type,
@@ -427,7 +515,7 @@ export function TaskPickerModal({
         ) : (
           <FlatList
             data={filtered}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => `${item.type}:${item.id}`}
             contentContainerStyle={{ paddingBottom: spacing.lg }}
             renderItem={({ item }) => (
               <TouchableOpacity style={styles.pickerRow} onPress={() => linkItem(item)} disabled={!!linking}>
@@ -439,7 +527,7 @@ export function TaskPickerModal({
                       : 'Recurring series'}
                   </Text>
                 </View>
-                {linking === item.id ? (
+                {linking === `${item.type}:${item.id}` ? (
                   <ActivityIndicator size="small" color={colors.accentCyan} />
                 ) : (
                   <Feather name="plus" size={18} color={colors.accentCyan} />
@@ -540,4 +628,3 @@ const makeSharedCommitmentStyles = (colors: Colors) => StyleSheet.create({
   pickerRowTitle: { fontSize: 18, color: colors.text },
   pickerRowSub: { fontSize: typography.xs, color: colors.textMuted, marginTop: 2 },
 });
-

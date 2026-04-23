@@ -3,17 +3,10 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import type { TodayParts } from './types';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
-
-type TasksSegment = 'active' | 'future' | 'past';
 
 interface TaskTopBarProps {
   displayName: string;
   todayParts: TodayParts;
-  selectedSegment: TasksSegment;
-  onChangeSegment: (segment: TasksSegment) => void;
-  activeCount: number;
-  futureCount: number;
   creatorAnchorRef: React.RefObject<View | null>;
   sortButtonRef: React.RefObject<View | null>;
   searchInputRef: React.RefObject<TextInput | null>;
@@ -25,21 +18,9 @@ interface TaskTopBarProps {
   openSortMenu: () => void;
 }
 
-function OrdinalSuffix({ ordinal }: { ordinal: string }): React.ReactElement {
-  return (
-    <Text style={{ fontSize: 10, lineHeight: 12, marginBottom: 4, transform: [{ translateY: -2 }] }}>
-      {ordinal.toLowerCase()}
-    </Text>
-  );
-}
-
 export function TaskTopBar({
   displayName,
   todayParts,
-  selectedSegment,
-  onChangeSegment,
-  activeCount,
-  futureCount,
   creatorAnchorRef,
   sortButtonRef,
   searchInputRef,
@@ -59,24 +40,8 @@ export function TaskTopBar({
         <Text style={styles.taskGreeting}>Hello, {displayName}</Text>
         <View style={styles.taskDateRow}>
           <Text style={styles.taskDateIts}>It&apos;s</Text>
-          <Text style={styles.taskDate}>{todayParts.dayName} {todayParts.day}<OrdinalSuffix ordinal={todayParts.ordinal} /></Text>
-          <Text style={styles.taskDate}> {todayParts.monthName}.</Text>
+          <Text style={styles.taskDate}> {todayParts.dayName} {todayParts.day} {todayParts.monthName}</Text>
         </View>
-      </View>
-
-      <View style={styles.taskSegmenterInlineWrap}>
-        <SegmentedControl
-          items={[
-            { key: 'active', label: 'Active', badgeCount: activeCount, color: '#22C55E' },
-            { key: 'future', label: 'Future', badgeCount: futureCount, color: '#F97316' },
-            { key: 'past', label: 'Past', showBadge: false, color: '#EF4444' },
-          ]}
-          activeKey={selectedSegment}
-          onChange={(key) => onChangeSegment(key as TasksSegment)}
-          variant="traffic"
-          trafficOrientation="horizontal"
-          trafficStandalone
-        />
       </View>
 
       <View ref={creatorAnchorRef} collapsable={false} style={styles.inlineCreatorWrap}>

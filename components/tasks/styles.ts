@@ -9,13 +9,8 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   taskHeader: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
-    paddingBottom: 0,
+    paddingBottom: spacing.md,
     gap: spacing.xs,
-  },
-  taskSegmenterInlineWrap: {
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.lg,
-    marginBottom: 30,
   },
   taskGreeting: {
     width: 'auto',
@@ -61,7 +56,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   inlineCreatorWrap: {
     marginHorizontal: spacing.lg,
-    marginTop: 0,
+    marginTop: spacing.md,
     marginBottom: spacing.md,
     borderRadius: radius.lg,
     borderWidth: 1,
@@ -177,22 +172,6 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     color: colors.textMuted,
     textAlign: 'center',
     marginTop: spacing.xxl,
-  },
-  loadMoreButton: {
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.sm,
-  },
-  loadMoreButtonText: {
-    fontSize: typography.sm,
-    color: colors.text,
-    fontWeight: typography.semibold,
   },
   searchResultRow: {
     flexDirection: 'row',

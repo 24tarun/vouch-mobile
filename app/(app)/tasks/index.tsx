@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useQueryClient } from '@tanstack/react-query';
@@ -30,7 +31,7 @@ import {
   type RecurrenceType,
 } from '@/components/tasks/types';
 import { TaskTopBar } from '@/components/tasks/TaskTopBar';
-import { TaskContent, type TasksSegment } from '@/components/tasks/TaskContent';
+import { TaskContent } from '@/components/tasks/TaskContent';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
 import { VoucherPickerModal } from '@/components/tasks/VoucherPickerModal';
 import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
@@ -115,7 +116,6 @@ export default function TasksScreen() {
   } = useTasks(sortMode);
   const [refreshing, setRefreshing] = useState(false);
   const [creatorExpanded, setCreatorExpanded] = useState(false);
-  const [selectedSegment, setSelectedSegment] = useState<TasksSegment>('active');
   const expandAnim = useRef(new Animated.Value(0)).current;
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -161,6 +161,7 @@ export default function TasksScreen() {
 
   const { friends, currentUserId, profile, loading: friendsLoading, error: friendsError } = useFriends();
   const defaultPomoDurationMinutes = authProfile?.default_pomo_duration_minutes ?? 25;
+  const defaultRequiresProofForAllTasks = profile?.default_requires_proof_for_all_tasks ?? false;
 
   const resolveDefaultVoucherValue = useCallback((): string | null => {
     if (!profile) return null;
@@ -249,7 +250,7 @@ export default function TasksScreen() {
     setRecurrenceType('');
     setShowCustomRecurrenceDays(false);
     setRecurrenceDays([]);
-    setRequiresProof(false);
+    setRequiresProof(defaultRequiresProofForAllTasks);
     setEventSyncEnabled(false);
     setDraftSubtasks([]);
     setNewSubtaskDraft('');
@@ -272,7 +273,7 @@ export default function TasksScreen() {
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>('');
   const [showCustomRecurrenceDays, setShowCustomRecurrenceDays] = useState(false);
   const [recurrenceDays, setRecurrenceDays] = useState<number[]>([]);
-  const [requiresProof, setRequiresProof] = useState(false);
+  const [requiresProof, setRequiresProof] = useState(defaultRequiresProofForAllTasks);
   const [eventSyncEnabled, setEventSyncEnabled] = useState(false);
   const [draftSubtasks, setDraftSubtasks] = useState<DraftSubtask[]>([]);
   const [newSubtaskDraft, setNewSubtaskDraft] = useState('');
@@ -314,8 +315,15 @@ export default function TasksScreen() {
     () => pastTasks.filter((task) => !optimisticallyCompletingTaskIds.includes(task.id)),
     [pastTasks, optimisticallyCompletingTaskIds],
   );
-  const activeCount = mergedDueSoonTasks.length;
-  const futureCount = mergedFutureTasks.length;
+
+  // Safety net: realtime can miss events during reconnect / backgrounding.
+  // Refetching on focus guarantees the Past bucket reflects voucher
+  // decisions (ACCEPTED/DENIED) the moment the user lands back here.
+  useFocusEffect(
+    useCallback(() => {
+      refetchTasks();
+    }, [refetchTasks]),
+  );
 
   useEffect(() => {
     if (optimisticTasks.length === 0) return;
@@ -328,18 +336,31 @@ export default function TasksScreen() {
 
   useEffect(() => {
     if (optimisticallyCompletingTaskIds.length === 0) return;
-    const knownTaskIds = new Set([
-      ...dueSoonTasks.map((task) => task.id),
-      ...futureTasks.map((task) => task.id),
-      ...pastTasks.map((task) => task.id),
-      ...optimisticTasks.map((task) => task.id),
-    ]);
-
+    // Release the guard ONLY once the task has materialized in the past bucket
+    // (confirming the server committed the completion). Clearing earlier —
+    // e.g. the moment the optimistic removal leaves all buckets empty — lets a
+    // pending refetch that raced the write return the stale ACTIVE row and
+    // briefly "ghost" the task back into the list.
+    const pastIds = new Set(pastTasks.map((task) => task.id));
     setOptimisticallyCompletingTaskIds((prev) => {
-      const next = prev.filter((id) => knownTaskIds.has(id));
+      const next = prev.filter((id) => !pastIds.has(id));
       return next.length === prev.length ? prev : next;
     });
-  }, [dueSoonTasks, futureTasks, pastTasks, optimisticTasks, optimisticallyCompletingTaskIds.length]);
+  }, [pastTasks, optimisticallyCompletingTaskIds.length]);
+
+  // Safety net: if realtime/refetch never surfaces the task in past (dropped
+  // event, network drop), don't strand the guard forever. 6s is long enough
+  // that any legitimate refetch has returned and been reconciled.
+  useEffect(() => {
+    if (optimisticallyCompletingTaskIds.length === 0) return;
+    const idsAtSchedule = optimisticallyCompletingTaskIds;
+    const timeout = setTimeout(() => {
+      setOptimisticallyCompletingTaskIds((prev) =>
+        prev.filter((id) => !idsAtSchedule.includes(id)),
+      );
+    }, 6000);
+    return () => clearTimeout(timeout);
+  }, [optimisticallyCompletingTaskIds]);
 
   useEffect(() => {
     if (!isSearchActive) {
@@ -961,6 +982,11 @@ function updateCustomReminderDatePart(dateValue: Date) {
     }
   }, [profile, resolveDefaultVoucherValue]);
 
+  useEffect(() => {
+    if (creatorExpanded) return;
+    setRequiresProof(defaultRequiresProofForAllTasks);
+  }, [creatorExpanded, defaultRequiresProofForAllTasks]);
+
   const normalizedFriends = useMemo(
     () =>
       friends.map((friend) => ({
@@ -1384,10 +1410,6 @@ function updateCustomReminderDatePart(dateValue: Date) {
           <TaskTopBar
             displayName={displayName}
             todayParts={todayParts}
-            selectedSegment={selectedSegment}
-            onChangeSegment={setSelectedSegment}
-            activeCount={activeCount}
-            futureCount={futureCount}
             creatorAnchorRef={creatorAnchorRef}
             sortButtonRef={sortButtonRef}
             searchInputRef={searchInputRef}
@@ -1399,7 +1421,6 @@ function updateCustomReminderDatePart(dateValue: Date) {
             openSortMenu={openSortMenu}
           />
         )}
-        selectedSegment={selectedSegment}
         isSearchActive={isSearchActive}
         searchLoading={searchLoading}
         searchError={searchError}

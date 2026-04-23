@@ -18,6 +18,7 @@ interface UseFriendsResult {
     | 'currency'
     | 'default_failure_cost_cents'
     | 'default_voucher_id'
+    | 'default_requires_proof_for_all_tasks'
     | 'deadline_one_hour_warning_enabled'
     | 'deadline_final_warning_enabled'
   > | null;
@@ -49,6 +50,7 @@ export function useFriends(): UseFriendsResult {
           currency: profile.currency,
           default_failure_cost_cents: profile.default_failure_cost_cents,
           default_voucher_id: profile.default_voucher_id,
+          default_requires_proof_for_all_tasks: profile.default_requires_proof_for_all_tasks,
           deadline_one_hour_warning_enabled: profile.deadline_one_hour_warning_enabled,
           deadline_final_warning_enabled: profile.deadline_final_warning_enabled,
         }

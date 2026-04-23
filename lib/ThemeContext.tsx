@@ -26,9 +26,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>('system');
 
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY).then((stored) => {
-      if (stored === 'light' || stored === 'dark' || stored === 'system') {
-        setThemeState(stored);
+    AsyncStorage.getItem(STORAGE_KEY).then((storedTheme) => {
+      if (storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'system') {
+        setThemeState(storedTheme);
       }
     });
   }, []);

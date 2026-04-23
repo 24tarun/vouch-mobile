@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
@@ -8,7 +8,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
-import Toast, { BaseToast, type ToastConfig, type ToastConfigParams } from 'react-native-toast-message';
+import { Feather } from '@expo/vector-icons';
+import Toast, { type ToastConfig, type ToastConfigParams } from 'react-native-toast-message';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { radius, spacing, typography } from '@/lib/theme';
 import { ThemeProvider, useTheme } from '@/lib/ThemeContext';
@@ -23,28 +24,39 @@ import { AppQueryProvider } from '@/lib/query/client';
 
 void SplashScreen.preventAutoHideAsync().catch(() => {});
 
-const toastBaseStyle = {
-  width: 'auto' as const,
-  maxWidth: '88%' as const,
-  minHeight: 44,
-  borderLeftWidth: 0,
-  borderWidth: 1,
-  borderRadius: radius.md,
-  backgroundColor: '#0B1220EE',
-  alignSelf: 'flex-start' as const,
-  marginLeft: spacing.lg,
-};
+interface ThemedToastProps extends ToastConfigParams<any> {
+  tone: 'success' | 'error';
+  isDark: boolean;
+}
 
-function ProofSuccessToast({ isVisible, text1, onPress }: ToastConfigParams<any>) {
+function ThemedToast({
+  isVisible,
+  text1,
+  onPress,
+  tone,
+  isDark,
+}: ThemedToastProps) {
   const progress = useRef(new Animated.Value(0)).current;
+  const successFg = isDark ? '#86EFAC' : '#166534';
+  const errorFg = isDark ? '#FCA5A5' : '#991B1B';
+  const titleColor = tone === 'success' ? successFg : errorFg;
+  const iconName = tone === 'success' ? 'check-circle' : 'alert-circle';
+  const iconBg = tone === 'success'
+    ? (isDark ? 'rgba(34,197,94,0.18)' : 'rgba(22,163,74,0.12)')
+    : (isDark ? 'rgba(239,68,68,0.2)' : 'rgba(220,38,38,0.12)');
+  const backgroundColor = isDark ? 'rgba(15,23,42,0.96)' : 'rgba(255,255,255,0.97)';
+  const borderColor = tone === 'success'
+    ? (isDark ? 'rgba(34,197,94,0.55)' : 'rgba(22,163,74,0.38)')
+    : (isDark ? 'rgba(239,68,68,0.55)' : 'rgba(220,38,38,0.38)');
+  const bodyColor = isDark ? '#E2E8F0' : '#0F172A';
 
   useEffect(() => {
     if (isVisible) {
       Animated.spring(progress, {
         toValue: 1,
         useNativeDriver: true,
-        tension: 90,
-        friction: 11,
+        tension: 86,
+        friction: 10,
       }).start();
       return;
     }
@@ -60,27 +72,42 @@ function ProofSuccessToast({ isVisible, text1, onPress }: ToastConfigParams<any>
   return (
     <Animated.View
       style={[
-        toastBaseStyle,
         {
-          borderColor: '#22C55E55',
+          width: 'auto',
+          maxWidth: '90%',
+          minHeight: 54,
+          borderLeftWidth: 0,
+          borderWidth: 1,
+          borderRadius: radius.lg,
+          backgroundColor,
+          alignSelf: 'flex-start',
+          marginLeft: spacing.lg,
+          shadowColor: isDark ? '#020617' : '#0F172A',
+          shadowOffset: { width: 0, height: 7 },
+          shadowOpacity: isDark ? 0.55 : 0.18,
+          shadowRadius: 14,
+          elevation: 12,
+        },
+        {
+          borderColor,
           opacity: progress,
           transform: [
             {
               translateX: progress.interpolate({
                 inputRange: [0, 1],
-                outputRange: [28, 0],
+                outputRange: [22, 0],
               }),
             },
             {
               translateY: progress.interpolate({
                 inputRange: [0, 1],
-                outputRange: [6, 0],
+                outputRange: [8, 0],
               }),
             },
             {
               scale: progress.interpolate({
                 inputRange: [0, 1],
-                outputRange: [0.84, 1],
+                outputRange: [0.92, 1],
               }),
             },
           ],
@@ -89,8 +116,29 @@ function ProofSuccessToast({ isVisible, text1, onPress }: ToastConfigParams<any>
       pointerEvents="box-none"
       onTouchEnd={onPress}
     >
-      <View style={{ paddingHorizontal: spacing.md, paddingVertical: spacing.sm }}>
-        <Text style={{ color: '#E5E7EB', fontSize: typography.xs, fontWeight: typography.medium }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm }}>
+        <View
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: radius.full,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: iconBg,
+          }}
+        >
+          <Feather name={iconName} size={14} color={titleColor} />
+        </View>
+        <Text
+          style={{
+            color: bodyColor,
+            fontSize: typography.sm,
+            fontWeight: typography.semibold,
+            lineHeight: 18,
+            flexShrink: 1,
+          }}
+          numberOfLines={3}
+        >
           {text1}
         </Text>
       </View>
@@ -98,18 +146,12 @@ function ProofSuccessToast({ isVisible, text1, onPress }: ToastConfigParams<any>
   );
 }
 
-const toastConfig: ToastConfig = {
-  proofError: (props) => (
-    <BaseToast
-      {...props}
-      style={[toastBaseStyle, { borderColor: '#EF444455' }]}
-      contentContainerStyle={{ paddingHorizontal: spacing.md }}
-      text1Style={{ color: '#E5E7EB', fontSize: typography.xs, fontWeight: typography.medium }}
-      text1NumberOfLines={3}
-    />
-  ),
-  proofSuccess: (props) => <ProofSuccessToast {...props} />,
-};
+function makeToastConfig(isDark: boolean): ToastConfig {
+  return {
+    proofError: (props) => <ThemedToast {...props} tone="error" isDark={isDark} />,
+    proofSuccess: (props) => <ThemedToast {...props} tone="success" isDark={isDark} />,
+  };
+}
 
 function AuthGuard() {
   const { session, authInitialized, loading } = useAuth();
@@ -221,6 +263,8 @@ function AuthGuard() {
 
 function ThemedRoot() {
   const { colors, isDark } = useTheme();
+  const toastConfig = useMemo(() => makeToastConfig(isDark), [isDark]);
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <StatusBar style={isDark ? 'light' : 'dark'} />

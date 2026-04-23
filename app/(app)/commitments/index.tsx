@@ -441,9 +441,15 @@ function CreateModal({
           startDate={startOnly}
           endDate={endOnly}
           excludedTaskIds={linkedTasks.filter((item) => item.type === 'task').map((item) => item.sourceId ?? '')}
+          excludedRuleIds={linkedTasks.filter((item) => item.type === 'rule').map((item) => item.sourceId ?? '')}
           onClose={() => setTaskPickerOpen(false)}
           onLinked={(linked) => {
-            setLinkedTasks((prev) => [...prev, linked]);
+            setLinkedTasks((prev) => {
+              const duplicate = prev.some(
+                (entry) => entry.type === linked.type && entry.sourceId && linked.sourceId && entry.sourceId === linked.sourceId,
+              );
+              return duplicate ? prev : [...prev, linked];
+            });
             setTaskPickerOpen(false);
           }}
         />

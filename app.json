@@ -26,7 +26,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/adaptive-icon-foreground.png",
         "backgroundColor": "#0F0F0F"
       },
       "package": "com.tarun.vouch",
@@ -63,7 +63,11 @@
         "expo-notifications",
         {
           "color": "#F59E0B",
-          "sounds": [],
+          "sounds": [
+            "./assets/notification-sounds/notification_tone_01.wav",
+            "./assets/notification-sounds/notification_tone_02.wav",
+            "./assets/notification-sounds/notification_tone_03.wav"
+          ],
           "mode": "development"
         }
       ],

@@ -81,6 +81,7 @@ export default function SignUpScreen() {
         id: user.id,
         email: user.email ?? email.trim().toLowerCase(),
         username: deriveUsername(email),
+        notification_sound_key: 'default',
       });
 
       if (profileError) {

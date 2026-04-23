@@ -52,9 +52,9 @@ export interface UseCommitmentsResult {
 
 const PENDING_STATUSES = new Set([
   'ACTIVE', 'POSTPONED', 'AWAITING_VOUCHER', 'AWAITING_AI',
-  'MARKED_COMPLETE', 'AWAITING_USER', 'ESCALATED',
+  'MARKED_COMPLETE', 'AWAITING_USER', 'ESCALATED', 'AI_DENIED',
 ]);
-const PASSING_STATUSES = new Set(['ACCEPTED', 'AUTO_ACCEPTED', 'AI_ACCEPTED', 'RECTIFIED']);
+const PASSING_STATUSES = new Set(['ACCEPTED', 'AUTO_ACCEPTED', 'AI_ACCEPTED', 'RECTIFIED', 'SETTLED']);
 const FAILING_STATUSES = new Set(['DENIED', 'MISSED']);
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────

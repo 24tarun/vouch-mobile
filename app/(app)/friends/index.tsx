@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
+  LayoutAnimation,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  UIManager,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -17,6 +20,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { Swiper, type SwiperCardRefType } from 'rn-swiper-list';
 import { supabase } from '@/lib/supabase';
@@ -31,6 +35,21 @@ import { purgeTaskProofForFinalState } from '@/lib/task-proof-upload';
 import { VOUCHER_ACTIONABLE_STATUSES, VOUCHER_ACTIVE_VIEW_STATUSES } from '@/lib/constants/task-status';
 import { useFriendQueue, type VoucherTaskRow, type VouchHistoryTaskRow } from '@/lib/hooks/useFriendQueue';
 import type { TaskDetailData } from '@/lib/hooks/useTaskDetail';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+const DECK_TRANSITION_ANIMATION = {
+  duration: 240,
+  create: { type: 'easeInEaseOut', property: 'opacity' },
+  update: { type: 'easeInEaseOut' },
+  delete: { type: 'easeInEaseOut', property: 'opacity' },
+} as const;
+
+function scheduleDeckLayoutAnimation() {
+  LayoutAnimation.configureNext(DECK_TRANSITION_ANIMATION);
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -393,14 +412,6 @@ function CardContent({
   );
 }
 
-function getDeckCardSignature(task: VoucherTaskRow): string {
-  const proof = task.proof;
-  const proofKind = proof?.mediaKind ?? 'none';
-  const proofUrl = proof?.signedUrl ?? 'placeholder';
-  const proofRequest = task.proof_request_open ? 'proofreq' : 'noreq';
-  return `${task.id}:${proofKind}:${proofUrl}:${proofRequest}`;
-}
-
 function FriendDeck({
   friend,
   tasks,
@@ -526,7 +537,7 @@ function FriendDeck({
           key={tasks[0]?.id ?? 'empty'}
           ref={swiperRef}
           data={tasks}
-          keyExtractor={(task) => getDeckCardSignature(task)}
+          keyExtractor={(task) => task.id}
           renderCard={(task) => {
             const isActionable = VOUCHER_ACTIONABLE_STATUSES.includes(task.status);
             const inFlight = inFlightByTaskId[task.id] ?? null;
@@ -648,6 +659,12 @@ export default function FriendsScreen() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [inFlightByTaskId, setInFlightByTaskId] = useState<Record<string, DecisionAction | null>>({});
   const [inFlightRectifyByTaskId, setInFlightRectifyByTaskId] = useState<Record<string, boolean>>({});
+  // Ids the user has optimistically accepted/denied. Kept separate from
+  // inFlightByTaskId because rapid clicks trigger concurrent realtime refetches;
+  // an intermediate refetch that started before the second click can return the
+  // second task still in an actionable status, re-injecting it into the cache
+  // and ghosting it into the deck. Filter until history confirms terminal state.
+  const [resolvedTaskIds, setResolvedTaskIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<TabView>('pending');
   const [hasInitializedTab, setHasInitializedTab] = useState(false);
   const [hasUserSelectedTab, setHasUserSelectedTab] = useState(false);
@@ -661,13 +678,14 @@ export default function FriendsScreen() {
   const error = actionError ?? friendQueue.error;
   const historyError = friendQueue.historyError;
 
+  const resolvedIdSet = useMemo(() => new Set(resolvedTaskIds), [resolvedTaskIds]);
   const awaitingVoucherTasks = useMemo(
-    () => tasks.filter((t) => VOUCHER_ACTIONABLE_STATUSES.includes(t.status)),
-    [tasks],
+    () => tasks.filter((t) => VOUCHER_ACTIONABLE_STATUSES.includes(t.status) && !resolvedIdSet.has(t.id)),
+    [tasks, resolvedIdSet],
   );
   const activeTasks = useMemo(
-    () => tasks.filter((t) => VOUCHER_ACTIVE_VIEW_STATUSES.includes(t.status)),
-    [tasks],
+    () => tasks.filter((t) => VOUCHER_ACTIVE_VIEW_STATUSES.includes(t.status) && !resolvedIdSet.has(t.id)),
+    [tasks, resolvedIdSet],
   );
   const hasPending = awaitingVoucherTasks.length > 0;
 
@@ -677,6 +695,42 @@ export default function FriendsScreen() {
     setActiveTab(hasPending ? 'pending' : 'active');
     setHasInitializedTab(true);
   }, [hasInitializedTab, hasPending, hasUserSelectedTab, loading]);
+
+  // Safety net: realtime can drop events during reconnect, app backgrounding,
+  // or when the screen was unmounted. Refetch on focus so the list always
+  // reflects server state the moment the user lands here.
+  useFocusEffect(
+    useCallback(() => {
+      void friendQueue.refetchQueue();
+      void friendQueue.refetchHistory();
+    }, [friendQueue.refetchQueue, friendQueue.refetchHistory]),
+  );
+
+  // Release the resolved guard once history confirms the task has landed in a
+  // terminal status — server has fully committed and no refetch can ghost it back.
+  useEffect(() => {
+    if (resolvedTaskIds.length === 0) return;
+    const historyIds = new Set(historyTasks.map((t) => t.id));
+    setResolvedTaskIds((prev) => {
+      const next = prev.filter((id) => !historyIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [historyTasks, resolvedTaskIds.length]);
+
+  // Safety net for dropped realtime / offline: force-release after 6s so guard
+  // never strands even if the confirmation signal never arrives.
+  useEffect(() => {
+    if (resolvedTaskIds.length === 0) return;
+    const idsAtSchedule = resolvedTaskIds;
+    const timeout = setTimeout(() => {
+      setResolvedTaskIds((prev) => prev.filter((id) => !idsAtSchedule.includes(id)));
+    }, 6000);
+    return () => clearTimeout(timeout);
+  }, [resolvedTaskIds]);
+
+  const markTaskResolved = useCallback((taskId: string) => {
+    setResolvedTaskIds((prev) => (prev.includes(taskId) ? prev : [...prev, taskId]));
+  }, []);
 
   // Group only actionable tasks by friend for deck layout
   const decksByFriend = useMemo(() => {
@@ -728,6 +782,8 @@ export default function FriendsScreen() {
     const prevHistory = queryClient.getQueryData<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }>(historyKey);
     const prevDetail = queryClient.getQueryData<TaskDetailData>(detailKey);
 
+    scheduleDeckLayoutAnimation();
+    markTaskResolved(task.id);
     patchFriendQueue((c) => c.filter((t) => t.id !== task.id));
     patchFriendHistory((c) => {
       const next: VouchHistoryTaskRow = {
@@ -790,6 +846,8 @@ export default function FriendsScreen() {
     const prevHistory = queryClient.getQueryData<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }>(historyKey);
     const prevDetail = queryClient.getQueryData<TaskDetailData>(detailKey);
 
+    scheduleDeckLayoutAnimation();
+    markTaskResolved(task.id);
     patchFriendQueue((c) => c.filter((t) => t.id !== task.id));
     patchFriendHistory((c) => {
       const next: VouchHistoryTaskRow = {

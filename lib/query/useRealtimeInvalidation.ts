@@ -34,8 +34,7 @@ export function useRealtimeInvalidation({
   const subscriptionsRef = useRef(subscriptions);
   const invalidateKeysRef = useRef(invalidateKeys);
   const onPayloadRef = useRef(onPayload);
-  const lastPayloadRef = useRef<unknown>(null);
-  const realtimeChannelName = useMemo(
+  const channelBaseName = useMemo(
     () => `${channelName}:${instanceIdRef.current}`,
     [channelName],
   );
@@ -50,6 +49,7 @@ export function useRealtimeInvalidation({
         .join('|'),
     [subscriptions],
   );
+
   useEffect(() => {
     subscriptionsRef.current = subscriptions;
   }, [subscriptions, subscriptionsSignature]);
@@ -67,9 +67,8 @@ export function useRealtimeInvalidation({
     if (!enabled || activeSubscriptions.length === 0) return;
 
     const rateLimiter = createRealtimeRateLimiter({
-      label: realtimeChannelName,
+      label: channelBaseName,
       callback: () => {
-        onPayloadRef.current?.(lastPayloadRef.current);
         for (const queryKey of invalidateKeysRef.current) {
           void queryClient.invalidateQueries({ queryKey });
         }
@@ -77,8 +76,14 @@ export function useRealtimeInvalidation({
       maxRunsPerWindow: maxInvalidationsPerMinute,
       minIntervalMs: minInvalidateIntervalMs,
     });
-    const channel = supabase.channel(realtimeChannelName);
-    for (const subscription of activeSubscriptions) {
+
+    // One channel per subscription: Supabase's postgres_changes is unreliable
+    // when multiple filters are multiplexed onto a single channel — some
+    // listeners silently drop events during re-subscribe handshakes.
+    const channels = activeSubscriptions.map((subscription, index) => {
+      const channel = supabase.channel(
+        `${channelBaseName}:${subscription.table}:${index}`,
+      );
       channel.on(
         'postgres_changes',
         {
@@ -88,24 +93,29 @@ export function useRealtimeInvalidation({
           ...(subscription.filter ? { filter: subscription.filter } : {}),
         },
         (payload) => {
-          lastPayloadRef.current = payload;
+          // onPayload fires immediately for every event so consumers that
+          // patch cache state (e.g. handleTaskListPayload) never miss one.
+          // Cache-invalidation stays rate-limited to avoid refetch storms.
+          onPayloadRef.current?.(payload);
           rateLimiter.trigger();
         },
       );
-    }
-
-    channel.subscribe();
+      channel.subscribe();
+      return channel;
+    });
 
     return () => {
       rateLimiter.dispose();
-      void supabase.removeChannel(channel);
+      for (const channel of channels) {
+        void supabase.removeChannel(channel);
+      }
     };
   }, [
     enabled,
     maxInvalidationsPerMinute,
     minInvalidateIntervalMs,
     queryClient,
-    realtimeChannelName,
+    channelBaseName,
     subscriptionsSignature,
   ]);
 }

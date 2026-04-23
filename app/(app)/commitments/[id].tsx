@@ -310,9 +310,15 @@ export default function CommitmentDetailScreen() {
           startDate={item.start_date}
           endDate={item.end_date}
           excludedTaskIds={linkedTasks.filter((entry) => entry.type === 'task').map((entry) => entry.sourceId ?? '')}
+          excludedRuleIds={linkedTasks.filter((entry) => entry.type === 'rule').map((entry) => entry.sourceId ?? '')}
           onClose={() => setTaskPickerOpen(false)}
           onLinked={(linked) => {
-            setLinkedTasks((prev) => [...prev, linked]);
+            setLinkedTasks((prev) => {
+              const duplicate = prev.some(
+                (entry) => entry.type === linked.type && entry.sourceId && linked.sourceId && entry.sourceId === linked.sourceId,
+              );
+              return duplicate ? prev : [...prev, linked];
+            });
             setTaskPickerOpen(false);
             if (item) {
               void queryClient.invalidateQueries({ queryKey: queryKeys.commitments(item.user_id) });

@@ -419,6 +419,18 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  pickerRowMain: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
   },
   pickerRowLabel: {
     fontSize: typography.base,
@@ -426,6 +438,21 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   pickerRowLabelDisabled: {
     color: colors.textSubtle,
+  },
+  previewButton: {
+    minHeight: 32,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surface2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewButtonText: {
+    fontSize: typography.sm,
+    color: colors.text,
+    fontWeight: typography.medium,
   },
 });
 

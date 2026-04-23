@@ -3,10 +3,19 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
+import {
+  type NotificationSoundKey,
+  getNotificationSoundChannelId,
+  getNotificationSoundConfig,
+  getNotificationSoundConfigs,
+  normalizeNotificationSoundKey,
+} from './notification-sounds';
 
 const NOTIFICATION_TTL_MS = 30 * 60 * 1000;
 const LOCAL_REMINDER_NOTIFICATION_MAP_KEY = 'vouch_local_reminder_notification_ids_v1';
+const LOCAL_REMINDER_SOUND_KEY = 'vouch_local_reminder_sound_key_v1';
 const ACTIVE_TASK_STATUSES = new Set(['ACTIVE', 'POSTPONED']);
+let activePreviewNotificationId: string | null = null;
 
 function extractNotificationTimestampMs(
   data: Record<string, unknown> | undefined | null,
@@ -24,6 +33,66 @@ function extractNotificationTimestampMs(
   if (typeof value !== 'string' || value.trim().length === 0) return null;
   const ms = new Date(value).getTime();
   return Number.isFinite(ms) ? ms : null;
+}
+
+function resolveNotificationSoundName(key: NotificationSoundKey): string {
+  return getNotificationSoundConfig(key).soundFileName;
+}
+
+function resolveAndroidChannelId(key: NotificationSoundKey): string {
+  return getNotificationSoundChannelId(key);
+}
+
+async function ensureAndroidNotificationChannelsAsync(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+
+  for (const config of getNotificationSoundConfigs()) {
+    await Notifications.setNotificationChannelAsync(config.androidChannelId, {
+      name: `Task reminders (${config.label})`,
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#F59E0B',
+      sound: config.soundFileName === 'default' ? undefined : config.soundFileName,
+    });
+  }
+}
+
+async function getNotificationSoundKeyForUserAsync(userId: string): Promise<NotificationSoundKey> {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('notification_sound_key')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('[notifications] failed to resolve notification sound key:', error.message);
+      return 'default';
+    }
+
+    return normalizeNotificationSoundKey((data as { notification_sound_key?: unknown } | null)?.notification_sound_key);
+  } catch (err) {
+    console.warn('[notifications] failed to resolve notification sound key:', err);
+    return 'default';
+  }
+}
+
+async function clearActivePreviewNotificationAsync(): Promise<void> {
+  if (!activePreviewNotificationId) return;
+  const previewId = activePreviewNotificationId;
+  activePreviewNotificationId = null;
+
+  try {
+    await Notifications.cancelScheduledNotificationAsync(previewId);
+  } catch {
+    // Preview may already have fired.
+  }
+
+  try {
+    await Notifications.dismissNotificationAsync(previewId);
+  } catch {
+    // Preview may not be visible anymore.
+  }
 }
 
 // Controls how notifications are presented when the app is in the foreground.
@@ -82,7 +151,7 @@ async function readLocalReminderNotificationMapAsync(): Promise<Record<string, s
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== 'object') return {};
-    const entries: Array<[string, string]> = Object.entries(parsed as Record<string, unknown>)
+    const entries: [string, string][] = Object.entries(parsed as Record<string, unknown>)
       .filter(([, value]) => typeof value === 'string' && value.length > 0)
       .map(([key, value]) => [key, value as string]);
     return Object.fromEntries(entries);
@@ -97,9 +166,24 @@ async function writeLocalReminderNotificationMapAsync(
   await AsyncStorage.setItem(LOCAL_REMINDER_NOTIFICATION_MAP_KEY, JSON.stringify(next));
 }
 
+async function readLocalReminderSoundKeyAsync(): Promise<NotificationSoundKey | null> {
+  try {
+    const raw = await AsyncStorage.getItem(LOCAL_REMINDER_SOUND_KEY);
+    if (!raw) return null;
+    return normalizeNotificationSoundKey(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function writeLocalReminderSoundKeyAsync(key: NotificationSoundKey): Promise<void> {
+  await AsyncStorage.setItem(LOCAL_REMINDER_SOUND_KEY, key);
+}
+
 function createReminderContent(input: {
   taskTitle: string;
   source: string | null;
+  notificationSoundKey: NotificationSoundKey;
 }): Notifications.NotificationContentInput {
   const source = input.source ?? 'MANUAL';
   const bodyPrefix = source === 'DEFAULT_DEADLINE_10M'
@@ -111,7 +195,7 @@ function createReminderContent(input: {
   return {
     title: input.taskTitle,
     body: `${bodyPrefix}: ${input.taskTitle}`,
-    sound: true,
+    sound: resolveNotificationSoundName(input.notificationSoundKey),
   };
 }
 
@@ -126,6 +210,7 @@ export async function clearLocalReminderNotificationsAsync(): Promise<void> {
       }
     }
     await AsyncStorage.removeItem(LOCAL_REMINDER_NOTIFICATION_MAP_KEY);
+    await AsyncStorage.removeItem(LOCAL_REMINDER_SOUND_KEY);
   } catch (err) {
     console.warn('[notifications] failed to clear local reminders:', err);
   }
@@ -140,11 +225,15 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
   try {
     if (!userId) return;
 
+    await ensureAndroidNotificationChannelsAsync();
+
     if (!(await hasGrantedNotificationPermissionAsync())) {
       return;
     }
 
+    const notificationSoundKey = await getNotificationSoundKeyForUserAsync(userId);
     const nowIso = new Date().toISOString();
+    const lastScheduledSoundKey = await readLocalReminderSoundKeyAsync();
 
     const { data: reminders, error: remindersError } = await supabase
       .from('task_reminders')
@@ -158,13 +247,13 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       return;
     }
 
-    const reminderRows = (reminders as Array<{
+    const reminderRows = (reminders as {
       id: string;
       parent_task_id: string;
       reminder_at: string;
       source: string | null;
       notified_at: string | null;
-    }> | null) ?? [];
+    }[] | null) ?? [];
 
     const pendingReminderRows = reminderRows.filter((row) => !row.notified_at);
     if (pendingReminderRows.length === 0) {
@@ -184,7 +273,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     }
 
     const tasksById = new Map(
-      ((tasks as Array<{ id: string; title: string; status: string }> | null) ?? [])
+      ((tasks as { id: string; title: string; status: string }[] | null) ?? [])
         .filter((task) => ACTIVE_TASK_STATUSES.has(task.status))
         .map((task) => [task.id, task]),
     );
@@ -195,7 +284,17 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     });
 
     const desiredReminderIds = new Set(validReminders.map((row) => row.id));
-    const persistedMap = await readLocalReminderNotificationMapAsync();
+    let persistedMap = await readLocalReminderNotificationMapAsync();
+    if (lastScheduledSoundKey !== null && lastScheduledSoundKey !== notificationSoundKey) {
+      for (const notificationId of Object.values(persistedMap)) {
+        try {
+          await Notifications.cancelScheduledNotificationAsync(notificationId);
+        } catch {
+          // Notification may already be delivered or canceled.
+        }
+      }
+      persistedMap = {};
+    }
     const nextMap: Record<string, string> = {};
 
     for (const [reminderId, notificationId] of Object.entries(persistedMap)) {
@@ -221,7 +320,11 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
 
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
-          ...createReminderContent({ taskTitle: task.title, source: reminder.source }),
+          ...createReminderContent({
+            taskTitle: task.title,
+            source: reminder.source,
+            notificationSoundKey,
+          }),
           data: {
             task_id: reminder.parent_task_id,
             reminder_id: reminder.id,
@@ -234,6 +337,9 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
           seconds: Math.max(1, Math.floor(delayMs / 1000)),
           repeats: false,
+          ...(Platform.OS === 'android'
+            ? { channelId: resolveAndroidChannelId(notificationSoundKey) }
+            : {}),
         },
       });
 
@@ -241,8 +347,49 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     }
 
     await writeLocalReminderNotificationMapAsync(nextMap);
+    await writeLocalReminderSoundKeyAsync(notificationSoundKey);
   } catch (err) {
     console.warn('[notifications] local reminder sync failed:', err);
+  }
+}
+
+export async function previewNotificationSoundAsync(
+  notificationSoundKey: NotificationSoundKey,
+): Promise<boolean> {
+  try {
+    await ensureAndroidNotificationChannelsAsync();
+
+    if (!(await hasGrantedNotificationPermissionAsync())) {
+      return false;
+    }
+
+    await clearActivePreviewNotificationAsync();
+
+    const notificationId = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Notification sound preview',
+        body: `Previewing ${getNotificationSoundConfig(notificationSoundKey).label}`,
+        sound: resolveNotificationSoundName(notificationSoundKey),
+        data: {
+          preview_sound: true,
+          preview_sound_key: notificationSoundKey,
+        },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+        seconds: 1,
+        repeats: false,
+        ...(Platform.OS === 'android'
+          ? { channelId: resolveAndroidChannelId(notificationSoundKey) }
+          : {}),
+      },
+    });
+
+    activePreviewNotificationId = notificationId;
+    return true;
+  } catch (err) {
+    console.warn('[notifications] failed to preview notification sound:', err);
+    return false;
   }
 }
 
@@ -255,15 +402,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
  */
 export async function registerForPushNotificationsAsync(userId: string): Promise<void> {
   try {
-    // Android requires an explicit notification channel for API 26+.
-    if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('default', {
-        name: 'Default',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#F59E0B',
-      });
-    }
+    await ensureAndroidNotificationChannelsAsync();
 
     const finalStatus = (await hasGrantedNotificationPermissionAsync()) ? 'granted' : 'denied';
 

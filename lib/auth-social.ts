@@ -89,5 +89,10 @@ async function ensureProfile() {
     ? email.split('@')[0]!.replace(/[^a-z0-9_]/gi, '_').slice(0, 30).toLowerCase() || 'user'
     : 'user';
 
-  await supabase.from('profiles').insert({ id: user.id, email, username });
+  await supabase.from('profiles').insert({
+    id: user.id,
+    email,
+    username,
+    notification_sound_key: 'default',
+  });
 }

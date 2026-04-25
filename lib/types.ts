@@ -262,6 +262,8 @@ export interface RecurrenceRule {
   rule_config: RecurrenceRuleConfig;
   timezone: string;
   google_sync_for_rule: boolean;
+  time_bound_for_rule: boolean;
+  window_start_offset_minutes: number | null;
   google_event_duration_minutes: number | null;
   google_event_color_id: string | null;
   manual_reminder_offsets_ms: number[] | null;

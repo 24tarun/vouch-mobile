@@ -3,10 +3,14 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import type { TodayParts } from './types';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
+import { ReputationBar } from '@/components/ReputationBar';
+import type { ReputationScoreData } from '@/lib/reputation/types';
 
 interface TaskTopBarProps {
   displayName: string;
   todayParts: TodayParts;
+  reputationScore: ReputationScoreData | null | undefined;
+  showReputationBar: boolean;
   creatorAnchorRef: React.RefObject<View | null>;
   sortButtonRef: React.RefObject<View | null>;
   searchInputRef: React.RefObject<TextInput | null>;
@@ -21,6 +25,8 @@ interface TaskTopBarProps {
 export function TaskTopBar({
   displayName,
   todayParts,
+  reputationScore,
+  showReputationBar,
   creatorAnchorRef,
   sortButtonRef,
   searchInputRef,
@@ -43,6 +49,12 @@ export function TaskTopBar({
           <Text style={styles.taskDate}> {todayParts.dayName} {todayParts.day} {todayParts.monthName}</Text>
         </View>
       </View>
+
+      {showReputationBar && reputationScore != null && (
+        <View style={styles.reputationBarWrap}>
+          <ReputationBar data={reputationScore} />
+        </View>
+      )}
 
       <View ref={creatorAnchorRef} collapsable={false} style={styles.inlineCreatorWrap}>
         <Pressable

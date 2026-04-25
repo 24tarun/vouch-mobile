@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   Alert,
+  Easing,
   Linking,
   Modal,
   Pressable,
@@ -14,7 +16,7 @@ import {
   View,
 } from 'react-native';
 import { File, Paths } from 'expo-file-system';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
@@ -38,6 +40,7 @@ import { getFailureCostBounds } from '@/lib/domain/failure-cost';
 import { ACTIVE_VOUCHER_TASK_STATUSES } from '@/lib/constants/task-status';
 import { FriendsSection } from '@/components/settings/FriendsSection';
 import { BlockedUsersSection } from '@/components/settings/BlockedUsersSection';
+import { CalendarSyncSection } from '@/components/settings/CalendarSyncSection';
 import { useRelationships, type RelationshipsData } from '@/lib/hooks/useRelationships';
 import { useBlockedUsers } from '@/lib/hooks/useBlockedUsers';
 import { useSettingsStats } from '@/lib/hooks/useSettingsStats';
@@ -83,6 +86,9 @@ type RelationshipAction = 'send' | 'accept' | 'reject' | 'remove' | 'block' | 'w
 
 const POMO_MIN_MINUTES = 1;
 const POMO_MAX_MINUTES = 120;
+const EVENT_DURATION_MIN_MINUTES = 0;
+const EVENT_DURATION_MAX_MINUTES = 1000;
+const EVENT_DURATION_FALLBACK_MINUTES = 60;
 const ACCOUNT_DELETE_FALLBACK_URL = `${WEBSITE_URL}/settings`;
 const ACCOUNT_DELETE_API_URL = `${WEBSITE_URL}/api/account/delete`;
 const CURRENCY_OPTIONS: PickerOption[] = [
@@ -90,6 +96,172 @@ const CURRENCY_OPTIONS: PickerOption[] = [
   { label: 'EUR', value: 'EUR' },
   { label: 'INR', value: 'INR' },
 ];
+
+type SaveIndicatorPhase = 'idle' | 'dirty' | 'saving' | 'saved';
+
+function SaveStatusTrafficLights({
+  phase,
+  successTick,
+}: {
+  phase: SaveIndicatorPhase;
+  successTick: number;
+}) {
+  const { colors } = useTheme();
+  const pulse = useRef(new Animated.Value(0)).current;
+  const [flashPhase, setFlashPhase] = useState<Exclude<SaveIndicatorPhase, 'idle'> | null>(null);
+  const previousPhaseRef = useRef<SaveIndicatorPhase>(phase);
+  const lightSize = 15;
+  const lightRadius = lightSize / 2;
+
+  useEffect(() => {
+    const previousPhase = previousPhaseRef.current;
+    previousPhaseRef.current = phase;
+
+    if (phase === previousPhase || (phase !== 'dirty' && phase !== 'saving')) return;
+
+    setFlashPhase(phase);
+    pulse.setValue(0);
+    Animated.sequence([
+      Animated.timing(pulse, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: false,
+      }),
+      Animated.timing(pulse, {
+        toValue: 0,
+        duration: 150,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: false,
+      }),
+      Animated.timing(pulse, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: false,
+      }),
+    ]).start(() => {
+      setFlashPhase(null);
+      pulse.setValue(0);
+    });
+  }, [phase, pulse]);
+
+  useEffect(() => {
+    if (successTick === 0) return;
+
+    setFlashPhase('saved');
+    pulse.setValue(0);
+    Animated.sequence([
+      Animated.timing(pulse, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: false,
+      }),
+      Animated.timing(pulse, {
+        toValue: 0,
+        duration: 150,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: false,
+      }),
+      Animated.timing(pulse, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: false,
+      }),
+    ]).start(() => {
+      setFlashPhase(null);
+      pulse.setValue(0);
+    });
+  }, [successTick, pulse]);
+
+  const displayedPhase = flashPhase ?? phase;
+
+  const redOpacity = displayedPhase === 'dirty'
+    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.52, 1] })
+    : 0.25;
+  const amberOpacity = displayedPhase === 'saving'
+    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.52, 1] })
+    : 0.25;
+  const greenOpacity = displayedPhase === 'saved'
+    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.58, 1] })
+    : displayedPhase === 'dirty' || displayedPhase === 'saving'
+      ? 0.08
+      : 0.92;
+  const redScale = displayedPhase === 'dirty'
+    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.16] })
+    : 1;
+  const amberScale = displayedPhase === 'saving'
+    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.16] })
+    : 1;
+  const greenScale = displayedPhase === 'saved'
+    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] })
+    : displayedPhase === 'dirty' || displayedPhase === 'saving'
+      ? 1
+      : 1.04;
+
+  return (
+    <View
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+      accessibilityLabel={
+        phase === 'dirty'
+          ? 'Unsaved settings changes'
+          : phase === 'saving'
+            ? 'Saving settings'
+            : phase === 'saved'
+              ? 'Settings saved'
+              : 'Settings are up to date'
+      }
+    >
+      <Animated.View
+        style={{
+          width: lightSize,
+          height: lightSize,
+          borderRadius: lightRadius,
+          backgroundColor: colors.destructive,
+          opacity: redOpacity,
+          transform: [{ scale: redScale }],
+          shadowColor: colors.destructive,
+          shadowOpacity: displayedPhase === 'dirty' ? 0.6 : 0.14,
+          shadowRadius: displayedPhase === 'dirty' ? 8 : 2,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: displayedPhase === 'dirty' ? 6 : 0,
+        }}
+      />
+      <Animated.View
+        style={{
+          width: lightSize,
+          height: lightSize,
+          borderRadius: lightRadius,
+          backgroundColor: colors.warning,
+          opacity: amberOpacity,
+          transform: [{ scale: amberScale }],
+          shadowColor: colors.warning,
+          shadowOpacity: displayedPhase === 'saving' ? 0.55 : 0.14,
+          shadowRadius: displayedPhase === 'saving' ? 8 : 2,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: displayedPhase === 'saving' ? 6 : 0,
+        }}
+      />
+      <Animated.View
+        style={{
+          width: lightSize,
+          height: lightSize,
+          borderRadius: lightRadius,
+          backgroundColor: colors.success,
+          opacity: greenOpacity,
+          transform: [{ scale: greenScale }],
+          shadowColor: colors.success,
+          shadowOpacity: displayedPhase === 'saved' ? 0.62 : displayedPhase === 'idle' ? 0.4 : 0,
+          shadowRadius: displayedPhase === 'saved' ? 10 : displayedPhase === 'idle' ? 6 : 0,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: displayedPhase === 'saved' ? 7 : displayedPhase === 'idle' ? 4 : 0,
+        }}
+      />
+    </View>
+  );
+}
 
 function buildUserSummaryFromCandidate(candidate: SearchCandidate): UserSummary {
   const username = normalizeAiUsername(candidate.id, candidate.username, 'Friend');
@@ -220,9 +392,9 @@ export default function SettingsScreen() {
   const [usernameDraft, setUsernameDraft] = useState('');
   const [savingUsername, setSavingUsername] = useState(false);
   const [usernameError, setUsernameError] = useState<string | null>(null);
-  const [usernameSuccess, setUsernameSuccess] = useState<string | null>(null);
 
   const [defaultPomoInput, setDefaultPomoInput] = useState('25');
+  const [defaultEventDurationInput, setDefaultEventDurationInput] = useState(String(EVENT_DURATION_FALLBACK_MINUTES));
   const [defaultFailureCostInput, setDefaultFailureCostInput] = useState('10');
   const [defaultVoucherId, setDefaultVoucherId] = useState<string | null>(null);
   const [currency, setCurrency] = useState<Currency>('USD');
@@ -249,17 +421,16 @@ export default function SettingsScreen() {
   const [isExporting, setIsExporting] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [previewingSoundKey, setPreviewingSoundKey] = useState<NotificationSoundKey | null>(null);
-  const previewSoundRef = useRef<Audio.Sound | null>(null);
+  const previewSoundRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
-  const [defaultsSuccess, setDefaultsSuccess] = useState<string | null>(null);
   const [aiVoucherEnabled, setAiVoucherEnabled] = useState(false);
   const [savingAiFeatures, setSavingAiFeatures] = useState(false);
   const [aiFeaturesError, setAiFeaturesError] = useState<string | null>(null);
-  const [aiFeaturesSuccess, setAiFeaturesSuccess] = useState<string | null>(null);
   const [voucherCanViewActiveTasks, setVoucherCanViewActiveTasks] = useState(true);
   const [savingVoucherVisibility, setSavingVoucherVisibility] = useState(false);
   const [voucherVisibilityError, setVoucherVisibilityError] = useState<string | null>(null);
-  const [voucherVisibilitySuccess, setVoucherVisibilitySuccess] = useState<string | null>(null);
+  const [calendarSaving, setCalendarSaving] = useState(false);
+  const [saveSuccessTick, setSaveSuccessTick] = useState(0);
   const [charities, setCharities] = useState<Charity[]>([]);
   const [charitiesError, setCharitiesError] = useState<string | null>(null);
   const emailSavedRef = useRef<string | null>(null);
@@ -313,6 +484,11 @@ export default function SettingsScreen() {
     const nextEmail = (user.email ?? profile.email ?? '').trim().toLowerCase();
     const nextUsername = profile.username;
     const nextPomo = profile.default_pomo_duration_minutes ?? 25;
+    const nextEventDuration = Number.isInteger(profile.default_event_duration_minutes)
+      && profile.default_event_duration_minutes >= EVENT_DURATION_MIN_MINUTES
+      && profile.default_event_duration_minutes <= EVENT_DURATION_MAX_MINUTES
+      ? profile.default_event_duration_minutes
+      : EVENT_DURATION_FALLBACK_MINUTES;
     const nextFailureCostCents = profile.default_failure_cost_cents ?? 1000;
     const nextFailureCostMajor = nextFailureCostCents / 100;
     const nextVoucherId = profile.default_voucher_id ?? user.id;
@@ -330,6 +506,7 @@ export default function SettingsScreen() {
 
     setUsernameDraft(nextUsername);
     setDefaultPomoInput(String(nextPomo));
+    setDefaultEventDurationInput(String(nextEventDuration));
     setDefaultFailureCostInput(
       nextCurrency === 'INR'
         ? String(Math.round(nextFailureCostMajor))
@@ -352,6 +529,7 @@ export default function SettingsScreen() {
     usernameSavedRef.current = nextUsername;
     defaultsSavedRef.current = JSON.stringify({
       defaultPomoMinutes: nextPomo,
+      defaultEventDurationMinutes: nextEventDuration,
       defaultFailureCostCents: nextFailureCostCents,
       defaultVoucherId: nextVoucherId,
       currency: nextCurrency,
@@ -368,13 +546,9 @@ export default function SettingsScreen() {
     voucherVisibilitySavedRef.current = nextVoucherCanViewActiveTasks;
 
     setUsernameError(null);
-    setUsernameSuccess(null);
     setDefaultsError(null);
-    setDefaultsSuccess(null);
     setAiFeaturesError(null);
-    setAiFeaturesSuccess(null);
     setVoucherVisibilityError(null);
-    setVoucherVisibilitySuccess(null);
     setDeleteAccountError(null);
     setDeleteAccountSuccess(false);
   }, [profile, user]);
@@ -1140,6 +1314,21 @@ export default function SettingsScreen() {
     }
     return null;
   }, [normalizedPomoInput, parsedPomoMinutes]);
+  const normalizedEventDurationInput = defaultEventDurationInput.trim();
+  const parsedEventDurationMinutes = Number(normalizedEventDurationInput);
+  const eventDurationValidationError = useMemo(() => {
+    if (!normalizedEventDurationInput) return 'Default time-bound duration is required.';
+    if (!Number.isFinite(parsedEventDurationMinutes) || !Number.isInteger(parsedEventDurationMinutes)) {
+      return 'Default time-bound duration must be a whole number.';
+    }
+    if (
+      parsedEventDurationMinutes < EVENT_DURATION_MIN_MINUTES
+      || parsedEventDurationMinutes > EVENT_DURATION_MAX_MINUTES
+    ) {
+      return `Default time-bound duration must be between ${EVENT_DURATION_MIN_MINUTES} and ${EVENT_DURATION_MAX_MINUTES} minutes.`;
+    }
+    return null;
+  }, [normalizedEventDurationInput, parsedEventDurationMinutes]);
   const currencySymbol = useMemo(() => {
     if (currency === 'EUR') return '€';
     if (currency === 'INR') return '₹';
@@ -1246,6 +1435,7 @@ export default function SettingsScreen() {
     () =>
       JSON.stringify({
         defaultPomoMinutes: parsedPomoMinutes,
+        defaultEventDurationMinutes: parsedEventDurationMinutes,
         defaultFailureCostCents: parsedFailureCostCents,
         defaultVoucherId: resolvedDefaultVoucherId,
         currency,
@@ -1260,6 +1450,7 @@ export default function SettingsScreen() {
       }),
     [
       parsedPomoMinutes,
+      parsedEventDurationMinutes,
       parsedFailureCostCents,
       resolvedDefaultVoucherId,
       currency,
@@ -1273,6 +1464,26 @@ export default function SettingsScreen() {
       selectedCharityId,
     ],
   );
+  const usernameDirty = usernameSavedRef.current !== null && normalizedUsernameDraft !== usernameSavedRef.current;
+  const defaultsDirty = defaultsSavedRef.current !== null && defaultsSnapshot !== defaultsSavedRef.current;
+  const aiFeaturesDirty = aiFeaturesSavedRef.current !== null && aiVoucherEnabled !== aiFeaturesSavedRef.current;
+  const voucherVisibilityDirty = (
+    voucherVisibilitySavedRef.current !== null
+    && voucherCanViewActiveTasks !== voucherVisibilitySavedRef.current
+  );
+  const anySettingDirty = usernameDirty || defaultsDirty || aiFeaturesDirty || voucherVisibilityDirty;
+  const anySettingSaving = (
+    savingUsername
+    || savingDefaults
+    || savingAiFeatures
+    || savingVoucherVisibility
+    || calendarSaving
+  );
+  const saveIndicatorPhase: SaveIndicatorPhase = anySettingSaving
+    ? 'saving'
+    : anySettingDirty
+      ? 'dirty'
+      : 'idle';
 
   function validateUsername(value: string): string | null {
     if (!value) return 'Username is required.';
@@ -1314,29 +1525,25 @@ export default function SettingsScreen() {
       }
 
       if (previewSoundRef.current) {
-        try {
-          await previewSoundRef.current.stopAsync();
-        } catch {
-          // Ignore stop failures for already-finished sounds.
-        }
-        await previewSoundRef.current.unloadAsync();
+        previewSoundRef.current.remove();
         previewSoundRef.current = null;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
       });
 
-      const { sound } = await Audio.Sound.createAsync(previewAsset, { shouldPlay: true });
-      previewSoundRef.current = sound;
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (!status.isLoaded || !status.didJustFinish) return;
-        void sound.unloadAsync();
-        if (previewSoundRef.current === sound) {
-          previewSoundRef.current = null;
-        }
-      });
+      const player = createAudioPlayer(previewAsset);
+      previewSoundRef.current = player;
+      player.seekTo(0);
+      player.play();
+
+      setTimeout(() => {
+        if (previewSoundRef.current !== player) return;
+        player.remove();
+        previewSoundRef.current = null;
+      }, 3000);
     } finally {
       setTimeout(() => {
         setPreviewingSoundKey((current) => (current === key ? null : current));
@@ -1346,7 +1553,7 @@ export default function SettingsScreen() {
 
   useEffect(() => () => {
     if (!previewSoundRef.current) return;
-    void previewSoundRef.current.unloadAsync();
+    previewSoundRef.current.remove();
     previewSoundRef.current = null;
   }, []);
 
@@ -1361,7 +1568,6 @@ export default function SettingsScreen() {
     const validationError = validateUsername(normalizedUsernameDraft);
     if (validationError) {
       setUsernameError(validationError);
-      setUsernameSuccess(null);
       return;
     }
 
@@ -1369,7 +1575,6 @@ export default function SettingsScreen() {
     let cancelled = false;
     const timer = setTimeout(async () => {
       setSavingUsername(true);
-      setUsernameSuccess(null);
       const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
       queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) => current ? {
         ...current,
@@ -1396,7 +1601,7 @@ export default function SettingsScreen() {
 
       usernameSavedRef.current = normalizedUsernameDraft;
       setUsernameDraft(normalizedUsernameDraft);
-      setUsernameSuccess('Saved');
+      setSaveSuccessTick((current) => current + 1);
     }, 700);
 
     return () => {
@@ -1412,22 +1617,22 @@ export default function SettingsScreen() {
 
     if (pomoValidationError) {
       setDefaultsError(pomoValidationError);
-      setDefaultsSuccess(null);
       return;
     }
     if (failureCostValidationError) {
       setDefaultsError(failureCostValidationError);
-      setDefaultsSuccess(null);
+      return;
+    }
+    if (eventDurationValidationError) {
+      setDefaultsError(eventDurationValidationError);
       return;
     }
     if (!timeZone || !timeZoneOptions.includes(timeZone)) {
       setDefaultsError('Timezone is invalid.');
-      setDefaultsSuccess(null);
       return;
     }
     if (charityValidationError) {
       setDefaultsError(charityValidationError);
-      setDefaultsSuccess(null);
       return;
     }
 
@@ -1435,13 +1640,13 @@ export default function SettingsScreen() {
     let cancelled = false;
     const timer = setTimeout(async () => {
       setSavingDefaults(true);
-      setDefaultsSuccess(null);
       const resolvedCharityEnabled = charityEnabled && Boolean(selectedCharityId);
       const resolvedSelectedCharityId = resolvedCharityEnabled ? selectedCharityId : null;
       const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
       queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) => current ? {
         ...current,
         default_pomo_duration_minutes: parsedPomoMinutes,
+        default_event_duration_minutes: parsedEventDurationMinutes,
         default_failure_cost_cents: parsedFailureCostCents,
         default_voucher_id: resolvedDefaultVoucherId,
         currency,
@@ -1459,6 +1664,7 @@ export default function SettingsScreen() {
         .from('profiles')
         .update({
           default_pomo_duration_minutes: parsedPomoMinutes,
+          default_event_duration_minutes: parsedEventDurationMinutes,
           default_failure_cost_cents: parsedFailureCostCents,
           default_voucher_id: resolvedDefaultVoucherId,
           currency,
@@ -1483,7 +1689,7 @@ export default function SettingsScreen() {
       }
 
       defaultsSavedRef.current = defaultsSnapshot;
-      setDefaultsSuccess('Saved');
+      setSaveSuccessTick((current) => current + 1);
       void syncLocalReminderNotificationsAsync(user.id);
     }, 500);
 
@@ -1494,6 +1700,7 @@ export default function SettingsScreen() {
   }, [
     user,
     parsedPomoMinutes,
+    parsedEventDurationMinutes,
     parsedFailureCostCents,
     resolvedDefaultVoucherId,
     currency,
@@ -1510,6 +1717,7 @@ export default function SettingsScreen() {
     defaultsSnapshot,
     pomoValidationError,
     failureCostValidationError,
+    eventDurationValidationError,
     queryClient,
   ]);
 
@@ -1522,7 +1730,6 @@ export default function SettingsScreen() {
     let cancelled = false;
     const timer = setTimeout(async () => {
       setSavingAiFeatures(true);
-      setAiFeaturesSuccess(null);
       const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
       const previousRelationships = queryClient.getQueryData(queryKeys.relationships(user.id)) as any;
 
@@ -1582,7 +1789,7 @@ export default function SettingsScreen() {
       }
 
       aiFeaturesSavedRef.current = aiVoucherEnabled;
-      setAiFeaturesSuccess('Saved');
+      setSaveSuccessTick((current) => current + 1);
       void queryClient.invalidateQueries({ queryKey: queryKeys.relationships(user.id) });
     }, 400);
 
@@ -1593,24 +1800,6 @@ export default function SettingsScreen() {
   }, [aiVoucherEnabled, queryClient, user]);
 
   useEffect(() => {
-    if (!usernameSuccess) return;
-    const timer = setTimeout(() => setUsernameSuccess(null), 1600);
-    return () => clearTimeout(timer);
-  }, [usernameSuccess]);
-
-  useEffect(() => {
-    if (!defaultsSuccess) return;
-    const timer = setTimeout(() => setDefaultsSuccess(null), 1600);
-    return () => clearTimeout(timer);
-  }, [defaultsSuccess]);
-
-  useEffect(() => {
-    if (!aiFeaturesSuccess) return;
-    const timer = setTimeout(() => setAiFeaturesSuccess(null), 1600);
-    return () => clearTimeout(timer);
-  }, [aiFeaturesSuccess]);
-
-  useEffect(() => {
     if (!user) return;
     if (voucherVisibilitySavedRef.current === null) return;
     if (voucherCanViewActiveTasks === voucherVisibilitySavedRef.current) return;
@@ -1619,7 +1808,6 @@ export default function SettingsScreen() {
     let cancelled = false;
     const timer = setTimeout(async () => {
       setSavingVoucherVisibility(true);
-      setVoucherVisibilitySuccess(null);
       const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
       queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) => current ? {
         ...current,
@@ -1641,7 +1829,7 @@ export default function SettingsScreen() {
       }
 
       voucherVisibilitySavedRef.current = voucherCanViewActiveTasks;
-      setVoucherVisibilitySuccess('Saved');
+      setSaveSuccessTick((current) => current + 1);
     }, 400);
 
     return () => {
@@ -1650,15 +1838,12 @@ export default function SettingsScreen() {
     };
   }, [voucherCanViewActiveTasks, queryClient, user]);
 
-  useEffect(() => {
-    if (!voucherVisibilitySuccess) return;
-    const timer = setTimeout(() => setVoucherVisibilitySuccess(null), 1600);
-    return () => clearTimeout(timer);
-  }, [voucherVisibilitySuccess]);
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <PageHeader title="Settings" />
+      <PageHeader
+        title="Settings"
+        rightAccessory={<SaveStatusTrafficLights phase={saveIndicatorPhase} successTick={saveSuccessTick} />}
+      />
 
       <ScrollView
         style={styles.body}
@@ -1713,7 +1898,6 @@ export default function SettingsScreen() {
                     onChangeText={(value) => {
                       setUsernameDraft(value);
                       setUsernameError(null);
-                      setUsernameSuccess(null);
                     }}
                   />
                 </View>
@@ -1721,7 +1905,6 @@ export default function SettingsScreen() {
 
               {savingUsername ? <Text style={styles.savingText}>Saving username...</Text> : null}
               {usernameError ? <Text style={styles.errorText}>{usernameError}</Text> : null}
-              {usernameSuccess ? <Text style={styles.successText}>{usernameSuccess}</Text> : null}
             </View>
             <SettingsRow
               icon="log-out"
@@ -1786,7 +1969,7 @@ export default function SettingsScreen() {
               </View>
 
               <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>Default pomo duration</Text>
+                <Text style={styles.defaultsLabel}>Default pomo duration (mins)</Text>
                 <TextInput
                   style={styles.textInput}
                   placeholder={`${POMO_MIN_MINUTES}`}
@@ -1796,13 +1979,27 @@ export default function SettingsScreen() {
                   onChangeText={(value) => {
                     setDefaultPomoInput(value);
                     setDefaultsError(null);
-                    setDefaultsSuccess(null);
                   }}
                 />
               </View>
 
               <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>Default failure cost</Text>
+                <Text style={styles.defaultsLabel}>Default time-bound duration (mins)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder={`${EVENT_DURATION_FALLBACK_MINUTES}`}
+                  placeholderTextColor={colors.textSubtle}
+                  keyboardType="number-pad"
+                  value={defaultEventDurationInput}
+                  onChangeText={(value) => {
+                    setDefaultEventDurationInput(value);
+                    setDefaultsError(null);
+                  }}
+                />
+              </View>
+
+              <View style={styles.defaultsField}>
+                <Text style={styles.defaultsLabel}>{`Default failure cost (${currencySymbol})`}</Text>
                 <TextInput
                   style={styles.textInput}
                   placeholder={`${failureCostBounds.minMajor}`}
@@ -1812,7 +2009,6 @@ export default function SettingsScreen() {
                   onChangeText={(value) => {
                     setDefaultFailureCostInput(value);
                     setDefaultsError(null);
-                    setDefaultsSuccess(null);
                   }}
                 />
               </View>
@@ -1899,7 +2095,6 @@ export default function SettingsScreen() {
               {savingDefaults || savingVoucherVisibility ? <Text style={styles.savingText}>Saving...</Text> : null}
               {defaultsError ? <Text style={styles.errorText}>{defaultsError}</Text> : null}
               {voucherVisibilityError ? <Text style={styles.errorText}>{voucherVisibilityError}</Text> : null}
-              {defaultsSuccess || voucherVisibilitySuccess ? <Text style={styles.successText}>Saved</Text> : null}
             </View>
           </View>
         </View>
@@ -1972,7 +2167,6 @@ export default function SettingsScreen() {
 
               {savingAiFeatures ? <Text style={styles.savingText}>Saving AI features...</Text> : null}
               {aiFeaturesError ? <Text style={styles.errorText}>{aiFeaturesError}</Text> : null}
-              {aiFeaturesSuccess ? <Text style={styles.successText}>{aiFeaturesSuccess}</Text> : null}
             </View>
           </View>
         </View>
@@ -1983,6 +2177,11 @@ export default function SettingsScreen() {
           blockedUsers={blockedUsers}
           unblockingUserId={unblockingUserId}
           onUnblockUser={handleUnblockUser}
+        />
+
+        <CalendarSyncSection
+          onSavingStateChange={setCalendarSaving}
+          onSaveSuccess={() => setSaveSuccessTick((current) => current + 1)}
         />
 
         <AppearanceSection />

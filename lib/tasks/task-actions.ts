@@ -2,6 +2,7 @@ import type { ImagePickerAsset } from 'expo-image-picker';
 import { supabase } from '@/lib/supabase';
 import { postponeTask } from '@/lib/task-postpone';
 import { purgeTaskProofForFinalState, removeCurrentTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
+import { syncGoogleCalendarTaskAfterDelete } from '@/lib/google-calendar-mobile-sync';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { AI_PROFILE_ID } from '@/lib/constants/ai-profile';
 
@@ -11,6 +12,7 @@ interface TaskMutationResult {
   success: boolean;
   userId?: string;
   error?: string;
+  warningMessage?: string;
 }
 
 function isValidTimeZone(timeZone: string): boolean {
@@ -228,13 +230,35 @@ export async function deleteTask(taskId: string): Promise<TaskMutationResult> {
 
   const { data: task, error: taskFetchError } = await supabase
     .from('tasks')
-    .select('id, recurrence_rule_id')
+    .select('id, recurrence_rule_id, status, created_at')
     .eq('id', taskId)
     .eq('user_id', userId)
     .single();
 
   if (taskFetchError || !task) {
     return { success: false, userId, error: taskFetchError?.message ?? 'Task not found.' };
+  }
+
+  if (!['ACTIVE', 'POSTPONED'].includes(task.status)) {
+    return { success: false, userId, error: `Cannot delete task in ${task.status} status.` };
+  }
+
+  if (!isTaskWithinDeleteWindow(task.created_at)) {
+    return { success: false, userId, error: 'Delete window expired. Tasks can only be deleted within 10 minutes.' };
+  }
+
+  const { data: googleLink, error: googleLinkError } = await supabase
+    .from('google_calendar_task_links')
+    .select('google_event_id, calendar_id')
+    .eq('task_id', taskId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (googleLinkError) {
+    console.warn('[task-actions] failed to read Google link before delete', {
+      taskId,
+      message: googleLinkError.message,
+    });
   }
 
   if (task.recurrence_rule_id) {
@@ -249,21 +273,35 @@ export async function deleteTask(taskId: string): Promise<TaskMutationResult> {
     }
   }
 
-  const nowIso = new Date().toISOString();
-  const { error } = await supabase
+  const { data: deletedRows, error } = await supabase
     .from('tasks')
-    .update({ status: 'DELETED', updated_at: nowIso })
+    .delete()
     .eq('id', taskId)
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .in('status', ['ACTIVE', 'POSTPONED'])
+    .select('id');
 
   if (error) return { success: false, userId, error: error.message };
 
-  const purgeResult = await purgeTaskProofForFinalState(taskId);
-  if (!purgeResult.success) {
-    return { success: false, userId, error: `Task deleted, but proof cleanup failed: ${purgeResult.error}` };
+  if (!deletedRows || deletedRows.length === 0) {
+    return { success: false, userId, error: 'Task can no longer be deleted. Please refresh.' };
   }
 
-  return { success: true, userId };
+  const googleDeleteResult = await syncGoogleCalendarTaskAfterDelete(
+    taskId,
+    (googleLink as { google_event_id?: string | null } | null)?.google_event_id ?? null,
+    (googleLink as { calendar_id?: string | null } | null)?.calendar_id ?? null,
+  );
+
+  const warningMessage = googleLinkError
+    ? 'Task deleted, but Google Calendar cleanup could not be prepared.'
+    : (googleDeleteResult.message ?? undefined);
+
+  return {
+    success: true,
+    userId,
+    warningMessage,
+  };
 }
 
 export async function stopTaskRepetitions(taskId: string): Promise<TaskMutationResult> {

@@ -37,15 +37,31 @@ import { VoucherPickerModal } from '@/components/tasks/VoucherPickerModal';
 import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
 import { TaskSortMenu } from '@/components/tasks/TaskSortMenu';
 import { taskCreatorState } from '@/lib/taskCreatorState';
-import { parseTitleForDeadline } from '@/lib/task-title-parser';
+import {
+  EVENT_TOKEN_REGEX,
+  type GoogleEventColorId,
+  parseProofRequiredFromTitle,
+  parseReminderTimesFromTitle,
+  parseRepeatTokenFromTitle,
+  parseRequiredPomoFromTitle,
+  parseTaskTitleAndSubtasks,
+  parseTitleForDeadline,
+  resolveEventAnchorDate,
+  resolveEventSchedule,
+  resolveTaskDeadline,
+  titleHasDeadlineToken,
+} from '@/lib/task-title-parser';
 import { useFriends } from '@/lib/hooks/useFriends';
 import { useTasks, type DashboardSortMode } from '@/lib/hooks/useTasks';
+import { useGoogleCalendarConnection } from '@/hooks/useGoogleCalendarConnection';
 import { supabase } from '@/lib/supabase';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
+import { syncGoogleCalendarTaskAfterCreate } from '@/lib/google-calendar-mobile-sync';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import type { TaskRowData } from '@/components/TaskRow';
 import { useAuth } from '@/hooks/useAuth';
 import type { Currency } from '@/lib/types';
+import { useReputationScore } from '@/lib/hooks/useReputationScore';
 import { AI_PROFILE_ID, normalizeAiUsername } from '@/lib/constants/ai-profile';
 import { formatFailureCostFromCents, getFailureCostBounds } from '@/lib/domain/failure-cost';
 import { queryKeys } from '@/lib/query/keys';
@@ -96,10 +112,18 @@ function formatTimeUntilDeadline(deadlineIso: string, now: Date = new Date()): s
   return `${totalMinutes} mins until deadline`;
 }
 
+function buildDefaultStartBoundaryDate(deadline: Date, durationMinutes: number): Date {
+  return new Date(deadline.getTime() - durationMinutes * 60 * 1000);
+}
+
 export default function TasksScreen() {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
   const { profile: authProfile, user } = useAuth();
+  const { data: reputationScore } = useReputationScore(user?.id);
+  const { data: googleCalendarConnection } = useGoogleCalendarConnection();
+  const defaultEventDurationMinutes = normalizeEventDurationMinutes(authProfile?.default_event_duration_minutes);
+  const defaultGoogleEventColorId = googleCalendarConnection?.defaultEventColorId ?? '9';
   const queryClient = useQueryClient();
   const rootRef = useRef<View | null>(null);
   const creatorAnchorRef = useRef<View | null>(null);
@@ -251,7 +275,11 @@ export default function TasksScreen() {
     setShowCustomRecurrenceDays(false);
     setRecurrenceDays([]);
     setRequiresProof(defaultRequiresProofForAllTasks);
+    setTimeBoundEnabled(false);
     setEventSyncEnabled(false);
+    setEventStartDate(null);
+    setSelectedGoogleEventColorId(defaultGoogleEventColorId);
+    setShowEventStartAndroidPicker(false);
     setDraftSubtasks([]);
     setNewSubtaskDraft('');
     setShowAndroidPicker(false);
@@ -274,7 +302,11 @@ export default function TasksScreen() {
   const [showCustomRecurrenceDays, setShowCustomRecurrenceDays] = useState(false);
   const [recurrenceDays, setRecurrenceDays] = useState<number[]>([]);
   const [requiresProof, setRequiresProof] = useState(defaultRequiresProofForAllTasks);
+  const [timeBoundEnabled, setTimeBoundEnabled] = useState(false);
   const [eventSyncEnabled, setEventSyncEnabled] = useState(false);
+  const [eventStartDate, setEventStartDate] = useState<Date | null>(null);
+  const [selectedGoogleEventColorId, setSelectedGoogleEventColorId] = useState<GoogleEventColorId>(defaultGoogleEventColorId);
+  const [showEventStartAndroidPicker, setShowEventStartAndroidPicker] = useState(false);
   const [draftSubtasks, setDraftSubtasks] = useState<DraftSubtask[]>([]);
   const [newSubtaskDraft, setNewSubtaskDraft] = useState('');
   const subtaskInputRef = useRef<TextInput | null>(null);
@@ -284,6 +316,10 @@ export default function TasksScreen() {
   const [isSubtaskFocused, setIsSubtaskFocused] = useState(false);
   const trimmedSearchQuery = searchQuery.trim();
   const isSearchActive = trimmedSearchQuery.length > 0;
+  const suggestedStartBoundaryDate = useMemo(
+    () => buildDefaultStartBoundaryDate(deadlineDate, defaultEventDurationMinutes),
+    [deadlineDate, defaultEventDurationMinutes],
+  );
 
   const mergedDueSoonTasks = useMemo(() => {
     const existingIds = new Set(dueSoonTasks.map((task) => task.id));
@@ -637,17 +673,37 @@ function updateCustomReminderDatePart(dateValue: Date) {
     return Array.from(unique.values()).sort((a, b) => a - b);
   }
 
+  function buildReminderDateOnDeadlineDay(deadline: Date, hours: number, minutes: number): Date {
+    const reminderDate = new Date(deadline);
+    reminderDate.setHours(hours, minutes, 0, 0);
+    return reminderDate;
+  }
+
+  function resolveVoucherIdFromTitle(rawTitle: string): string | null {
+    const selfMatch = rawTitle.match(/(?:\bvouch|\.v)\s+(me|self|myself)(?=\s|$|\/)/i);
+    if (selfMatch) return currentUserId;
+
+    const vouchMatch = rawTitle.match(/(?:\bvouch|\.v)\s+([^\s/]+)/i);
+    if (!vouchMatch) return null;
+
+    const name = vouchMatch[1]
+      .toLowerCase()
+      .replace(/^[^a-z0-9@._+-]+/i, '')
+      .replace(/[^a-z0-9@._+-]+$/i, '');
+    if (!name) return null;
+
+    const match = normalizedFriends.find(
+      (friend) => friend.username.toLowerCase().includes(name),
+    );
+    return match?.id ?? null;
+  }
+
   async function handleCreateTask() {
     if (isCreatingTask) return;
 
-    const trimmedTitle = title.trim();
-    if (!trimmedTitle) {
+    const rawTitle = title.trim();
+    if (!rawTitle) {
       Alert.alert('Missing title', 'Please enter a task title.');
-      return;
-    }
-
-    if (Number.isNaN(deadlineDate.getTime()) || deadlineDate.getTime() <= Date.now()) {
-      Alert.alert('Invalid deadline', 'Please choose a future deadline.');
       return;
     }
 
@@ -660,10 +716,6 @@ function updateCustomReminderDatePart(dateValue: Date) {
       voucherValue === 'self'
         ? currentUserId
         : voucherValue;
-    if (!resolvedVoucherId) {
-      Alert.alert('Missing voucher', 'Please select a voucher.');
-      return;
-    }
 
     const normalizedFailureCost = failureCostInput.trim();
     const parsedFailureCostMajor = Number(normalizedFailureCost);
@@ -684,20 +736,143 @@ function updateCustomReminderDatePart(dateValue: Date) {
       return;
     }
 
-    const nowIso = new Date().toISOString();
-    const deadlineIso = deadlineDate.toISOString();
-    const pendingSubtaskTitle = newSubtaskDraft.trim();
-    const trimmedSubtaskTitles = draftSubtasks
-      .map((subtask) => subtask.title.trim())
-      .filter((subtaskTitle) => subtaskTitle.length > 0);
-    if (pendingSubtaskTitle.length > 0) {
-      trimmedSubtaskTitles.push(pendingSubtaskTitle);
+    const eventDurationMinutes = defaultEventDurationMinutes;
+    const parsedTask = parseTaskTitleAndSubtasks(rawTitle);
+    const taskTitle = parsedTask.title.trim();
+    if (!taskTitle) {
+      Alert.alert('Missing title', 'Please enter a task title.');
+      return;
     }
+
+    const requiredPomoParse = parseRequiredPomoFromTitle(rawTitle);
+    if (requiredPomoParse.error) {
+      Alert.alert('Invalid pomodoro requirement', requiredPomoParse.error);
+      return;
+    }
+
+    const parsedVoucherId = resolveVoucherIdFromTitle(rawTitle);
+    const effectiveVoucherId = parsedVoucherId ?? resolvedVoucherId;
+    if (!effectiveVoucherId) {
+      Alert.alert('Missing voucher', 'Please select a voucher.');
+      return;
+    }
+
+    const parsedEventToken = EVENT_TOKEN_REGEX.test(rawTitle);
+    const effectiveEventSyncEnabled = eventSyncEnabled || parsedEventToken;
+    const isStrict = /(^|\s)-strict(?=\s|$)/i.test(rawTitle);
+    const effectiveTimeBoundEnabled = timeBoundEnabled || isStrict;
+
+    let deadlineToCreate = new Date(deadlineDate);
+    const titleHasParserDeadline = titleHasDeadlineToken(rawTitle) || parsedEventToken;
+    if (titleHasParserDeadline) {
+      const parserResolution = resolveTaskDeadline(rawTitle, new Date(), eventDurationMinutes);
+      if (parserResolution.error) {
+        Alert.alert('Invalid deadline', parserResolution.error);
+        return;
+      }
+      deadlineToCreate = parserResolution.deadline;
+    }
+
+    if (Number.isNaN(deadlineToCreate.getTime()) || deadlineToCreate.getTime() <= Date.now()) {
+      Alert.alert('Invalid deadline', 'Please choose a future deadline.');
+      return;
+    }
+
+    let eventStartIso: string | null = null;
+    let eventEndIso: string | null = null;
+    let boundedStartIso: string | null = null;
+    let startOffsetMinutes: number | null = null;
+    if (parsedEventToken) {
+      const anchorResolution = resolveEventAnchorDate(rawTitle, new Date());
+      if (anchorResolution.error) {
+        Alert.alert('Invalid event date', anchorResolution.error);
+        return;
+      }
+
+      const eventResolution = resolveEventSchedule({
+        rawTitle,
+        anchorDate: anchorResolution.anchorDate,
+        defaultDurationMinutes: eventDurationMinutes,
+        now: new Date(),
+      });
+
+      if (eventResolution.error || !eventResolution.startDate || !eventResolution.endDate) {
+        Alert.alert('Invalid event schedule', eventResolution.error ?? 'Event time is invalid.');
+        return;
+      }
+
+      deadlineToCreate = eventResolution.endDate;
+      eventStartIso = eventResolution.startDate.toISOString();
+      eventEndIso = eventResolution.endDate.toISOString();
+      startOffsetMinutes = Math.max(
+        1,
+        Math.round((eventResolution.endDate.getTime() - eventResolution.startDate.getTime()) / 60000),
+      );
+      if (effectiveTimeBoundEnabled) {
+        boundedStartIso = eventStartIso;
+      }
+    } else if (effectiveEventSyncEnabled || effectiveTimeBoundEnabled) {
+      const selectedStartDate = eventStartDate ?? buildDefaultStartBoundaryDate(deadlineToCreate, eventDurationMinutes);
+      if (Number.isNaN(selectedStartDate.getTime()) || selectedStartDate.getTime() >= deadlineToCreate.getTime()) {
+        Alert.alert('Invalid start time', 'Start time must be before the deadline.');
+        return;
+      }
+
+      boundedStartIso = selectedStartDate.toISOString();
+      startOffsetMinutes = Math.max(
+        1,
+        Math.round((deadlineToCreate.getTime() - selectedStartDate.getTime()) / 60000),
+      );
+
+      if (effectiveEventSyncEnabled) {
+        eventStartIso = boundedStartIso;
+        eventEndIso = deadlineToCreate.toISOString();
+      }
+    }
+
+    const parsedReminderTimes = parseReminderTimesFromTitle(rawTitle);
+    const parserReminderEntries: DraftReminder[] = parsedReminderTimes.map(({ hours, minutes }, index) => ({
+      id: `parser-reminder-${index}-${hours}-${minutes}`,
+      source: 'MANUAL',
+      reminderAt: buildReminderDateOnDeadlineDay(deadlineToCreate, hours, minutes),
+    }));
+    const reminderByIso = new Map<string, DraftReminder>();
+    for (const reminder of [...draftReminders, ...parserReminderEntries]) {
+      const iso = reminder.reminderAt.toISOString();
+      if (!reminderByIso.has(iso)) reminderByIso.set(iso, reminder);
+    }
+    const remindersToCreate = sortDraftReminders(Array.from(reminderByIso.values()));
+    const hasPastReminder = remindersToCreate.some((reminder) => reminder.reminderAt.getTime() <= Date.now());
+    if (hasPastReminder) {
+      Alert.alert('Invalid reminder', 'All reminders must be in the future.');
+      return;
+    }
+    const hasReminderAfterDeadline = remindersToCreate.some(
+      (reminder) => reminder.reminderAt.getTime() > deadlineToCreate.getTime(),
+    );
+    if (hasReminderAfterDeadline) {
+      Alert.alert('Invalid reminder', 'Reminders must be before or at the deadline.');
+      return;
+    }
+
+    const pendingSubtaskTitle = newSubtaskDraft.trim();
+    const trimmedSubtaskTitles = [
+      ...parsedTask.subtasks,
+      ...draftSubtasks.map((subtask) => subtask.title.trim()).filter((subtaskTitle) => subtaskTitle.length > 0),
+      ...(pendingSubtaskTitle.length > 0 ? [pendingSubtaskTitle] : []),
+    ];
+
+    const parsedRepeatType = parseRepeatTokenFromTitle(rawTitle);
+    const effectiveRecurrenceType = parsedRepeatType ?? recurrenceType;
+    const titleRequiresProof = parseProofRequiredFromTitle(rawTitle);
+
+    const nowIso = new Date().toISOString();
+    const deadlineIso = deadlineToCreate.toISOString();
 
     const optimisticTaskId = `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const optimisticTask: TaskRowData = {
       id: optimisticTaskId,
-      title: trimmedTitle,
+      title: taskTitle,
       deadline: deadlineIso,
       status: 'ACTIVE',
       has_proof: false,
@@ -723,56 +898,57 @@ function updateCustomReminderDatePart(dateValue: Date) {
     try {
       const userClientInstanceId = await resolveUserClientInstanceId(currentUserId);
       let recurrenceRuleId: string | null = null;
-      const isAiVoucher = resolvedVoucherId === AI_PROFILE_ID;
-      const finalRequiresProof = isAiVoucher ? true : requiresProof;
-      const eventDurationMinutes = normalizeEventDurationMinutes(authProfile?.default_event_duration_minutes);
-      const eventEndIso = eventSyncEnabled ? deadlineIso : null;
-      const eventStartIso = eventSyncEnabled
-        ? new Date(deadlineDate.getTime() - eventDurationMinutes * 60 * 1000).toISOString()
-        : null;
+      const isAiVoucher = effectiveVoucherId === AI_PROFILE_ID;
+      const finalRequiresProof = isAiVoucher ? true : (requiresProof || titleRequiresProof);
+      const googleEventColorId = effectiveEventSyncEnabled ? selectedGoogleEventColorId : null;
 
-      if (recurrenceType) {
+      if (effectiveRecurrenceType) {
         const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
         const recurrenceTime = new Intl.DateTimeFormat('en-GB', {
           hour: '2-digit',
           minute: '2-digit',
           hour12: false,
           timeZone: userTimezone,
-        }).format(deadlineDate);
+        }).format(deadlineToCreate);
 
         const ruleConfig: Record<string, unknown> = {
-          frequency: recurrenceType,
+          frequency: effectiveRecurrenceType,
           interval: 1,
           time_of_day: recurrenceTime,
         };
 
-        if (recurrenceType === 'WEEKLY' && showCustomRecurrenceDays && recurrenceDays.length > 0) {
-          ruleConfig.days_of_week = recurrenceDays;
+        if (effectiveRecurrenceType === 'WEEKLY') {
+          const recurrenceDaysToUse = showCustomRecurrenceDays && recurrenceDays.length > 0
+            ? recurrenceDays
+            : [deadlineToCreate.getDay()];
+          ruleConfig.days_of_week = recurrenceDaysToUse;
         }
 
-        const reminderOffsetsMs = buildManualReminderOffsetsMs(deadlineDate, draftReminders);
+        const reminderOffsetsMs = buildManualReminderOffsetsMs(deadlineToCreate, remindersToCreate);
         const lastGeneratedDate = new Intl.DateTimeFormat('en-CA', {
           timeZone: userTimezone,
           year: 'numeric',
           month: '2-digit',
           day: '2-digit',
-        }).format(deadlineDate);
+        }).format(deadlineToCreate);
 
         const { data: insertedRule, error: recurrenceRuleInsertError } = await supabase
           .from('recurrence_rules')
           .insert({
             user_id: currentUserId,
-            voucher_id: resolvedVoucherId,
-            title: trimmedTitle,
+            voucher_id: effectiveVoucherId,
+            title: taskTitle,
             description: null,
             failure_cost_cents: failureCostCents,
-            required_pomo_minutes: null,
+            required_pomo_minutes: requiredPomoParse.requiredPomoMinutes,
             requires_proof: finalRequiresProof,
             rule_config: ruleConfig as any,
             timezone: userTimezone,
-            google_sync_for_rule: eventSyncEnabled,
-            google_event_duration_minutes: eventSyncEnabled ? eventDurationMinutes : null,
-            google_event_color_id: null,
+            google_sync_for_rule: effectiveEventSyncEnabled,
+            time_bound_for_rule: effectiveTimeBoundEnabled,
+            window_start_offset_minutes: startOffsetMinutes,
+            google_event_duration_minutes: effectiveEventSyncEnabled ? startOffsetMinutes : null,
+            google_event_color_id: googleEventColorId,
             manual_reminder_offsets_ms: reminderOffsetsMs.length > 0 ? reminderOffsetsMs : null,
             last_generated_date: lastGeneratedDate,
           } as any)
@@ -797,17 +973,20 @@ function updateCustomReminderDatePart(dateValue: Date) {
         .from('tasks')
         .insert({
           user_id: currentUserId,
-          voucher_id: resolvedVoucherId,
-          title: trimmedTitle,
+          voucher_id: effectiveVoucherId,
+          title: taskTitle,
           description: null,
           failure_cost_cents: failureCostCents,
+          required_pomo_minutes: requiredPomoParse.requiredPomoMinutes,
           requires_proof: finalRequiresProof,
           deadline: deadlineIso,
           status: 'ACTIVE',
-          google_sync_for_task: eventSyncEnabled,
+          start_at: effectiveTimeBoundEnabled ? boundedStartIso : null,
+          is_strict: effectiveTimeBoundEnabled,
+          google_sync_for_task: effectiveEventSyncEnabled,
           google_event_start_at: eventStartIso,
           google_event_end_at: eventEndIso,
-          google_event_color_id: null,
+          google_event_color_id: googleEventColorId,
           recurrence_rule_id: recurrenceRuleId,
           created_by_user_client_instance_id: userClientInstanceId,
           updated_at: nowIso,
@@ -887,7 +1066,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
         }
       }
 
-      const reminderRows = sortDraftReminders(draftReminders).map((reminder) => {
+      const reminderRows = remindersToCreate.map((reminder) => {
         const reminderIso = reminder.reminderAt.toISOString();
         return {
           parent_task_id: createdTask.id,
@@ -934,6 +1113,21 @@ function updateCustomReminderDatePart(dateValue: Date) {
 
       refetchTasks();
       void syncLocalReminderNotificationsAsync(currentUserId);
+
+      if (effectiveEventSyncEnabled) {
+        void (async () => {
+          const syncResult = await syncGoogleCalendarTaskAfterCreate(createdTask.id);
+          if (syncResult.message) {
+            Toast.show({
+              type: 'proofError',
+              text1: syncResult.message,
+              position: 'bottom',
+              bottomOffset: 84,
+              visibilityTime: 3200,
+            });
+          }
+        })();
+      }
     } catch {
       setOptimisticTasks((prev) => prev.filter((task) => (
         task.id !== optimisticTaskId && task.id !== createdTaskId
@@ -955,6 +1149,11 @@ function updateCustomReminderDatePart(dateValue: Date) {
     const id = setTimeout(() => titleInputRef.current?.focus(), 180);
     return () => clearTimeout(id);
   }, [creatorExpanded]);
+
+  useEffect(() => {
+    if (creatorExpanded) return;
+    setSelectedGoogleEventColorId(defaultGoogleEventColorId);
+  }, [creatorExpanded, defaultGoogleEventColorId]);
 
   useEffect(() => (
     () => {
@@ -1320,6 +1519,16 @@ function updateCustomReminderDatePart(dateValue: Date) {
       return;
     }
 
+    if (result.warningMessage) {
+      Toast.show({
+        type: 'proofError',
+        text1: result.warningMessage,
+        position: 'bottom',
+        bottomOffset: 84,
+        visibilityTime: 3200,
+      });
+    }
+
     refetchTasks();
     if (result.userId) {
       void syncLocalReminderNotificationsAsync(result.userId);
@@ -1392,8 +1601,17 @@ function updateCustomReminderDatePart(dateValue: Date) {
         isAiVoucherSelected={isAiVoucherSelected}
         requiresProof={requiresProof}
         setRequiresProof={setRequiresProof}
+        timeBoundEnabled={timeBoundEnabled}
+        setTimeBoundEnabled={setTimeBoundEnabled}
         eventSyncEnabled={eventSyncEnabled}
         setEventSyncEnabled={setEventSyncEnabled}
+        eventStartDate={eventStartDate}
+        setEventStartDate={setEventStartDate}
+        selectedGoogleEventColorId={selectedGoogleEventColorId}
+        setSelectedGoogleEventColorId={setSelectedGoogleEventColorId}
+        suggestedStartDate={suggestedStartBoundaryDate}
+        showEventStartAndroidPicker={showEventStartAndroidPicker}
+        setShowEventStartAndroidPicker={setShowEventStartAndroidPicker}
       />
 
       <TaskSortMenu
@@ -1410,6 +1628,8 @@ function updateCustomReminderDatePart(dateValue: Date) {
           <TaskTopBar
             displayName={displayName}
             todayParts={todayParts}
+            reputationScore={reputationScore}
+            showReputationBar={authProfile?.display_rp_bar_on_dashboard ?? false}
             creatorAnchorRef={creatorAnchorRef}
             sortButtonRef={sortButtonRef}
             searchInputRef={searchInputRef}

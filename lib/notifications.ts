@@ -15,7 +15,6 @@ const NOTIFICATION_TTL_MS = 30 * 60 * 1000;
 const LOCAL_REMINDER_NOTIFICATION_MAP_KEY = 'vouch_local_reminder_notification_ids_v1';
 const LOCAL_REMINDER_SOUND_KEY = 'vouch_local_reminder_sound_key_v1';
 const ACTIVE_TASK_STATUSES = new Set(['ACTIVE', 'POSTPONED']);
-let activePreviewNotificationId: string | null = null;
 
 function extractNotificationTimestampMs(
   data: Record<string, unknown> | undefined | null,
@@ -74,24 +73,6 @@ async function getNotificationSoundKeyForUserAsync(userId: string): Promise<Noti
   } catch (err) {
     console.warn('[notifications] failed to resolve notification sound key:', err);
     return 'default';
-  }
-}
-
-async function clearActivePreviewNotificationAsync(): Promise<void> {
-  if (!activePreviewNotificationId) return;
-  const previewId = activePreviewNotificationId;
-  activePreviewNotificationId = null;
-
-  try {
-    await Notifications.cancelScheduledNotificationAsync(previewId);
-  } catch {
-    // Preview may already have fired.
-  }
-
-  try {
-    await Notifications.dismissNotificationAsync(previewId);
-  } catch {
-    // Preview may not be visible anymore.
   }
 }
 
@@ -350,46 +331,6 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     await writeLocalReminderSoundKeyAsync(notificationSoundKey);
   } catch (err) {
     console.warn('[notifications] local reminder sync failed:', err);
-  }
-}
-
-export async function previewNotificationSoundAsync(
-  notificationSoundKey: NotificationSoundKey,
-): Promise<boolean> {
-  try {
-    await ensureAndroidNotificationChannelsAsync();
-
-    if (!(await hasGrantedNotificationPermissionAsync())) {
-      return false;
-    }
-
-    await clearActivePreviewNotificationAsync();
-
-    const notificationId = await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Notification sound preview',
-        body: `Previewing ${getNotificationSoundConfig(notificationSoundKey).label}`,
-        sound: resolveNotificationSoundName(notificationSoundKey),
-        data: {
-          preview_sound: true,
-          preview_sound_key: notificationSoundKey,
-        },
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-        seconds: 1,
-        repeats: false,
-        ...(Platform.OS === 'android'
-          ? { channelId: resolveAndroidChannelId(notificationSoundKey) }
-          : {}),
-      },
-    });
-
-    activePreviewNotificationId = notificationId;
-    return true;
-  } catch (err) {
-    console.warn('[notifications] failed to preview notification sound:', err);
-    return false;
   }
 }
 

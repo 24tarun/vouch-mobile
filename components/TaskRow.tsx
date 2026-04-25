@@ -28,6 +28,7 @@ export interface TaskRowData {
   deadline: string; // ISO string
   status?: string;
   has_proof?: boolean;
+  requires_proof?: boolean;
   postponed_at?: string | null;
   recurrence_rule_id?: string | null;
   created_at?: string;
@@ -527,7 +528,11 @@ export function TaskRow({
         <Pressable
           onPress={(e) => {
             e.stopPropagation();
-            onComplete?.(task.id);
+            if (task.requires_proof && !task.has_proof) {
+              openProofSourcePicker();
+            } else {
+              onComplete?.(task.id);
+            }
           }}
           style={({ pressed }) => [styles.circle, pressed && styles.circlePressed]}
           accessibilityRole="checkbox"

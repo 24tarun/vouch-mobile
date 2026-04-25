@@ -73,7 +73,8 @@
       ],
       "expo-video",
       "expo-web-browser",
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      "expo-audio"
     ],
     "extra": {
       "router": {},

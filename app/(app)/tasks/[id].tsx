@@ -228,6 +228,14 @@ function buildTimelineEntries(event: TaskEvent): TimelineEntry[] {
         }),
         ...statusTransition,
       ];
+    case 'UNDO_COMPLETE':
+      return [
+        makeTimelineEntry(event, 'action', {
+          label: 'Completion Undone',
+          tone: 'INFO',
+        }),
+        ...statusTransition,
+      ];
     case 'VOUCHER_ACCEPT':
       return statusTransition;
     case 'VOUCHER_DENY':
@@ -261,7 +269,6 @@ function buildTimelineEntries(event: TaskEvent): TimelineEntry[] {
       })];
     }
     case 'POSTPONE':
-    case 'UNDO_COMPLETE':
     case 'RECTIFY':
     case 'OVERRIDE':
     case 'DEADLINE_MISSED':
@@ -471,10 +478,11 @@ export default function TaskDetailScreen() {
   const recurrenceRule = detail.data?.recurrenceRule ?? null;
   const proofPreviewWidth = screenWidth - spacing.lg * 2;
 
+  const refetchDetail = detail.refetch;
   useFocusEffect(
     useCallback(() => {
-      void detail.refetch();
-    }, [detail.refetch]),
+      void refetchDetail();
+    }, [refetchDetail]),
   );
 
   useEffect(() => {

@@ -12,4 +12,5 @@ export const queryKeys = {
   commitments: (userId: string | null | undefined): QueryKey => ['commitments', userId ?? null],
   commitmentLinks: (commitmentId: string | null | undefined): QueryKey => ['commitment-links', commitmentId ?? null],
   ledger: (userId: string | null | undefined): QueryKey => ['ledger', userId ?? null],
+  reputationScore: (userId: string | null | undefined): QueryKey => ['reputation-score', userId ?? null],
 } as const;

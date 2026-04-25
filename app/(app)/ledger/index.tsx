@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -16,6 +17,8 @@ import { useTheme } from '@/lib/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { PageHeader } from '@/components/PageHeader';
 import { useLedger } from '@/lib/hooks/useLedger';
+import { WEBSITE_URL } from '@/lib/auth-urls';
+import { supabase } from '@/lib/supabase';
 
 type CurrencyCode = 'USD' | 'EUR' | 'INR';
 type LedgerEntryKind = 'failure' | 'rectified' | 'override' | 'voucher_timeout_penalty' | 'other';
@@ -204,6 +207,7 @@ export default function LedgerScreen() {
   const ledger = useLedger(user?.id);
   const [openMonthById, setOpenMonthById] = useState<Record<string, boolean>>({});
   const [refreshing, setRefreshing] = useState(false);
+  const [requestingLedgerSummary, setRequestingLedgerSummary] = useState(false);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -237,6 +241,45 @@ export default function LedgerScreen() {
   }
 
   const projectedDonationDisplayCents = Math.max(0, month.projectedDonationCents);
+
+  async function handleRequestLedgerTillDate() {
+    if (requestingLedgerSummary) return;
+    setRequestingLedgerSummary(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token?.trim();
+      if (!accessToken) {
+        Alert.alert('Not authenticated', 'Please sign in again and retry.');
+        return;
+      }
+
+      const response = await fetch(`${WEBSITE_URL}/api/ledger/till-date`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      const payload = await response.json() as {
+        success?: boolean;
+        error?: string;
+        message?: string;
+      };
+
+      if (!response.ok || !payload.success) {
+        Alert.alert('Could not compile ledger', payload.error ?? 'Request failed.');
+        return;
+      }
+
+      Alert.alert('Email sent', payload.message ?? 'Ledger till date report was sent to your registered email.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Request failed.';
+      Alert.alert('Could not compile ledger', message);
+    } finally {
+      setRequestingLedgerSummary(false);
+    }
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -290,6 +333,20 @@ export default function LedgerScreen() {
 
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>{month.label}</Text>
+              <TouchableOpacity
+                style={styles.ledgerRequestButton}
+                onPress={() => { void handleRequestLedgerTillDate(); }}
+                disabled={requestingLedgerSummary}
+                activeOpacity={0.82}
+                accessibilityRole="button"
+                accessibilityLabel="Request Ledger Till Date"
+              >
+                {requestingLedgerSummary ? (
+                  <ActivityIndicator size="small" color={colors.text} />
+                ) : (
+                  <Text style={styles.ledgerRequestButtonLabel}>Request Ledger Till Date</Text>
+                )}
+              </TouchableOpacity>
             </View>
 
             {month.entries.length === 0 ? (
@@ -435,13 +492,30 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     borderBottomColor: colors.border,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
   },
   sectionTitle: {
     fontSize: 25,
     color: colors.textMuted,
     fontWeight: typography.semibold,
     letterSpacing: -0.6,
+  },
+  ledgerRequestButton: {
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surface2,
+    borderRadius: 999,
+    minHeight: 34,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ledgerRequestButtonLabel: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: typography.medium,
+    letterSpacing: 0.2,
   },
   emptyText: {
     color: colors.textSubtle,

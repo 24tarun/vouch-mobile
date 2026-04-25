@@ -115,6 +115,15 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontWeight: typography.normal,
     flexShrink: 1,
   },
+  settingsBlock: {
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  settingsHelpText: {
+    fontSize: typography.sm,
+    color: colors.textMuted,
+    lineHeight: 18,
+  },
   rowLabelDestructive: {
     color: colors.destructive,
   },
@@ -225,6 +234,33 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   errorText: {
     fontSize: typography.sm,
     color: colors.destructive,
+  },
+  eventColorOptionsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  eventColorDotButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surface2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  eventColorDotButtonSelected: {
+    borderColor: colors.accentCyan,
+    backgroundColor: '#00D9FF14',
+  },
+  eventColorDotSwatch: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   savingText: {
     fontSize: typography.sm,

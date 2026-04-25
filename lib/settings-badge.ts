@@ -2,10 +2,10 @@ function getNavBadgeSeenStorageKey(prefix: string, userId: string) {
   return `${prefix}${userId}`;
 }
 
-export const SETTINGS_FRIEND_REQUESTS_SEEN_STORAGE_PREFIX =
+const SETTINGS_FRIEND_REQUESTS_SEEN_STORAGE_PREFIX =
   'vouch:settings-friend-requests:last-seen:';
 
-export const FRIENDS_VOUCH_REQUESTS_SEEN_STORAGE_PREFIX =
+const FRIENDS_VOUCH_REQUESTS_SEEN_STORAGE_PREFIX =
   'vouch:friends-vouch-requests:last-seen:';
 
 export function getSettingsFriendRequestsSeenStorageKey(userId: string) {

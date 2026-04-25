@@ -40,6 +40,6 @@ export function formatReminderTimeChip(date: Date): string {
 
 export function normalizeEventDurationMinutes(value: number | null | undefined): number {
   const numeric = typeof value === 'number' ? value : NaN;
-  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= 720) return numeric;
+  if (Number.isInteger(numeric) && numeric >= 0 && numeric <= 1000) return numeric;
   return 60;
 }

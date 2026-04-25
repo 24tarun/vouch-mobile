@@ -14,6 +14,9 @@
 		A9130DA034A6ED2A86F1E929 /* libPods-Vouch.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 9D00FDBA603BC903727DC5BC /* libPods-Vouch.a */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
+		14B232B7107644D0A152B0D6 /* notification_tone_01.wav in Resources */ = {isa = PBXBuildFile; fileRef = 8F25114CA9094A2A9E8209C7 /* notification_tone_01.wav */; };
+		3EA807D11E5A4A6D853EE60A /* notification_tone_02.wav in Resources */ = {isa = PBXBuildFile; fileRef = CFA6262073614EDAAF7B5FA1 /* notification_tone_02.wav */; };
+		6F686CBBC9344625A717C8B8 /* notification_tone_03.wav in Resources */ = {isa = PBXBuildFile; fileRef = 1BC6E24B01ED44D7BA0F06F0 /* notification_tone_03.wav */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +34,9 @@
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Vouch/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* Vouch-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "Vouch-Bridging-Header.h"; path = "Vouch/Vouch-Bridging-Header.h"; sourceTree = "<group>"; };
+		8F25114CA9094A2A9E8209C7 /* notification_tone_01.wav */ = {isa = PBXFileReference; name = "notification_tone_01.wav"; path = "Vouch/notification_tone_01.wav"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		CFA6262073614EDAAF7B5FA1 /* notification_tone_02.wav */ = {isa = PBXFileReference; name = "notification_tone_02.wav"; path = "Vouch/notification_tone_02.wav"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		1BC6E24B01ED44D7BA0F06F0 /* notification_tone_03.wav */ = {isa = PBXFileReference; name = "notification_tone_03.wav"; path = "Vouch/notification_tone_03.wav"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -64,6 +70,9 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
 				4CB068829DF385A65496EEEA /* PrivacyInfo.xcprivacy */,
+				8F25114CA9094A2A9E8209C7 /* notification_tone_01.wav */,
+				CFA6262073614EDAAF7B5FA1 /* notification_tone_02.wav */,
+				1BC6E24B01ED44D7BA0F06F0 /* notification_tone_03.wav */,
 			);
 			name = Vouch;
 			sourceTree = "<group>";
@@ -198,6 +207,9 @@
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
 				69880CB50793ADEFBC232387 /* PrivacyInfo.xcprivacy in Resources */,
+				14B232B7107644D0A152B0D6 /* notification_tone_01.wav in Resources */,
+				3EA807D11E5A4A6D853EE60A /* notification_tone_02.wav in Resources */,
+				6F686CBBC9344625A717C8B8 /* notification_tone_03.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -369,12 +381,12 @@
 					"-lc++",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
-				PRODUCT_BUNDLE_IDENTIFIER = com.tarun.vouch;
-				PRODUCT_NAME = Vouch;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.vouch.mobile";
+				PRODUCT_NAME = "Vouch";
 				SWIFT_OBJC_BRIDGING_HEADER = "Vouch/Vouch-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1";
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Debug;
@@ -401,11 +413,11 @@
 					"-lc++",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
-				PRODUCT_BUNDLE_IDENTIFIER = com.tarun.vouch;
-				PRODUCT_NAME = Vouch;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.vouch.mobile";
+				PRODUCT_NAME = "Vouch";
 				SWIFT_OBJC_BRIDGING_HEADER = "Vouch/Vouch-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1";
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Release;

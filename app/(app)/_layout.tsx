@@ -284,7 +284,7 @@ export default function AppLayout() {
               />
             ),
           }}
-          listeners={({ navigation }) => ({
+          listeners={() => ({
             tabPress: (e) => {
               if (taskCreatorState.isExpanded) {
                 taskCreatorState.collapse();

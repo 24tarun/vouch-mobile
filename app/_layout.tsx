@@ -1,9 +1,8 @@
-import 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Animated, AppState, Easing, StyleSheet, Text, View, type AppStateStatus } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
@@ -21,6 +20,8 @@ import {
 } from '@/lib/notifications';
 import { PomodoroProvider } from '@/components/pomodoro/PomodoroProvider';
 import { AppQueryProvider } from '@/lib/query/client';
+import { createRealtimeRateLimiter } from '@/lib/query/realtimeRateLimiter';
+import { supabase } from '@/lib/supabase';
 
 void SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -234,8 +235,78 @@ function AuthGuard() {
       return;
     }
 
+    let disposed = false;
+    let syncInFlight = false;
+    let syncQueued = false;
+
+    const runReminderSync = async () => {
+      if (disposed) return;
+      if (syncInFlight) {
+        syncQueued = true;
+        return;
+      }
+
+      syncInFlight = true;
+      try {
+        do {
+          syncQueued = false;
+          await syncLocalReminderNotificationsAsync(userId);
+        } while (!disposed && syncQueued);
+      } finally {
+        syncInFlight = false;
+      }
+    };
+
+    const reminderSyncLimiter = createRealtimeRateLimiter({
+      label: `local-reminders:${userId}`,
+      callback: () => {
+        void runReminderSync();
+      },
+      maxRunsPerWindow: 60,
+      minIntervalMs: 1000,
+    });
+
+    const tasksChannel = supabase
+      .channel(`local-reminder-sync:tasks:${userId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${userId}` },
+        () => {
+          reminderSyncLimiter.trigger();
+        },
+      )
+      .subscribe();
+
+    const remindersChannel = supabase
+      .channel(`local-reminder-sync:task-reminders:${userId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'task_reminders', filter: `user_id=eq.${userId}` },
+        () => {
+          reminderSyncLimiter.trigger();
+        },
+      )
+      .subscribe();
+
+    const profileChannel = supabase
+      .channel(`local-reminder-sync:profile:${userId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
+        () => {
+          reminderSyncLimiter.trigger();
+        },
+      )
+      .subscribe();
+
+    const appStateSubscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        void runReminderSync();
+      }
+    });
+
     void registerForPushNotificationsAsync(userId);
-    void syncLocalReminderNotificationsAsync(userId);
+    void runReminderSync();
     void Notifications.getLastNotificationResponseAsync().then(routeFromNotificationResponse);
 
     // Notification received while app is open — no special action needed since
@@ -251,6 +322,12 @@ function AuthGuard() {
     );
 
     return () => {
+      disposed = true;
+      reminderSyncLimiter.dispose();
+      appStateSubscription.remove();
+      void supabase.removeChannel(tasksChannel);
+      void supabase.removeChannel(remindersChannel);
+      void supabase.removeChannel(profileChannel);
       notificationListener.current?.remove();
       responseListener.current?.remove();
     };

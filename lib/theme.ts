@@ -78,9 +78,6 @@ export const lightColors = {
 
 export type Colors = { [K in keyof typeof darkColors]: string };
 
-// Kept for backwards compatibility in static style files — prefer useTheme().colors in components
-export const colors = darkColors;
-
 export const spacing = {
   xs: 4,
   sm: 8,

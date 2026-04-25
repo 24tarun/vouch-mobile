@@ -73,10 +73,6 @@ export function getNotificationSoundConfig(
   return NOTIFICATION_SOUND_CONFIGS[key];
 }
 
-export function getNotificationSoundPayloadSound(key: NotificationSoundKey): string {
-  return getNotificationSoundConfig(key).soundFileName;
-}
-
 export function getNotificationSoundChannelId(key: NotificationSoundKey): string {
   return getNotificationSoundConfig(key).androidChannelId;
 }
@@ -85,7 +81,7 @@ export function getNotificationSoundPreviewAsset(key: NotificationSoundKey): num
   return getNotificationSoundConfig(key).previewAsset;
 }
 
-export function isNotificationSoundKey(value: unknown): value is NotificationSoundKey {
+function isNotificationSoundKey(value: unknown): value is NotificationSoundKey {
   return typeof value === 'string' && NOTIFICATION_SOUND_KEYS.includes(value as NotificationSoundKey);
 }
 

@@ -32,6 +32,7 @@ type RawTask = {
   deadline: string;
   status: string;
   has_proof?: boolean | null;
+  requires_proof?: boolean | null;
   created_at: string;
   updated_at?: string;
   postponed_at?: string | null;
@@ -88,6 +89,7 @@ function toPastRowData(row: RawTask): TaskRowData {
     deadline: row.deadline,
     status: row.status,
     has_proof: Boolean(row.has_proof),
+    requires_proof: Boolean(row.requires_proof),
     postponed_at: row.postponed_at ?? null,
     recurrence_rule_id: row.recurrence_rule_id ?? null,
   };
@@ -119,13 +121,13 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
   const [activeRes, pastRes] = await Promise.all([
     supabase
       .from('tasks')
-      .select('id, title, deadline, status, has_proof, created_at, postponed_at, recurrence_rule_id')
+      .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id')
       .eq('user_id', userId)
       .in('status', TASK_ACTIVE_STATUSES)
       .order('deadline', { ascending: true }),
     supabase
       .from('tasks')
-      .select('id, title, deadline, status, has_proof, created_at, postponed_at, recurrence_rule_id')
+      .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id')
       .eq('user_id', userId)
       .in('status', TASK_PAST_STATUSES)
       .order('updated_at', { ascending: false })
@@ -165,6 +167,7 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
       deadline: row.deadline,
       status: row.status,
       has_proof: Boolean(row.has_proof),
+      requires_proof: Boolean(row.requires_proof),
       postponed_at: row.postponed_at ?? null,
       recurrence_rule_id: row.recurrence_rule_id ?? null,
       subtaskTotal: counts?.total,
@@ -196,7 +199,7 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
   };
 }
 
-export function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuckets {
+function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuckets {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -214,7 +217,7 @@ export function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): T
     const offset = pastTasksLenRef.current;
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, title, deadline, status, has_proof, created_at, postponed_at, recurrence_rule_id')
+      .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id')
       .eq('user_id', user.id)
       .in('status', TASK_PAST_STATUSES)
       .order('updated_at', { ascending: false })
@@ -291,6 +294,7 @@ export function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): T
         const deadline = row.deadline ?? existing?.deadline ?? null;
         const title = row.title ?? existing?.title ?? '';
         const hasProof = Boolean(row.has_proof ?? existing?.has_proof);
+        const requiresProof = Boolean(row.requires_proof ?? existing?.requires_proof);
         const postponedAt = row.postponed_at ?? existing?.postponed_at ?? null;
         const recurrenceRuleId = row.recurrence_rule_id ?? existing?.recurrence_rule_id ?? null;
         const createdAt = row.created_at ?? existing?.created_at;
@@ -306,6 +310,7 @@ export function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): T
             deadline,
             status: nextStatus,
             has_proof: hasProof,
+            requires_proof: requiresProof,
             postponed_at: postponedAt,
             recurrence_rule_id: recurrenceRuleId,
             created_at: createdAt,
@@ -338,6 +343,7 @@ export function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): T
             deadline,
             status: nextStatus,
             has_proof: hasProof,
+            requires_proof: requiresProof,
             postponed_at: postponedAt,
             recurrence_rule_id: recurrenceRuleId,
           };

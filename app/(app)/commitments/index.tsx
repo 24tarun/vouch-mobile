@@ -156,7 +156,7 @@ function CreateModal({
   const linkedTaskCount = linkedTasks.length;
   const pledgeCents = linkedTasks.reduce((sum, item) => sum + Number(item.failureCostCents ?? 0), 0);
 
-  function onDateChange(event: DateTimePickerEvent, date?: Date) {
+  function onDateChange(_event: DateTimePickerEvent, date?: Date) {
     if (Platform.OS === 'android') setActivePicker(null);
     if (!date) return;
     if (activePicker === 'start') {

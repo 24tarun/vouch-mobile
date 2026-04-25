@@ -173,11 +173,11 @@ async function realignTaskRemindersAfterPostpone(
   const deadlineDeltaMs = newDeadline.getTime() - oldDeadline.getTime();
   const rowsByReminderIso = new Map<string, any>();
 
-  for (const row of ((existingReminders as Array<{
+  for (const row of ((existingReminders as {
     reminder_at: string;
     source?: string | null;
     created_at: string;
-  }> | null) || [])) {
+  }[] | null) || [])) {
     const reminderMs = new Date(row.reminder_at).getTime();
     if (Number.isNaN(reminderMs) || reminderMs <= nowMs) {
       continue;
@@ -253,7 +253,7 @@ async function realignTaskRemindersAfterPostpone(
   const nextFutureReminderIsoSet = new Set(
     nextFutureRows.map((row) => new Date(row.reminder_at as string).toISOString()),
   );
-  const reminderIdsToDelete = ((existingReminders as Array<{ id: string; reminder_at: string }> | null) || [])
+  const reminderIdsToDelete = ((existingReminders as { id: string; reminder_at: string }[] | null) || [])
     .filter((row) => {
       const reminderMs = new Date(row.reminder_at).getTime();
       if (Number.isNaN(reminderMs) || reminderMs <= nowMs) {

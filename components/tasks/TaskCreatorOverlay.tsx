@@ -18,7 +18,11 @@ import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import { radius } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
-import { titleHasDeadlineToken } from '@/lib/task-title-parser';
+import {
+  GOOGLE_EVENT_COLOR_OPTIONS,
+  type GoogleEventColorId,
+  titleHasDeadlineToken,
+} from '@/lib/task-title-parser';
 import {
   formatReminderDateChip,
   formatReminderDateTimeLabel,
@@ -102,8 +106,17 @@ interface TaskCreatorOverlayProps {
   isAiVoucherSelected: boolean;
   requiresProof: boolean;
   setRequiresProof: Dispatch<SetStateAction<boolean>>;
+  timeBoundEnabled: boolean;
+  setTimeBoundEnabled: Dispatch<SetStateAction<boolean>>;
   eventSyncEnabled: boolean;
   setEventSyncEnabled: Dispatch<SetStateAction<boolean>>;
+  eventStartDate: Date | null;
+  setEventStartDate: Dispatch<SetStateAction<Date | null>>;
+  selectedGoogleEventColorId: GoogleEventColorId;
+  setSelectedGoogleEventColorId: Dispatch<SetStateAction<GoogleEventColorId>>;
+  suggestedStartDate: Date;
+  showEventStartAndroidPicker: boolean;
+  setShowEventStartAndroidPicker: Dispatch<SetStateAction<boolean>>;
 }
 
 export function TaskCreatorOverlay({
@@ -168,8 +181,17 @@ export function TaskCreatorOverlay({
   isAiVoucherSelected,
   requiresProof,
   setRequiresProof,
+  timeBoundEnabled,
+  setTimeBoundEnabled,
   eventSyncEnabled,
   setEventSyncEnabled,
+  eventStartDate,
+  setEventStartDate,
+  selectedGoogleEventColorId,
+  setSelectedGoogleEventColorId,
+  suggestedStartDate,
+  showEventStartAndroidPicker,
+  setShowEventStartAndroidPicker,
 }: TaskCreatorOverlayProps) {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
@@ -644,15 +666,150 @@ export function TaskCreatorOverlay({
 
             <View style={styles.placeholderRow}>
               <View style={styles.placeholderRowTextWrap}>
-                <Text style={styles.placeholderRowTitle}>Is event</Text>
+                <Text style={styles.placeholderRowTitle}>Time bound</Text>
               </View>
               <Switch
-                value={eventSyncEnabled}
-                onValueChange={setEventSyncEnabled}
+                value={timeBoundEnabled}
+                onValueChange={(v) => {
+                  setTimeBoundEnabled(v);
+                  if (!v && !eventSyncEnabled) {
+                    setEventStartDate(null);
+                  }
+                }}
                 trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
                 thumbColor={colors.text}
               />
             </View>
+
+            <View style={styles.placeholderRow}>
+              <View style={styles.placeholderRowTextWrap}>
+                <Text style={styles.placeholderRowTitle}>Is event</Text>
+              </View>
+              <Switch
+                value={eventSyncEnabled}
+                onValueChange={(v) => {
+                  setEventSyncEnabled(v);
+                  if (!v && !timeBoundEnabled) {
+                    setEventStartDate(null);
+                  }
+                }}
+                trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                thumbColor={colors.text}
+              />
+            </View>
+
+            {(timeBoundEnabled || eventSyncEnabled) ? (() => {
+              const pickerDate = eventStartDate ?? suggestedStartDate;
+              const hasManualStartDate = Boolean(eventStartDate);
+
+              return (
+                <View style={styles.placeholderRow}>
+                  <View style={styles.placeholderRowTextWrap}>
+                    <Text style={styles.placeholderRowTitle}>Start time</Text>
+                    <Text style={{ fontSize: 11, color: colors.textMuted }}>
+                      Optional — defaults to deadline − duration
+                    </Text>
+                  </View>
+                  {Platform.OS === 'ios' ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <DateTimePicker
+                        value={pickerDate}
+                        mode="datetime"
+                        display="compact"
+                        onChange={(_e, d) => { if (d) setEventStartDate(d); }}
+                        themeVariant="dark"
+                        accentColor={colors.accentCyan}
+                        style={{ width: 160 }}
+                      />
+                      {hasManualStartDate ? (
+                        <TouchableOpacity
+                          onPress={() => setEventStartDate(null)}
+                          activeOpacity={0.75}
+                          style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface2 }}
+                        >
+                          <Text style={{ fontSize: 12, color: colors.accentCyan }}>
+                            Default
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <TouchableOpacity
+                        style={styles.reminderChip}
+                        activeOpacity={0.8}
+                        onPress={() => setShowEventStartAndroidPicker(true)}
+                      >
+                        <Feather name="clock" size={14} color={colors.textMuted} />
+                        <Text style={styles.reminderChipText}>{formatReminderTimeChip(pickerDate)}</Text>
+                      </TouchableOpacity>
+                      {hasManualStartDate ? (
+                        <TouchableOpacity
+                          onPress={() => setEventStartDate(null)}
+                          activeOpacity={0.75}
+                          style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface2 }}
+                        >
+                          <Text style={{ fontSize: 12, color: colors.accentCyan }}>
+                            Default
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      {showEventStartAndroidPicker ? (
+                        <DateTimePicker
+                          value={pickerDate}
+                          mode="datetime"
+                          display="default"
+                          onChange={(_e, d) => {
+                            setShowEventStartAndroidPicker(false);
+                            if (d) setEventStartDate(d);
+                          }}
+                        />
+                      ) : null}
+                    </View>
+                  )}
+                </View>
+              );
+            })() : null}
+
+            {eventSyncEnabled ? (
+              <View style={styles.eventColorCard}>
+                <View style={styles.placeholderRowTextWrap}>
+                  <Text style={styles.placeholderRowTitle}>Event color</Text>
+                  <Text style={styles.eventColorSubtitle}>
+                    Pick the Google Calendar color for this event.
+                  </Text>
+                </View>
+                <View style={styles.eventColorOptionsWrap}>
+                  {GOOGLE_EVENT_COLOR_OPTIONS.map((option) => {
+                    const isSelected = selectedGoogleEventColorId === option.colorId;
+                    return (
+                      <TouchableOpacity
+                        key={option.colorId}
+                        style={[
+                          styles.eventColorDotButton,
+                          isSelected && styles.eventColorDotButtonSelected,
+                        ]}
+                        activeOpacity={0.85}
+                        onPress={() => setSelectedGoogleEventColorId(option.colorId)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Use ${option.nativeToken.replace('-', '')} event color`}
+                      >
+                        <View
+                          style={[
+                            styles.eventColorDotSwatch,
+                            { backgroundColor: option.swatchHex },
+                          ]}
+                        >
+                          {isSelected ? (
+                            <Feather name="check" size={12} color="#FFFFFF" />
+                          ) : null}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
           </View>
           {!keyboardVisible ? (
             <View style={styles.creatorFooterInline}>

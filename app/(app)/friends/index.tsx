@@ -699,11 +699,12 @@ export default function FriendsScreen() {
   // Safety net: realtime can drop events during reconnect, app backgrounding,
   // or when the screen was unmounted. Refetch on focus so the list always
   // reflects server state the moment the user lands here.
+  const { refetchQueue, refetchHistory } = friendQueue;
   useFocusEffect(
     useCallback(() => {
-      void friendQueue.refetchQueue();
-      void friendQueue.refetchHistory();
-    }, [friendQueue.refetchQueue, friendQueue.refetchHistory]),
+      void refetchQueue();
+      void refetchHistory();
+    }, [refetchQueue, refetchHistory]),
   );
 
   // Release the resolved guard once history confirms the task has landed in a
@@ -1024,11 +1025,12 @@ export default function FriendsScreen() {
         <Text style={styles.headerTitle}>Friends</Text>
         <SegmentedControl
           items={[
-            { key: 'active', label: 'Active', showBadge: false },
-            { key: 'pending', label: 'Pending', badgeCount: awaitingVoucherTasks.length },
-            { key: 'history', label: 'History', showBadge: false },
+            { key: 'active', label: 'Active', showBadge: false, color: colors.destructive },
+            { key: 'pending', label: 'Pending', badgeCount: awaitingVoucherTasks.length, color: colors.warning },
+            { key: 'history', label: 'History', showBadge: false, color: colors.success },
           ]}
           activeKey={activeTab}
+          variant="signal"
           onChange={(key) => {
             setHasUserSelectedTab(true);
             const tab = key as TabView;

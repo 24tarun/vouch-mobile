@@ -11,6 +11,6 @@ function readWebsiteUrl(): string {
 }
 
 export const WEBSITE_URL = readWebsiteUrl();
-export const EMAIL_CONFIRMED_PATH = '/email-confirmed';
+const EMAIL_CONFIRMED_PATH = '/email-confirmed';
 export const EMAIL_CONFIRMATION_URL = `${WEBSITE_URL}${EMAIL_CONFIRMED_PATH}`;
 export const OPEN_APP_SIGN_IN_URL = 'vouch://sign-in';

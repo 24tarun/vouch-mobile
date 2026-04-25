@@ -1553,7 +1553,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
         onTitleChange={handleTitleChange}
         isTitleFocused={isTitleFocused}
         setIsTitleFocused={setIsTitleFocused}
-        keyboardHeight={taskListKeyboardInset}
+
         keyboardVisible={taskListKeyboardInset > 0}
         draftSubtasks={draftSubtasks}
         onToggleDraftSubtask={handleToggleDraftSubtask}

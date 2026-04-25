@@ -205,7 +205,32 @@ export function TaskRow({
 
   async function handleDeleteSubtask(subtaskId: string) {
     const snapshot = subtasks;
+    const deleted = subtasks.find((s) => s.id === subtaskId);
     setSubtasks((prev) => prev.filter((s) => s.id !== subtaskId));
+
+    type TaskListCache = { dueSoonTasks: TaskRowData[]; futureTasks: TaskRowData[]; pastTasks: TaskRowData[]; hasMorePast: boolean };
+    const patchCache = (totalDelta: number, completedDelta: number) => {
+      queryClient.setQueriesData<TaskListCache>(
+        { queryKey: ['task-lists'], exact: false },
+        (current) => {
+          if (!current) return current;
+          const patch = (tasks: TaskRowData[]) =>
+            tasks.map((t) =>
+              t.id === task.id
+                ? {
+                    ...t,
+                    subtaskTotal: Math.max(0, (t.subtaskTotal ?? 0) + totalDelta),
+                    subtaskCompleted: Math.max(0, (t.subtaskCompleted ?? 0) + completedDelta),
+                  }
+                : t,
+            );
+          return { ...current, dueSoonTasks: patch(current.dueSoonTasks), futureTasks: patch(current.futureTasks), pastTasks: patch(current.pastTasks) };
+        },
+      );
+    };
+
+    const completedDelta = deleted?.is_completed ? -1 : 0;
+    patchCache(-1, completedDelta);
 
     try {
       const { error } = await supabase
@@ -216,9 +241,11 @@ export function TaskRow({
 
       if (error) {
         setSubtasks(snapshot);
+        patchCache(1, -completedDelta);
       }
     } catch {
       setSubtasks(snapshot);
+      patchCache(1, -completedDelta);
     }
   }
 

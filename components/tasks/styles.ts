@@ -730,14 +730,6 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  creatorFooter: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.xs,
-    paddingBottom: spacing.sm,
-  },
   creatorFooterInline: {
     paddingTop: 0,
     marginTop: 0,

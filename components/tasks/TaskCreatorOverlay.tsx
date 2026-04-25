@@ -58,7 +58,6 @@ interface TaskCreatorOverlayProps {
   onTitleChange: (text: string) => void;
   isTitleFocused: boolean;
   setIsTitleFocused: Dispatch<SetStateAction<boolean>>;
-  keyboardHeight: number;
   keyboardVisible: boolean;
   draftSubtasks: DraftSubtask[];
   onToggleDraftSubtask: (id: string) => void;
@@ -133,7 +132,6 @@ export function TaskCreatorOverlay({
   onTitleChange,
   isTitleFocused,
   setIsTitleFocused,
-  keyboardHeight,
   keyboardVisible,
   draftSubtasks,
   onToggleDraftSubtask,
@@ -196,8 +194,6 @@ export function TaskCreatorOverlay({
   const { colors } = useTheme();
   const styles = makeStyles(colors);
   const hasDeadlineToken = useMemo(() => titleHasDeadlineToken(title), [title]);
-  const footerBottomOffset = keyboardVisible ? keyboardHeight : 0;
-
   function handleDismissGesture() {
     if (keyboardVisible) {
       Keyboard.dismiss();
@@ -289,7 +285,7 @@ export function TaskCreatorOverlay({
         <KeyboardAwareScrollView
           style={styles.creatorBody}
           enableOnAndroid
-          extraHeight={70}
+          extraHeight={120}
           extraScrollHeight={24}
           keyboardOpeningTime={0}
           showsVerticalScrollIndicator={false}
@@ -310,6 +306,7 @@ export function TaskCreatorOverlay({
                 value={title}
                 onChangeText={onTitleChange}
                 returnKeyType="done"
+                onSubmitEditing={onCreate}
                 onFocus={() => setIsTitleFocused(true)}
                 onBlur={() => setIsTitleFocused(false)}
               />
@@ -367,7 +364,7 @@ export function TaskCreatorOverlay({
                   onChangeText={setNewSubtaskDraft}
                   returnKeyType="done"
                   blurOnSubmit={false}
-                  onSubmitEditing={onAddDraftSubtask}
+                  onSubmitEditing={() => newSubtaskDraft.trim().length === 0 ? onCreate() : onAddDraftSubtask()}
                   onFocus={() => setIsSubtaskFocused(true)}
                   onBlur={() => setIsSubtaskFocused(false)}
                 />
@@ -811,18 +808,10 @@ export function TaskCreatorOverlay({
               </View>
             ) : null}
           </View>
-          {!keyboardVisible ? (
-            <View style={styles.creatorFooterInline}>
-              {footerActions}
-            </View>
-          ) : null}
-        </KeyboardAwareScrollView>
-
-        {keyboardVisible ? (
-          <View style={[styles.creatorFooter, { bottom: footerBottomOffset }]}>
+          <View style={styles.creatorFooterInline}>
             {footerActions}
           </View>
-        ) : null}
+        </KeyboardAwareScrollView>
       </Animated.View>
     </>
   );

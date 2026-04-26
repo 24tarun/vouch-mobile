@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import type { TaskRowData } from '@/components/TaskRow';
@@ -131,7 +131,7 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
       .eq('user_id', userId)
       .in('status', TASK_PAST_STATUSES)
       .order('updated_at', { ascending: false })
-      .limit(PAST_LIMIT),
+      .limit(PAST_LIMIT + 1),
   ]);
 
   if (activeRes.error) throw new Error(activeRes.error.message);
@@ -190,12 +190,13 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
   }
 
   const pastData = (pastRes.data ?? []) as RawTask[];
+  const hasMorePast = pastData.length > PAST_LIMIT;
 
   return {
     dueSoonTasks: sortActiveTasks(dueSoon, sortMode),
     futureTasks: sortActiveTasks(future, sortMode),
-    pastTasks: pastData.map(toPastRowData),
-    hasMorePast: pastData.length === PAST_LIMIT,
+    pastTasks: pastData.slice(0, PAST_LIMIT).map(toPastRowData),
+    hasMorePast,
   };
 }
 
@@ -203,46 +204,62 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  // Stable ref to pastTasks.length so loadMorePastTasks doesn't need it as a dep
   const query = useQuery({
     queryKey: queryKeys.taskLists(user?.id, sortMode),
     queryFn: () => fetchTaskBuckets(user!.id, sortMode),
     enabled: Boolean(user?.id),
   });
+  // Stable ref to pastTasks.length so loadMorePastTasks doesn't need it as a dep
   const pastTasksLenRef = useRef((query.data?.pastTasks ?? []).length);
   pastTasksLenRef.current = (query.data?.pastTasks ?? []).length;
 
+  // Stable refetch reference — useFocusEffect in the tasks screen depends on this
+  // via useCallback; an unstable reference would cause useFocusEffect to re-run
+  // every time the query re-renders, overwriting any load-more pagination state.
+  const queryRefetchRef = useRef(query.refetch);
+  queryRefetchRef.current = query.refetch;
+  const refetch = useCallback(() => { void queryRefetchRef.current(); }, []);
+
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const loadMorePastTasks = useCallback(async () => {
-    if (!user?.id) return;
+    if (!user?.id || loadingMore) return;
     const offset = pastTasksLenRef.current;
-    const { data, error } = await supabase
-      .from('tasks')
-      .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id')
-      .eq('user_id', user.id)
-      .in('status', TASK_PAST_STATUSES)
-      .order('updated_at', { ascending: false })
-      .range(offset, offset + PAST_LIMIT - 1);
+    setLoadingMore(true);
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id')
+        .eq('user_id', user.id)
+        .in('status', TASK_PAST_STATUSES)
+        .order('updated_at', { ascending: false })
+        .range(offset, offset + PAST_LIMIT);
 
-    if (error || !data) return;
-    queryClient.setQueryData<TaskBucketsData>(
-      queryKeys.taskLists(user.id, sortMode),
-      (current) => {
-        if (!current) return current;
-        const appendedPastTasks = (data as RawTask[]).map(toPastRowData);
-        const existingIds = new Set(current.pastTasks.map((task) => task.id));
-        const nextPastTasks = [
-          ...current.pastTasks,
-          ...appendedPastTasks.filter((task) => !existingIds.has(task.id)),
-        ];
+      if (error || !data) return;
+      queryClient.setQueryData<TaskBucketsData>(
+        queryKeys.taskLists(user.id, sortMode),
+        (current) => {
+          if (!current) return current;
+          const rawBatch = data as RawTask[];
+          const hasMorePast = rawBatch.length > PAST_LIMIT;
+          const appendedPastTasks = rawBatch.slice(0, PAST_LIMIT).map(toPastRowData);
+          const existingIds = new Set(current.pastTasks.map((task) => task.id));
+          const nextPastTasks = [
+            ...current.pastTasks,
+            ...appendedPastTasks.filter((task) => !existingIds.has(task.id)),
+          ];
 
-        return {
-          ...current,
-          pastTasks: nextPastTasks,
-          hasMorePast: appendedPastTasks.length === PAST_LIMIT,
-        };
-      },
-    );
-  }, [queryClient, sortMode, user?.id]);
+          return {
+            ...current,
+            pastTasks: nextPastTasks,
+            hasMorePast,
+          };
+        },
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, queryClient, sortMode, user?.id]);
 
   const subscriptions = useMemo(
     () => user?.id
@@ -376,12 +393,10 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
     futureTasks: query.data?.futureTasks ?? [],
     pastTasks: query.data?.pastTasks ?? [],
     hasMorePast: query.data?.hasMorePast ?? false,
-    loadingMore: false,
+    loadingMore,
     loading: query.isLoading,
     error: query.error instanceof Error ? query.error.message : null,
-    refetch: () => {
-      void query.refetch();
-    },
+    refetch,
     loadMorePastTasks,
   };
 }

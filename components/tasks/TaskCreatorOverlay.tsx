@@ -717,16 +717,18 @@ export function TaskCreatorOverlay({
                       })}
                     </View>
                   ) : null}
-                  <View style={styles.reminderPickerActions}>
+                  <View style={[styles.reminderPickerActions, styles.deadlineModalActions]}>
                     <TouchableOpacity
-                      style={styles.reminderPickerCancel}
+                      style={styles.deadlineModalTrafficCancelBtn}
                       activeOpacity={0.8}
                       onPress={() => setShowCustomDeadlineIosModal(false)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancel deadline picker"
                     >
-                      <Text style={styles.reminderPickerCancelText}>Cancel</Text>
+                      <Feather name="x" size={16} color={trafficIconColor} />
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={styles.reminderPickerConfirm}
+                      style={styles.deadlineModalSetBtn}
                       activeOpacity={0.85}
                       onPress={() => {
                         const didSet = onConfirmCustomDeadline(customDeadlineDate);
@@ -734,8 +736,28 @@ export function TaskCreatorOverlay({
                           setShowCustomDeadlineIosModal(false);
                         }
                       }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Set deadline"
                     >
-                      <Text style={styles.reminderPickerConfirmText}>Set deadline</Text>
+                      <Feather name="calendar" size={16} color={trafficIconColor} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.deadlineQuickCreateBtn, isCreatingTask && styles.sheetCreateButtonDisabled]}
+                      activeOpacity={0.85}
+                      disabled={isCreatingTask}
+                      onPress={() => {
+                        const didSet = onConfirmCustomDeadline(customDeadlineDate);
+                        if (!didSet) return;
+                        setShowCustomDeadlineIosModal(false);
+                        onCreate();
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Set deadline and create task"
+                    >
+                      {isCreatingTask
+                        ? <ActivityIndicator size="small" color={trafficIconColor} />
+                        : <Feather name="check" size={16} color={trafficIconColor} />
+                      }
                     </TouchableOpacity>
                   </View>
                 </View>

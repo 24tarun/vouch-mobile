@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
@@ -176,7 +176,7 @@ async function fetchFriendQueue(userId: string): Promise<VoucherTaskRow[]> {
   }));
 }
 
-async function fetchFriendHistory(userId: string, searchQuery: string): Promise<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }> {
+async function fetchFriendHistory(userId: string, searchQuery: string, offset = 0): Promise<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }> {
   let query = supabase
     .from('tasks')
     .select(`
@@ -194,7 +194,7 @@ async function fetchFriendHistory(userId: string, searchQuery: string): Promise<
     .neq('user_id', userId)
     .in('status', VOUCHER_HISTORY_STATUSES)
     .order('updated_at', { ascending: false })
-    .range(0, HISTORY_PAGE_SIZE - 1);
+    .range(offset, offset + HISTORY_PAGE_SIZE);
 
   if (searchQuery.trim().length > 0) {
     query = query.ilike('title', `%${searchQuery.trim()}%`);
@@ -205,7 +205,7 @@ async function fetchFriendHistory(userId: string, searchQuery: string): Promise<
     throw new Error(error.message);
   }
 
-  const tasks = ((data ?? []) as any[]).map((row) => {
+  const rawBatch = ((data ?? []) as any[]).map((row) => {
     const owner = row.user as { id?: string; username?: string } | null;
     return {
       id: row.id as string,
@@ -223,12 +223,14 @@ async function fetchFriendHistory(userId: string, searchQuery: string): Promise<
   });
 
   return {
-    tasks,
-    hasMore: tasks.length === HISTORY_PAGE_SIZE,
+    tasks: rawBatch.slice(0, HISTORY_PAGE_SIZE),
+    hasMore: rawBatch.length > HISTORY_PAGE_SIZE,
   };
 }
 
 export function useFriendQueue(userId: string | null | undefined, searchQuery: string) {
+  const queryClient = useQueryClient();
+
   const queueQuery = useQuery({
     queryKey: queryKeys.friendQueue(userId),
     queryFn: () => fetchFriendQueue(userId!),
@@ -237,9 +239,46 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
 
   const historyQuery = useQuery({
     queryKey: queryKeys.friendHistory(userId, searchQuery),
-    queryFn: () => fetchFriendHistory(userId!, searchQuery),
+    queryFn: () => fetchFriendHistory(userId!, searchQuery, 0),
     enabled: Boolean(userId),
   });
+
+  // Stable refs so useFocusEffect deps in the screen never change reference,
+  // which would cause useFocusEffect to re-run while focused and wipe pagination.
+  const queueRefetchRef = useRef(queueQuery.refetch);
+  queueRefetchRef.current = queueQuery.refetch;
+  const refetchQueue = useCallback(() => { void queueRefetchRef.current(); }, []);
+
+  const historyRefetchRef = useRef(historyQuery.refetch);
+  historyRefetchRef.current = historyQuery.refetch;
+  const refetchHistory = useCallback(() => { void historyRefetchRef.current(); }, []);
+
+  const historyLenRef = useRef((historyQuery.data?.tasks ?? []).length);
+  historyLenRef.current = (historyQuery.data?.tasks ?? []).length;
+
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+
+  const loadMoreHistory = useCallback(async () => {
+    if (!userId || historyLoadingMore) return;
+    const offset = historyLenRef.current;
+    setHistoryLoadingMore(true);
+    try {
+      const result = await fetchFriendHistory(userId, searchQuery, offset);
+      queryClient.setQueryData<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }>(
+        queryKeys.friendHistory(userId, searchQuery),
+        (current) => {
+          if (!current) return current;
+          const existingIds = new Set(current.tasks.map((t) => t.id));
+          return {
+            tasks: [...current.tasks, ...result.tasks.filter((t) => !existingIds.has(t.id))],
+            hasMore: result.hasMore,
+          };
+        },
+      );
+    } finally {
+      setHistoryLoadingMore(false);
+    }
+  }, [historyLoadingMore, userId, searchQuery, queryClient]);
 
   const subscriptions = useMemo(
     () => userId
@@ -260,7 +299,7 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
     subscriptions,
     // Direct refetch instead of invalidate — invalidateQueries doesn't reliably
     // trigger a background refetch in React Native when the app is already focused.
-    onPayload: userId ? () => { void queueQuery.refetch(); } : undefined,
+    onPayload: userId ? () => { void queueRefetchRef.current(); } : undefined,
     invalidateKeys: [queryKeys.friendHistory(userId, searchQuery)],
   });
 
@@ -268,11 +307,13 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
     tasks: queueQuery.data ?? [],
     loading: queueQuery.isLoading,
     error: queueQuery.error instanceof Error ? queueQuery.error.message : null,
-    refetchQueue: queueQuery.refetch,
+    refetchQueue,
     historyTasks: historyQuery.data?.tasks ?? [],
     historyHasMore: historyQuery.data?.hasMore ?? false,
     historyLoading: historyQuery.isLoading,
+    historyLoadingMore,
     historyError: historyQuery.error instanceof Error ? historyQuery.error.message : null,
-    refetchHistory: historyQuery.refetch,
+    refetchHistory,
+    loadMoreHistory,
   };
 }

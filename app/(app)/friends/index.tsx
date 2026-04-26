@@ -596,27 +596,27 @@ function HistoryRow({
       <FriendAvatar username={username} size={28} />
       <View style={styles.historyRowBody}>
         <Text style={styles.historyTaskTitle} numberOfLines={1}>{task.title}</Text>
-        <Text style={styles.historyTaskMeta} numberOfLines={1}>
-          {username.toLowerCase()} · {timeAgo(task.updated_at)}
-        </Text>
+        <View style={styles.historyRowPillRow}>
+          <StatusPill status={task.status} />
+          <Text style={styles.historyTaskMeta} numberOfLines={1}>
+            {username.toLowerCase()} · {timeAgo(task.updated_at)}
+          </Text>
+        </View>
       </View>
-      <View style={styles.historyRowRight}>
-        <StatusPill status={task.status} />
-        {canRectify ? (
-          <TouchableOpacity
-            style={[styles.rectifyBtn, isRectifying && { opacity: 0.55 }]}
-            onPress={(e) => { e.stopPropagation(); onRectify(); }}
-            disabled={isRectifying}
-            activeOpacity={0.75}
-          >
-            {isRectifying
-              ? <ActivityIndicator size="small" color="#22C55E" />
-              : <Text style={styles.rectifyBtnText}>Rectify</Text>}
-          </TouchableOpacity>
-        ) : (
-          <Feather name="chevron-right" size={15} color={colors.textSubtle} />
-        )}
-      </View>
+      {canRectify ? (
+        <TouchableOpacity
+          style={[styles.rectifyBtn, isRectifying && { opacity: 0.55 }]}
+          onPress={(e) => { e.stopPropagation(); onRectify(); }}
+          disabled={isRectifying}
+          activeOpacity={0.75}
+        >
+          {isRectifying
+            ? <ActivityIndicator size="small" color="#22C55E" />
+            : <Text style={styles.rectifyBtnText}>Rectify</Text>}
+        </TouchableOpacity>
+      ) : (
+        <Feather name="external-link" size={14} color={colors.textSubtle} />
+      )}
     </TouchableOpacity>
   );
 }
@@ -669,6 +669,7 @@ export default function FriendsScreen() {
   const loading = friendQueue.loading;
   const historyLoading = friendQueue.historyLoading;
   const historyHasMore = friendQueue.historyHasMore;
+  const historyLoadingMore = friendQueue.historyLoadingMore;
   const error = friendQueue.error;
   const historyError = friendQueue.historyError;
 
@@ -1161,8 +1162,15 @@ export default function FriendsScreen() {
                   );
                 })}
                 {historyHasMore ? (
-                  <TouchableOpacity style={styles.loadMoreBtn} onPress={() => { void friendQueue.refetchHistory(); }} activeOpacity={0.8}>
-                    <Text style={styles.loadMoreText}>Load more</Text>
+                  <TouchableOpacity
+                    style={styles.loadMoreBtn}
+                    onPress={() => { void friendQueue.loadMoreHistory(); }}
+                    disabled={historyLoadingMore}
+                    activeOpacity={0.8}
+                  >
+                    {historyLoadingMore
+                      ? <ActivityIndicator size="small" color={colors.textMuted} />
+                      : <Text style={styles.loadMoreText}>Load more</Text>}
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -1662,23 +1670,23 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   historyRowBody: {
     flex: 1,
+    minWidth: 0,
   },
   historyTaskTitle: {
     fontSize: typography.base,
     fontWeight: typography.medium,
     color: colors.text,
+    marginBottom: 4,
+  },
+  historyRowPillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   historyTaskMeta: {
     fontSize: typography.xs,
     color: colors.textMuted,
-    marginTop: 2,
-    fontFamily: 'monospace',
-  },
-  historyRowRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    flexShrink: 0,
+    flexShrink: 1,
   },
   rectifyBtn: {
     paddingHorizontal: spacing.sm,

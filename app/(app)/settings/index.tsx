@@ -110,7 +110,7 @@ function SaveStatusTrafficLights({
   const pulse = useRef(new Animated.Value(0)).current;
   const [flashPhase, setFlashPhase] = useState<Exclude<SaveIndicatorPhase, 'idle'> | null>(null);
   const previousPhaseRef = useRef<SaveIndicatorPhase>(phase);
-  const lightSize = 15;
+  const lightSize = 22;
   const lightRadius = lightSize / 2;
 
   useEffect(() => {
@@ -1296,10 +1296,6 @@ export default function SettingsScreen() {
     }
   }
 
-  const avatarInitial = (usernameDraft || profile?.username || '')
-    .trim()
-    .charAt(0)
-    .toUpperCase() || '?';
   const normalizedUsernameDraft = usernameDraft.trim().toLowerCase();
   const resolvedDefaultVoucherId = defaultVoucherId ?? user?.id ?? null;
   const normalizedPomoInput = defaultPomoInput.trim();
@@ -1869,53 +1865,6 @@ export default function SettingsScreen() {
           error={statsError}
         />
 
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Account</Text>
-          <View style={styles.card}>
-            <View style={styles.accountContent}>
-              <View style={styles.accountIdentityRow}>
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{avatarInitial}</Text>
-                </View>
-                <View style={styles.accountIdentityMeta}>
-                  <Text style={styles.accountIdentityTitle}>Account Info</Text>
-                  <Text style={styles.accountIdentitySub} numberOfLines={1} ellipsizeMode="clip">
-                    {profile?.email ?? ''}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <View style={styles.usernameInlineField}>
-                  <Text style={styles.usernameInlineLabel}>Username</Text>
-                  <TextInput
-                    style={styles.usernameInlineInput}
-                    placeholder="username"
-                    placeholderTextColor={colors.textSubtle}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    value={usernameDraft}
-                    onChangeText={(value) => {
-                      setUsernameDraft(value);
-                      setUsernameError(null);
-                    }}
-                  />
-                </View>
-              </View>
-
-              {savingUsername ? <Text style={styles.savingText}>Saving username...</Text> : null}
-              {usernameError ? <Text style={styles.errorText}>{usernameError}</Text> : null}
-            </View>
-            <SettingsRow
-              icon="log-out"
-              label="Sign out"
-              onPress={handleSignOut}
-              destructive
-              tinted
-            />
-          </View>
-        </View>
-
         <FriendsSection
           friendSearchQuery={friendSearchQuery}
           setFriendSearchQuery={setFriendSearchQuery}
@@ -1941,106 +1890,148 @@ export default function SettingsScreen() {
           <View style={styles.card}>
             <View style={styles.defaultsContent}>
               <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>Currency</Text>
+                <View style={styles.inlineField}>
+                  <Text style={styles.inlineFieldLabel}>Email</Text>
+                  <Text style={styles.inlineFieldValue} numberOfLines={1}>{profile?.email ?? ''}</Text>
+                </View>
+              </View>
+
+              <View style={styles.defaultsField}>
+                <View style={styles.inlineField}>
+                  <Text style={styles.inlineFieldLabel}>Username</Text>
+                  <TextInput
+                    style={styles.inlineFieldInput}
+                    placeholder="username"
+                    placeholderTextColor={colors.textSubtle}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    value={usernameDraft}
+                    onChangeText={(value) => {
+                      setUsernameDraft(value);
+                      setUsernameError(null);
+                    }}
+                  />
+                </View>
+              </View>
+
+              {savingUsername ? <Text style={styles.savingText}>Saving username...</Text> : null}
+              {usernameError ? <Text style={styles.errorText}>{usernameError}</Text> : null}
+
+              <View style={styles.defaultsField}>
                 <TouchableOpacity
-                  style={styles.selectButton}
+                  style={styles.inlineFieldButton}
                   onPress={() => setActivePicker('currency')}
                   activeOpacity={0.8}
                   accessibilityRole="button"
                   accessibilityLabel="Select currency"
                 >
-                  <Text style={styles.selectLabel}>{currency}</Text>
-                  <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                  <Text style={styles.inlineFieldLabel}>Currency</Text>
+                  <View style={styles.inlineFieldRight}>
+                    <Text style={styles.inlineFieldValue}>{currency}</Text>
+                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                  </View>
                 </TouchableOpacity>
               </View>
 
               <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>Timezone</Text>
                 <TouchableOpacity
-                  style={styles.selectButton}
+                  style={styles.inlineFieldButton}
                   onPress={() => setActivePicker('timezone')}
                   activeOpacity={0.8}
                   accessibilityRole="button"
                   accessibilityLabel="Select timezone"
                 >
-                  <Text style={styles.selectLabel}>{formatTimeZoneLabel(timeZone)}</Text>
-                  <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                  <Text style={styles.inlineFieldLabel}>Timezone</Text>
+                  <View style={styles.inlineFieldRight}>
+                    <Text style={styles.inlineFieldValue}>{formatTimeZoneLabel(timeZone)}</Text>
+                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                  </View>
                 </TouchableOpacity>
               </View>
 
               <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>Default pomo duration (mins)</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder={`${POMO_MIN_MINUTES}`}
-                  placeholderTextColor={colors.textSubtle}
-                  keyboardType="number-pad"
-                  value={defaultPomoInput}
-                  onChangeText={(value) => {
-                    setDefaultPomoInput(value);
-                    setDefaultsError(null);
-                  }}
-                />
+                <View style={styles.inlineField}>
+                  <Text style={styles.inlineFieldLabel}>Default pomo duration (mins)</Text>
+                  <TextInput
+                    style={styles.inlineFieldInput}
+                    placeholder={`${POMO_MIN_MINUTES}`}
+                    placeholderTextColor={colors.textSubtle}
+                    keyboardType="number-pad"
+                    value={defaultPomoInput}
+                    onChangeText={(value) => {
+                      setDefaultPomoInput(value);
+                      setDefaultsError(null);
+                    }}
+                  />
+                </View>
               </View>
 
               <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>Default time-bound duration (mins)</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder={`${EVENT_DURATION_FALLBACK_MINUTES}`}
-                  placeholderTextColor={colors.textSubtle}
-                  keyboardType="number-pad"
-                  value={defaultEventDurationInput}
-                  onChangeText={(value) => {
-                    setDefaultEventDurationInput(value);
-                    setDefaultsError(null);
-                  }}
-                />
+                <View style={styles.inlineField}>
+                  <Text style={styles.inlineFieldLabel}>Default time-bound duration (mins)</Text>
+                  <TextInput
+                    style={styles.inlineFieldInput}
+                    placeholder={`${EVENT_DURATION_FALLBACK_MINUTES}`}
+                    placeholderTextColor={colors.textSubtle}
+                    keyboardType="number-pad"
+                    value={defaultEventDurationInput}
+                    onChangeText={(value) => {
+                      setDefaultEventDurationInput(value);
+                      setDefaultsError(null);
+                    }}
+                  />
+                </View>
               </View>
 
               <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>{`Default failure cost (${currencySymbol})`}</Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder={`${failureCostBounds.minMajor}`}
-                  placeholderTextColor={colors.textSubtle}
-                  keyboardType={currency === 'INR' ? 'number-pad' : 'decimal-pad'}
-                  value={defaultFailureCostInput}
-                  onChangeText={(value) => {
-                    setDefaultFailureCostInput(value);
-                    setDefaultsError(null);
-                  }}
-                />
+                <View style={styles.inlineField}>
+                  <Text style={styles.inlineFieldLabel}>{`Default failure cost (${currencySymbol})`}</Text>
+                  <TextInput
+                    style={styles.inlineFieldInput}
+                    placeholder={`${failureCostBounds.minMajor}`}
+                    placeholderTextColor={colors.textSubtle}
+                    keyboardType={currency === 'INR' ? 'number-pad' : 'decimal-pad'}
+                    value={defaultFailureCostInput}
+                    onChangeText={(value) => {
+                      setDefaultFailureCostInput(value);
+                      setDefaultsError(null);
+                    }}
+                  />
+                </View>
               </View>
 
               <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>Default voucher</Text>
                 <TouchableOpacity
-                  style={styles.selectButton}
+                  style={styles.inlineFieldButton}
                   onPress={() => setActivePicker('voucher')}
                   activeOpacity={0.8}
                   disabled={voucherLoading}
                   accessibilityRole="button"
                   accessibilityLabel="Select default voucher"
                 >
-                  <Text style={styles.selectLabel}>
-                    {voucherLoading ? 'Loading vouchers...' : defaultVoucherLabel}
-                  </Text>
-                  <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                  <Text style={styles.inlineFieldLabel}>Default voucher</Text>
+                  <View style={styles.inlineFieldRight}>
+                    <Text style={styles.inlineFieldValue}>
+                      {voucherLoading ? 'Loading vouchers...' : defaultVoucherLabel}
+                    </Text>
+                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                  </View>
                 </TouchableOpacity>
               </View>
 
               <View style={styles.defaultsField}>
-                <Text style={styles.defaultsLabel}>Notification sound</Text>
                 <TouchableOpacity
-                  style={styles.selectButton}
+                  style={styles.inlineFieldButton}
                   onPress={() => setActivePicker('notificationSound')}
                   activeOpacity={0.8}
                   accessibilityRole="button"
                   accessibilityLabel="Select notification sound"
                 >
-                  <Text style={styles.selectLabel}>{notificationSoundLabel}</Text>
-                  <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                  <Text style={styles.inlineFieldLabel}>Notification sound</Text>
+                  <View style={styles.inlineFieldRight}>
+                    <Text style={styles.inlineFieldValue}>{notificationSoundLabel}</Text>
+                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                  </View>
                 </TouchableOpacity>
               </View>
 
@@ -2187,8 +2178,14 @@ export default function SettingsScreen() {
         <AppearanceSection />
 
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Session</Text>
+          <Text style={styles.sectionLabel}>Account</Text>
           <View style={styles.card}>
+            <SettingsRow
+              icon="log-out"
+              label="Sign out"
+              onPress={handleSignOut}
+              destructive
+            />
             <SettingsRow
               icon="download"
               label={isExporting ? 'Exporting...' : 'Export my data'}

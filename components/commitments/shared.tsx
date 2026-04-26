@@ -3,6 +3,8 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +13,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import Animated, { useSharedValue, withTiming, useAnimatedStyle, Easing } from 'react-native-reanimated';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
@@ -334,6 +337,15 @@ export function TaskPickerModal({
   const [search, setSearch] = useState('');
   const [linking, setLinking] = useState<string | null>(null);
 
+  const slideY = useSharedValue(600);
+  const backdropOpacity = useSharedValue(0);
+  useEffect(() => {
+    slideY.value = withTiming(0, { duration: 320, easing: Easing.out(Easing.cubic) });
+    backdropOpacity.value = withTiming(1, { duration: 220 });
+  }, []);
+  const animatedPanelStyle = useAnimatedStyle(() => ({ transform: [{ translateY: slideY.value }] }));
+  const animatedBackdropStyle = useAnimatedStyle(() => ({ opacity: backdropOpacity.value }));
+
   useEffect(() => {
     let cancelled = false;
     async function fetchItems() {
@@ -491,53 +503,59 @@ export function TaskPickerModal({
   }
 
   return (
-    <View style={styles.modalOverlay}>
-      <View style={styles.pickerModal}>
-        <View style={styles.pickerHeader}>
-          <Text style={styles.pickerTitle}>Link a task</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={8}>
-            <Feather name="x" size={20} color={colors.textMuted} />
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.pickerSubtitle}>Choose a task or recurring series</Text>
-        <View style={styles.searchWrap}>
-          <Feather name="search" size={15} color={colors.textMuted} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search tasks or series…"
-            placeholderTextColor={colors.textMuted}
-            value={search}
-            onChangeText={setSearch}
-          />
-        </View>
-        {loading ? (
-          <ActivityIndicator color={colors.textMuted} style={{ marginTop: spacing.xl }} />
-        ) : (
-          <FlatList
-            data={filtered}
-            keyExtractor={(item) => `${item.type}:${item.id}`}
-            contentContainerStyle={{ paddingBottom: spacing.lg }}
-            renderItem={({ item }) => (
-              <TouchableOpacity style={styles.pickerRow} onPress={() => linkItem(item)} disabled={!!linking}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.pickerRowTitle} numberOfLines={1}>{item.title}</Text>
-                  <Text style={styles.pickerRowSub}>
-                    {item.type === 'task'
-                      ? `Task due ${item.deadline ? parseDateOnly(item.deadline.slice(0, 10)).toLocaleDateString('en-GB') : ''}`
-                      : 'Recurring series'}
-                  </Text>
-                </View>
-                {linking === `${item.type}:${item.id}` ? (
-                  <ActivityIndicator size="small" color={colors.accentCyan} />
-                ) : (
-                  <Feather name="plus" size={18} color={colors.accentCyan} />
-                )}
-              </TouchableOpacity>
-            )}
-          />
-        )}
-      </View>
-    </View>
+    <Animated.View style={[styles.modalOverlay, animatedBackdropStyle]}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1, justifyContent: 'flex-end' }}
+      >
+        <Animated.View style={[styles.pickerModal, animatedPanelStyle]}>
+          <View style={styles.pickerHeader}>
+            <Text style={styles.pickerTitle}>Link a task</Text>
+            <TouchableOpacity onPress={onClose} hitSlop={8}>
+              <Feather name="x" size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.pickerSubtitle}>Choose a task or recurring series</Text>
+          <View style={styles.searchWrap}>
+            <Feather name="search" size={15} color={colors.textMuted} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search tasks or series…"
+              placeholderTextColor={colors.textMuted}
+              value={search}
+              onChangeText={setSearch}
+            />
+          </View>
+          {loading ? (
+            <ActivityIndicator color={colors.textMuted} style={{ marginTop: spacing.xl }} />
+          ) : (
+            <FlatList
+              data={filtered}
+              keyExtractor={(item) => `${item.type}:${item.id}`}
+              contentContainerStyle={{ paddingBottom: spacing.lg }}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => (
+                <TouchableOpacity style={styles.pickerRow} onPress={() => linkItem(item)} disabled={!!linking}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pickerRowTitle} numberOfLines={1}>{item.title}</Text>
+                    <Text style={styles.pickerRowSub}>
+                      {item.type === 'task'
+                        ? `Task due ${item.deadline ? parseDateOnly(item.deadline.slice(0, 10)).toLocaleDateString('en-GB') : ''}`
+                        : 'Recurring series'}
+                    </Text>
+                  </View>
+                  {linking === `${item.type}:${item.id}` ? (
+                    <ActivityIndicator size="small" color={colors.accentCyan} />
+                  ) : (
+                    <Feather name="plus" size={18} color={colors.accentCyan} />
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          )}
+        </Animated.View>
+      </KeyboardAvoidingView>
+    </Animated.View>
   );
 }
 

@@ -14,6 +14,7 @@ interface Anchor {
 interface VoucherPickerModalProps {
   visible: boolean;
   anchor: Anchor | null;
+  safeTopInset: number;
   voucherDropdownHeight: number;
   setVoucherDropdownHeight: (height: number) => void;
   voucherSearch: string;
@@ -29,6 +30,7 @@ interface VoucherPickerModalProps {
 export function VoucherPickerModal({
   visible,
   anchor,
+  safeTopInset,
   voucherDropdownHeight,
   setVoucherDropdownHeight,
   voucherSearch,
@@ -53,6 +55,14 @@ export function VoucherPickerModal({
       {anchor && (
         <>
           <Pressable style={styles.voucherBackdrop} onPress={closeVoucherPicker} />
+          {(() => {
+            const spacing = 6;
+            const minTop = Math.max(8, safeTopInset + 4);
+            const aboveTop = anchor.pageY - voucherDropdownHeight - spacing;
+            const belowTop = anchor.pageY + anchor.buttonHeight + spacing;
+            const top = aboveTop >= minTop ? aboveTop : belowTop;
+
+            return (
           <View
             onLayout={(e) => setVoucherDropdownHeight(e.nativeEvent.layout.height)}
             style={[
@@ -60,7 +70,7 @@ export function VoucherPickerModal({
               {
                 left: anchor.pageX,
                 width: anchor.width,
-                top: Math.max(8, anchor.pageY - voucherDropdownHeight - 6),
+                top,
               },
             ]}
           >
@@ -98,10 +108,7 @@ export function VoucherPickerModal({
                   <View style={[styles.avatar, styles.avatarSelf]}>
                     <Feather name="user" size={14} color={colors.textMuted} />
                   </View>
-                  <View style={styles.voucherRowText}>
-                    <Text style={styles.voucherName}>Self vouch</Text>
-                    <Text style={styles.voucherSub}>Only you can verify</Text>
-                  </View>
+                  <Text style={styles.voucherName}>Myself</Text>
                   {voucherValue === 'self' && (
                     <Feather name="check" size={16} color={colors.text} />
                   )}
@@ -138,6 +145,8 @@ export function VoucherPickerModal({
               )}
             </ScrollView>
           </View>
+            );
+          })()}
         </>
       )}
     </Modal>

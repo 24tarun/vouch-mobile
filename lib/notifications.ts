@@ -384,3 +384,92 @@ export async function unregisterForPushNotificationsAsync(userId: string): Promi
     console.warn('[notifications] deregistration failed:', err);
   }
 }
+
+interface ProofRequestPushInput {
+  taskId: string;
+  recipientUserId: string;
+}
+
+interface ProofRequestPushResult {
+  success: boolean;
+  error?: string;
+  skipped?: boolean;
+}
+
+function isMissingRpcFunctionError(message: string): boolean {
+  return /could not find the function|function .* does not exist/i.test(message);
+}
+
+async function dispatchProofRequestPushViaRpc(input: ProofRequestPushInput): Promise<ProofRequestPushResult> {
+  try {
+    const { error } = await (supabase.rpc('send_task_proof_requested_push', {
+      p_task_id: input.taskId,
+      p_recipient_user_id: input.recipientUserId,
+    }) as any);
+
+    if (!error) return { success: true };
+    if (isMissingRpcFunctionError(error.message ?? '')) {
+      return { success: false, error: '__rpc_missing__' };
+    }
+    return { success: false, error: error.message ?? 'Push dispatch RPC failed.' };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Push dispatch RPC failed.',
+    };
+  }
+}
+
+async function dispatchProofRequestPushViaEdgeFunction(input: ProofRequestPushInput): Promise<ProofRequestPushResult> {
+  const functionName = process.env.EXPO_PUBLIC_PROOF_REQUEST_PUSH_FUNCTION?.trim();
+  if (!functionName) {
+    return { success: false, error: 'Push dispatch is not configured.', skipped: true };
+  }
+
+  try {
+    const { data, error } = await supabase.functions.invoke(functionName, {
+      body: {
+        event: 'proof_requested',
+        taskId: input.taskId,
+        recipientUserId: input.recipientUserId,
+      },
+    });
+
+    if (error) {
+      return { success: false, error: error.message ?? 'Push dispatch function failed.' };
+    }
+
+    if (data && typeof data === 'object' && 'success' in (data as Record<string, unknown>)) {
+      const payload = data as { success?: unknown; error?: unknown };
+      if (payload.success === false) {
+        return {
+          success: false,
+          error: typeof payload.error === 'string' && payload.error.trim().length > 0
+            ? payload.error
+            : 'Push dispatch function returned an error.',
+        };
+      }
+    }
+
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Push dispatch function failed.',
+    };
+  }
+}
+
+export async function sendProofRequestedPushNotificationAsync(
+  input: ProofRequestPushInput,
+): Promise<ProofRequestPushResult> {
+  if (!input.taskId || !input.recipientUserId) {
+    return { success: false, error: 'Missing taskId or recipient user id.' };
+  }
+
+  const rpcResult = await dispatchProofRequestPushViaRpc(input);
+  if (rpcResult.success) return rpcResult;
+  if (rpcResult.error !== '__rpc_missing__') return rpcResult;
+
+  return dispatchProofRequestPushViaEdgeFunction(input);
+}

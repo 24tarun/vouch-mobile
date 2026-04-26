@@ -796,9 +796,11 @@ export default function TaskDetailScreen() {
                 }),
               ]);
 
-              const purgeResult = await purgeTaskProofForFinalState(task.id);
-              if (!purgeResult.success) {
-                Alert.alert('Override applied, cleanup failed', purgeResult.error);
+              if (task.has_proof) {
+                const purgeResult = await purgeTaskProofForFinalState(task.id);
+                if (!purgeResult.success) {
+                  Alert.alert('Override applied, cleanup failed', purgeResult.error);
+                }
               }
 
               queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
@@ -1159,7 +1161,6 @@ export default function TaskDetailScreen() {
           <Divider />
           <InfoRow icon="user"          label="Voucher"      value={isSelfVouch ? 'Self vouch' : (voucherUsername ? voucherUsername : '—')} />
           {task.postponed_at && (<><Divider /><InfoRow icon="skip-forward" label="Postponed at"  value={formatFullDeadline(task.postponed_at)} /></>)}
-          {task.marked_completed_at && (<><Divider /><InfoRow icon="check-circle" label="Completed at" value={formatFullDeadline(task.marked_completed_at)} /></>)}
         </View>
 
         {/* Flags */}
@@ -1890,12 +1891,11 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontWeight: typography.medium,
   },
   timeline: { paddingVertical: spacing.xs, paddingBottom: spacing.md },
-  timelineRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  timelineRow: { flexDirection: 'row', alignItems: 'stretch' },
   timelineSide: { flex: 1 },
   timelineCenter: {
-    width: 20,
+    width: 12,
     alignItems: 'center',
-    paddingTop: 4,
   },
   timelineMarker: {
     width: 12,
@@ -1906,16 +1906,13 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   timelineAxisSegment: {
     width: 2,
     flex: 1,
-    marginTop: 2,
     backgroundColor: colors.border,
   },
   timelineEntryLeft: {
-    paddingTop: 4,
     paddingBottom: spacing.md,
     gap: spacing.xs,
   },
   timelineEntryRight: {
-    paddingTop: 4,
     paddingBottom: spacing.md,
     gap: spacing.xs,
     alignItems: 'flex-end',

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { spacing } from '@/lib/theme';
@@ -29,6 +30,7 @@ interface TaskSortMenuProps {
   open: boolean;
   anchor: SortAnchor | null;
   sortMenuWidth: number;
+  safeTopInset: number;
   options: SortOption[];
   sortMode: DashboardSortMode;
   onChangeSortMode: (mode: DashboardSortMode) => void;
@@ -39,6 +41,7 @@ export function TaskSortMenu({
   open,
   anchor,
   sortMenuWidth,
+  safeTopInset,
   options,
   sortMode,
   onChangeSortMode,
@@ -46,18 +49,28 @@ export function TaskSortMenu({
 }: TaskSortMenuProps) {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
+  const [menuHeight, setMenuHeight] = useState(0);
   if (!open || !anchor) {
     return null;
   }
+  const estimatedHeight = options.length * 52;
+  const resolvedMenuHeight = menuHeight > 0 ? menuHeight : estimatedHeight;
+  const top = Math.max(
+    safeTopInset,
+    anchor.pageY - resolvedMenuHeight - 8,
+  );
 
   return (
     <>
       <Pressable style={localStyles.backdrop} onPress={onClose} />
       <View
+        onLayout={(event) => {
+          setMenuHeight(event.nativeEvent.layout.height);
+        }}
         style={[
           styles.sortDropdown,
           {
-            top: anchor.pageY + anchor.height + 8,
+            top,
             left: Math.max(spacing.lg, anchor.pageX + anchor.width - sortMenuWidth),
             width: sortMenuWidth,
           },

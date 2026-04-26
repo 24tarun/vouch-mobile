@@ -20,6 +20,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
+import { PageHeader } from '@/components/PageHeader';
 import {
   useCommitments,
   type CommitmentListItem,
@@ -133,9 +134,10 @@ function CreateModal({
   currency: Currency;
   onClose: () => void;
 }) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = makeStyles(colors);
   const queryClient = useQueryClient();
+  const trafficIconColor = isDark ? '#0b1329' : '#0f172a';
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [startDate, setStartDate] = useState(defaultStartDate());
@@ -405,32 +407,41 @@ function CreateModal({
 
         <View style={styles.createFooter}>
           <TouchableOpacity
-            style={[styles.footerBtn, styles.footerBtnSecondary]}
+            style={[styles.trafficFooterBtn, styles.trafficFooterBtnRed, !!savingAction && styles.createBtnDisabled]}
             onPress={onClose}
             disabled={!!savingAction}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel creating commitment"
           >
-            <Text style={styles.footerBtnSecondaryText}>Cancel</Text>
+            <Feather name="x" size={18} color={trafficIconColor} />
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.footerBtn, styles.footerBtnTertiary, !!savingAction && styles.createBtnDisabled]}
+            style={[styles.trafficFooterBtn, styles.trafficFooterBtnAmber, !!savingAction && styles.createBtnDisabled]}
             onPress={() => { void handleCreate('DRAFT'); }}
             disabled={!!savingAction}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Save commitment as draft"
           >
             {savingAction === 'draft' ? (
-              <ActivityIndicator size="small" color={colors.text} />
+              <ActivityIndicator size="small" color={trafficIconColor} />
             ) : (
-              <Text style={styles.footerBtnTertiaryText}>Draft</Text>
+              <Feather name="edit-3" size={18} color={trafficIconColor} />
             )}
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.footerBtn, styles.footerBtnPrimary, !!savingAction && styles.createBtnDisabled]}
+            style={[styles.trafficFooterBtn, styles.trafficFooterBtnGreen, !!savingAction && styles.createBtnDisabled]}
             onPress={() => { void handleCreate('ACTIVE'); }}
             disabled={!!savingAction}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Commit now"
           >
             {savingAction === 'commit' ? (
-              <ActivityIndicator size="small" color={colors.primaryFg} />
+              <ActivityIndicator size="small" color={trafficIconColor} />
             ) : (
-              <Text style={styles.footerBtnPrimaryText}>Commit</Text>
+              <Feather name="check" size={18} color={trafficIconColor} />
             )}
           </TouchableOpacity>
         </View>
@@ -478,8 +489,9 @@ function EmptyState({ onNew }: { onNew: () => void }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CommitmentsPage() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = makeStyles(colors);
+  const trafficIconColor = isDark ? '#0b1329' : '#0f172a';
   const { commitments, currency, loading, error, refetch } = useCommitments();
   const [refreshing, setRefreshing] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -499,16 +511,17 @@ export default function CommitmentsPage() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      {/* Header */}
-      <View style={styles.pageHeader}>
-        <Text style={styles.pageTitle}>Commitments</Text>
-        <View style={styles.headerRight}>
-          {loading && !refreshing && <ActivityIndicator size="small" color={colors.textMuted} />}
-          <TouchableOpacity style={styles.newBtn} onPress={() => setCreateOpen(true)}>
-            <Feather name="plus" size={18} color={colors.text} />
-          </TouchableOpacity>
-        </View>
-      </View>
+      <PageHeader
+        title="Commitments"
+        rightAccessory={(
+          <View style={styles.headerRight}>
+            {loading && !refreshing ? <ActivityIndicator size="small" color={colors.textMuted} /> : null}
+            <TouchableOpacity style={styles.newBtn} onPress={() => setCreateOpen(true)}>
+              <Feather name="plus" size={13} color={trafficIconColor} />
+            </TouchableOpacity>
+          </View>
+        )}
+      />
 
       {error ? (
         <View style={styles.errorWrap}>
@@ -564,27 +577,22 @@ export default function CommitmentsPage() {
 const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
 
-  // Page header
-  pageHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  pageTitle: { fontSize: typography.xl, fontWeight: typography.bold, color: colors.text },
+  // Page header accessory
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   newBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.success,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: '#00000024',
+    shadowColor: colors.success,
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 1,
   },
 
   // Scroll
@@ -931,37 +939,47 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   createBtnDisabled: { opacity: 0.5 },
   createFooter: {
     flexDirection: 'row',
-    gap: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xxl,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.bg,
   },
-  footerBtn: {
-    flex: 1,
-    minHeight: 46,
-    borderRadius: radius.lg,
+  trafficFooterBtn: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: spacing.sm,
-  },
-  footerBtnSecondary: {
-    backgroundColor: 'rgba(190,24,93,0.12)',
+    flexShrink: 0,
     borderWidth: 1,
-    borderColor: 'rgba(244,114,182,0.55)',
+    borderColor: '#00000024',
   },
-  footerBtnTertiary: {
-    backgroundColor: 'rgba(180,83,9,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(245,158,11,0.55)',
+  trafficFooterBtnRed: {
+    backgroundColor: colors.destructive,
+    shadowColor: colors.destructive,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 2,
   },
-  footerBtnPrimary: {
-    backgroundColor: 'rgba(37,99,235,0.28)',
-    borderWidth: 1,
-    borderColor: 'rgba(59,130,246,0.7)',
+  trafficFooterBtnAmber: {
+    backgroundColor: colors.warning,
+    shadowColor: colors.warning,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 2,
   },
-  footerBtnSecondaryText: { color: '#FBCFE8', fontSize: typography.sm, fontWeight: typography.medium },
-  footerBtnTertiaryText: { color: '#FDE68A', fontSize: typography.sm, fontWeight: typography.semibold },
-  footerBtnPrimaryText: { color: '#DBEAFE', fontSize: typography.sm, fontWeight: typography.semibold },
+  trafficFooterBtnGreen: {
+    backgroundColor: colors.success,
+    shadowColor: colors.success,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 2,
+  },
 });

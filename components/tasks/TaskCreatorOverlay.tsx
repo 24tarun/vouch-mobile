@@ -1,30 +1,26 @@
-import { useMemo, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import {
   ActivityIndicator,
-  Animated,
   Keyboard,
   Modal,
   Platform,
   Pressable,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import Animated, { useAnimatedStyle, interpolate, interpolateColor, type SharedValue } from 'react-native-reanimated';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
-import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import { radius } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import {
   GOOGLE_EVENT_COLOR_OPTIONS,
   type GoogleEventColorId,
-  titleHasDeadlineToken,
 } from '@/lib/task-title-parser';
 import {
-  formatReminderDateChip,
   formatReminderDateTimeLabel,
   formatReminderTimeChip,
 } from './helpers';
@@ -47,9 +43,11 @@ interface CreatorAnchor {
 interface TaskCreatorOverlayProps {
   visible: boolean;
   anchor: CreatorAnchor | null;
-  expandAnim: Animated.Value;
+  expandProgress: SharedValue<number>;
   screenWidth: number;
   screenHeight: number;
+  targetTop?: number;
+  targetHeight?: number;
   isCreatingTask: boolean;
   onCancel: () => void;
   onCreate: () => void;
@@ -69,11 +67,15 @@ interface TaskCreatorOverlayProps {
   setNewSubtaskDraft: Dispatch<SetStateAction<string>>;
   onAddDraftSubtask: () => void;
   deadlineDate: Date;
-  datePickerMode: 'date' | 'time';
-  setDatePickerMode: Dispatch<SetStateAction<'date' | 'time'>>;
-  showAndroidPicker: boolean;
-  setShowAndroidPicker: Dispatch<SetStateAction<boolean>>;
-  onDatePickerChange: (_event: DateTimePickerEvent, selected?: Date) => void;
+  customDeadlineDate: Date;
+  customDeadlinePickerMode: 'date' | 'time';
+  showCustomDeadlineAndroidPicker: boolean;
+  onCustomDeadlineAndroidPickerChange: (_event: DateTimePickerEvent, selected?: Date) => void;
+  onOpenDeadlinePickerFlow: () => void;
+  showCustomDeadlineIosModal: boolean;
+  setShowCustomDeadlineIosModal: Dispatch<SetStateAction<boolean>>;
+  setCustomDeadlineDate: Dispatch<SetStateAction<Date>>;
+  onConfirmCustomDeadline: (input?: Date) => boolean | void;
   voucherButtonRef: RefObject<View | null>;
   voucherLabel: string;
   voucherValue: string | null;
@@ -98,6 +100,7 @@ interface TaskCreatorOverlayProps {
   onAddCustomReminder: (input?: Date) => boolean | void;
   recurrenceType: RecurrenceType;
   showCustomRecurrenceDays: boolean;
+  onClearRecurrence: () => void;
   onSelectRecurrenceType: (type: RecurrenceType) => void;
   onToggleCustomRecurrenceDays: () => void;
   recurrenceDays: number[];
@@ -121,9 +124,11 @@ interface TaskCreatorOverlayProps {
 export function TaskCreatorOverlay({
   visible,
   anchor,
-  expandAnim,
+  expandProgress,
   screenWidth,
   screenHeight,
+  targetTop,
+  targetHeight,
   isCreatingTask,
   onCancel,
   onCreate,
@@ -143,11 +148,15 @@ export function TaskCreatorOverlay({
   setNewSubtaskDraft,
   onAddDraftSubtask,
   deadlineDate,
-  datePickerMode,
-  setDatePickerMode,
-  showAndroidPicker,
-  setShowAndroidPicker,
-  onDatePickerChange,
+  customDeadlineDate,
+  customDeadlinePickerMode,
+  showCustomDeadlineAndroidPicker,
+  onCustomDeadlineAndroidPickerChange,
+  onOpenDeadlinePickerFlow,
+  showCustomDeadlineIosModal,
+  setShowCustomDeadlineIosModal,
+  setCustomDeadlineDate,
+  onConfirmCustomDeadline,
   voucherButtonRef,
   voucherLabel,
   voucherValue,
@@ -172,6 +181,7 @@ export function TaskCreatorOverlay({
   onAddCustomReminder,
   recurrenceType,
   showCustomRecurrenceDays,
+  onClearRecurrence,
   onSelectRecurrenceType,
   onToggleCustomRecurrenceDays,
   recurrenceDays,
@@ -193,95 +203,184 @@ export function TaskCreatorOverlay({
 }: TaskCreatorOverlayProps) {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
-  const hasDeadlineToken = useMemo(() => titleHasDeadlineToken(title), [title]);
-  function handleDismissGesture() {
-    if (keyboardVisible) {
-      Keyboard.dismiss();
+  const trafficIconColor = colors.bg;
+  const [startTimePlacement, setStartTimePlacement] = useState<'timeBound' | 'event'>('timeBound');
+  const [expandedControl, setExpandedControl] = useState<'timeBound' | 'eventSync' | null>(null);
+  const [isCostEditing, setIsCostEditing] = useState(false);
+  const isRepeatEnabled = recurrenceType !== '' || showCustomRecurrenceDays;
+  const isProofEnabled = isAiVoucherSelected ? true : requiresProof;
+  const sanitizedSuggestedStartDate = useMemo(() => {
+    const ts = suggestedStartDate?.getTime?.() ?? NaN;
+    if (!Number.isFinite(ts) || ts <= 0) {
+      const fallback = new Date();
+      fallback.setSeconds(0, 0);
+      return fallback;
+    }
+    return suggestedStartDate;
+  }, [suggestedStartDate]);
+
+  // Computed before early return so hooks are always called unconditionally
+  const resolvedTargetTop = targetTop ?? (anchor?.y ?? 0);
+  const resolvedTargetHeight = targetHeight ?? (screenHeight - resolvedTargetTop);
+
+  const animatedOverlayStyle = useAnimatedStyle(() => ({
+    top: interpolate(expandProgress.value, [0, 1], [anchor?.y ?? 0, resolvedTargetTop]),
+    left: interpolate(expandProgress.value, [0, 1], [anchor?.x ?? 0, 0]),
+    width: interpolate(expandProgress.value, [0, 1], [anchor?.width ?? screenWidth, screenWidth]),
+    height: interpolate(expandProgress.value, [0, 1], [anchor?.height ?? 0, resolvedTargetHeight]),
+    borderTopLeftRadius: interpolate(expandProgress.value, [0, 1], [radius.lg, radius.xl]),
+    borderTopRightRadius: interpolate(expandProgress.value, [0, 1], [radius.lg, radius.xl]),
+    borderBottomLeftRadius: interpolate(expandProgress.value, [0, 1], [radius.lg, 0]),
+    borderBottomRightRadius: interpolate(expandProgress.value, [0, 1], [radius.lg, 0]),
+    borderColor: interpolateColor(expandProgress.value, [0, 1], [colors.border, colors.borderStrong]),
+  }));
+
+  useEffect(() => {
+    if (timeBoundEnabled && !eventSyncEnabled) {
+      setStartTimePlacement('timeBound');
       return;
     }
+    if (eventSyncEnabled && !timeBoundEnabled) {
+      setStartTimePlacement('event');
+      return;
+    }
+    if (!timeBoundEnabled && !eventSyncEnabled) {
+      setStartTimePlacement('timeBound');
+    }
+  }, [timeBoundEnabled, eventSyncEnabled]);
+
+  useEffect(() => {
+    if (!visible) {
+      setExpandedControl(null);
+      setIsCostEditing(false);
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (expandedControl === 'timeBound' && !timeBoundEnabled) {
+      setExpandedControl(null);
+      return;
+    }
+    if (expandedControl === 'eventSync' && !eventSyncEnabled) {
+      setExpandedControl(null);
+    }
+  }, [expandedControl, isRepeatEnabled, timeBoundEnabled, eventSyncEnabled]);
+
+  function handleDismissGesture() {
+    Keyboard.dismiss();
     onCancel();
+  }
+
+  function prepareIconInteraction() {
+    if (keyboardVisible) {
+      Keyboard.dismiss();
+    }
+  }
+
+  function handleProofIconPress() {
+    prepareIconInteraction();
+    if (isAiVoucherSelected) return;
+    setRequiresProof((prev) => !prev);
+  }
+
+  function handleTimeBoundIconPress() {
+    prepareIconInteraction();
+    if (!timeBoundEnabled) {
+      setStartTimePlacement('timeBound');
+      setTimeBoundEnabled(true);
+      setExpandedControl('timeBound');
+      return;
+    }
+    if (expandedControl === 'timeBound') {
+      setTimeBoundEnabled(false);
+      if (!eventSyncEnabled) {
+        setEventStartDate(null);
+      }
+      setExpandedControl(null);
+      return;
+    }
+    setStartTimePlacement('timeBound');
+    setExpandedControl('timeBound');
+  }
+
+  function handleEventSyncIconPress() {
+    prepareIconInteraction();
+    if (!eventSyncEnabled) {
+      setStartTimePlacement('event');
+      setEventSyncEnabled(true);
+      setExpandedControl('eventSync');
+      return;
+    }
+    if (expandedControl === 'eventSync') {
+      setEventSyncEnabled(false);
+      if (!timeBoundEnabled) {
+        setEventStartDate(null);
+      }
+      setExpandedControl(null);
+      return;
+    }
+    setStartTimePlacement('event');
+    setExpandedControl('eventSync');
   }
 
   if (!visible || !anchor) {
     return null;
   }
 
-  const footerActions = (
-    <View style={styles.creatorFooterActions}>
-      <TouchableOpacity
-        style={styles.creatorFooterCancelButton}
-        onPress={onCancel}
-        activeOpacity={0.8}
-      >
-        <BlurView intensity={38} tint="dark" style={styles.creatorFooterButtonBlur} />
-        <View style={styles.creatorFooterButtonContent}>
-          <Text style={styles.creatorFooterCancelButtonText}>Cancel</Text>
+  const startTimeExpandedContent = (() => {
+    const hasValidManualStartDate = Boolean(eventStartDate && Number.isFinite(eventStartDate.getTime()) && eventStartDate.getTime() > 0);
+    const pickerDate = hasValidManualStartDate ? eventStartDate! : sanitizedSuggestedStartDate;
+
+    return (
+      <View style={styles.optionsPanelRow}>
+        <View style={styles.optionsPanelTextWrap}>
+          <Text style={styles.optionsPanelLabel}>Start time</Text>
         </View>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.creatorFooterCreateButton, isCreatingTask && styles.sheetCreateButtonDisabled]}
-        onPress={onCreate}
-        disabled={isCreatingTask}
-        activeOpacity={0.8}
-      >
-        <BlurView intensity={42} tint="light" style={styles.creatorFooterButtonBlur} />
-        <View style={styles.creatorFooterCreateTintOverlay} pointerEvents="none" />
-        <View style={styles.creatorFooterButtonContent}>
-          {isCreatingTask
-            ? <ActivityIndicator size="small" color={colors.primaryFg} />
-            : <Text style={styles.creatorFooterCreateButtonText}>Create</Text>
-          }
-        </View>
-      </TouchableOpacity>
-    </View>
-  );
+        {Platform.OS === 'ios' ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <DateTimePicker
+              value={pickerDate}
+              mode="datetime"
+              display="compact"
+              minimumDate={new Date()}
+              onChange={(_e, d) => { if (d) setEventStartDate(d); }}
+              themeVariant="dark"
+              accentColor={colors.accentCyan}
+              style={{ width: 160 }}
+            />
+          </View>
+        ) : (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <TouchableOpacity
+              style={styles.reminderChip}
+              activeOpacity={0.8}
+              onPress={() => setShowEventStartAndroidPicker(true)}
+            >
+              <Feather name="clock" size={14} color={colors.textMuted} />
+              <Text style={styles.reminderChipText}>{formatReminderTimeChip(pickerDate)}</Text>
+            </TouchableOpacity>
+            {showEventStartAndroidPicker ? (
+              <DateTimePicker
+                value={pickerDate}
+                mode="datetime"
+                display="default"
+                minimumDate={new Date()}
+                onChange={(_e, d) => {
+                  setShowEventStartAndroidPicker(false);
+                  if (d) setEventStartDate(d);
+                }}
+              />
+            ) : null}
+          </View>
+        )}
+      </View>
+    );
+  })();
 
   return (
     <>
       <Pressable style={styles.creatorOverlayBackdrop} onPress={handleDismissGesture} />
-      <Animated.View
-        style={[
-          styles.creatorOverlay,
-          {
-            top: expandAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [anchor.y, anchor.y],
-            }),
-            left: expandAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [anchor.x, 0],
-            }),
-            width: expandAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [anchor.width, screenWidth],
-            }),
-            height: expandAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [anchor.height, screenHeight - anchor.y],
-            }),
-            borderTopLeftRadius: expandAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [radius.lg, radius.xl],
-            }),
-            borderTopRightRadius: expandAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [radius.lg, radius.xl],
-            }),
-            borderBottomLeftRadius: expandAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [radius.lg, 0],
-            }),
-            borderBottomRightRadius: expandAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [radius.lg, 0],
-            }),
-            borderColor: expandAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [colors.border, colors.borderStrong],
-            }),
-          },
-        ]}
-      >
+      <Animated.View style={[styles.creatorOverlay, animatedOverlayStyle]}>
         <KeyboardAwareScrollView
           style={styles.creatorBody}
           enableOnAndroid
@@ -385,97 +484,48 @@ export function TaskCreatorOverlay({
 
           <View style={styles.section}>
             <View style={styles.field}>
-              <View style={styles.deadlineField}>
-                <View style={styles.deadlineLabelWrap}>
-                  <Text style={styles.fieldLabel}>Deadline</Text>
-                  {hasDeadlineToken && <View style={styles.parsedDot} />}
-                </View>
-                {Platform.OS === 'ios' ? (
-                  <DateTimePicker
-                    value={deadlineDate}
-                    mode="datetime"
-                    display="compact"
-                    minimumDate={new Date()}
-                    onChange={onDatePickerChange}
-                    themeVariant="dark"
-                    accentColor={colors.warning}
-                    style={styles.datePicker}
-                  />
-                ) : (
-                  <View style={styles.deadlineChipsWrap}>
-                    <TouchableOpacity
-                      style={styles.reminderChip}
-                      activeOpacity={0.8}
-                      onPress={() => {
-                        setDatePickerMode('date');
-                        setShowAndroidPicker(true);
-                      }}
-                    >
-                      <Feather name="calendar" size={14} color={colors.textMuted} />
-                      <Text style={styles.reminderChipText}>{formatReminderDateChip(deadlineDate)}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.reminderChip}
-                      activeOpacity={0.8}
-                      onPress={() => {
-                        setDatePickerMode('time');
-                        setShowAndroidPicker(true);
-                      }}
-                    >
-                      <Feather name="clock" size={14} color={colors.textMuted} />
-                      <Text style={styles.reminderChipText}>{formatReminderTimeChip(deadlineDate)}</Text>
-                    </TouchableOpacity>
-                    {showAndroidPicker && (
-                      <DateTimePicker
-                        value={deadlineDate}
-                        mode={datePickerMode}
-                        display="default"
-                        minimumDate={new Date()}
-                        onChange={onDatePickerChange}
-                      />
-                    )}
-                  </View>
-                )}
-              </View>
-            </View>
-
-            <View style={styles.fieldsRow}>
-              <View style={[styles.field, styles.fieldInRow]} ref={voucherButtonRef} collapsable={false}>
+              <View style={styles.deadlineInlineRow}>
                 <TouchableOpacity
-                  style={styles.inlineLabeledField}
-                  onPress={onOpenVoucherPicker}
-                  activeOpacity={0.8}
+                  style={styles.deadlinePickerTrigger}
+                  activeOpacity={0.85}
+                  onPress={onOpenDeadlinePickerFlow}
+                  accessibilityRole="button"
+                  accessibilityLabel="Change deadline"
                 >
-                  <Feather name="users" size={18} color={colors.textMuted} />
-                  <View style={styles.inlineFieldValueWrap}>
-                    <Text style={[styles.inlineFieldValue, !voucherValue && { color: colors.textSubtle }]}>
+                  <Feather name="calendar" size={20} color="#FBBF24" />
+                  <Text style={styles.deadlinePickerTriggerText}>{formatReminderDateTimeLabel(deadlineDate)}</Text>
+                  <Feather
+                    name="repeat"
+                    size={isRepeatEnabled ? 19 : 17}
+                    color={isRepeatEnabled ? '#C084FC' : colors.textMuted}
+                    style={[styles.deadlinePickerAuxIcon, isRepeatEnabled && styles.deadlinePickerAuxIconActive]}
+                  />
+                </TouchableOpacity>
+                <View style={styles.deadlineInlineDivider} />
+                <View ref={voucherButtonRef} collapsable={false} style={styles.deadlineVoucherAnchor}>
+                  <TouchableOpacity
+                    style={styles.deadlineVoucherButton}
+                    onPress={onOpenVoucherPicker}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Select voucher"
+                  >
+                    <Feather name="users" size={16} color={colors.textMuted} />
+                    <Text style={[styles.deadlineVoucherText, !voucherValue && { color: colors.textSubtle }]}>
                       {voucherLabel}
                     </Text>
-                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              <View style={[styles.field, styles.fieldInRow]}>
-                <Pressable style={styles.inlineLabeledField} onPress={() => failureCostInputRef.current?.focus()}>
-                  <View style={styles.currencyIconsWrap}>
-                    <Text style={styles.currencyIconSymbol}>{currencySymbol}</Text>
-                    <Text style={styles.currencyIconSymbol}>{currencySymbol}</Text>
-                  </View>
-                  <TextInput
-                    ref={failureCostInputRef}
-                    style={styles.inlineFailureCostInput}
-                    value={failureCostInput}
-                    onChangeText={(text) => setFailureCostInput(text.replace(/[^0-9.]/g, ''))}
-                    keyboardType="decimal-pad"
-                    placeholder={friendsLoading ? '…' : '0'}
-                    placeholderTextColor={colors.textSubtle}
-                    returnKeyType="done"
-                    selection={failureCostSelection}
-                    onFocus={() => setFailureCostSelection({ start: failureCostInput.length, end: failureCostInput.length })}
-                    onSelectionChange={() => setFailureCostSelection(undefined)}
+                    <Feather name="chevron-down" size={16} color={colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
+                {showCustomDeadlineAndroidPicker ? (
+                  <DateTimePicker
+                    value={customDeadlineDate}
+                    mode={customDeadlinePickerMode}
+                    display="default"
+                    minimumDate={customDeadlinePickerMode === 'date' ? new Date() : undefined}
+                    onChange={onCustomDeadlineAndroidPickerChange}
                   />
-                </Pressable>
+                ) : null}
               </View>
             </View>
           </View>
@@ -588,228 +638,279 @@ export function TaskCreatorOverlay({
                 </View>
               </Modal>
             )}
+            {Platform.OS === 'ios' && (
+              <Modal
+                visible={showCustomDeadlineIosModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowCustomDeadlineIosModal(false)}
+              >
+                <Pressable
+                  style={styles.reminderPickerBackdrop}
+                  onPress={() => setShowCustomDeadlineIosModal(false)}
+                />
+                <View style={styles.reminderPickerSheet}>
+                  <Text style={styles.reminderPickerTitle}>Choose deadline and repetitions</Text>
+                  <DateTimePicker
+                    value={customDeadlineDate}
+                    mode="datetime"
+                    display="spinner"
+                    minimumDate={new Date()}
+                    onChange={(_event, selected) => {
+                      if (selected) {
+                        setCustomDeadlineDate(selected);
+                      }
+                    }}
+                    themeVariant="dark"
+                    accentColor={colors.warning}
+                  />
+                  <View style={styles.deadlineRecurrenceRows}>
+                    {(['DAILY', 'WEEKLY', 'MONTHLY', 'CUSTOM'] as const).map((option) => {
+                      const isSelected = option === 'CUSTOM'
+                        ? showCustomRecurrenceDays
+                        : recurrenceType === option && !showCustomRecurrenceDays;
 
-            <View style={styles.recurrenceCard}>
-              <View style={styles.recurrenceChipWrap}>
-                <TouchableOpacity
-                  style={[styles.recurrenceChip, recurrenceType === '' && !showCustomRecurrenceDays && styles.recurrenceChipActive]}
-                  activeOpacity={0.8}
-                  onPress={() => onSelectRecurrenceType('')}
-                >
-                  <Text style={[styles.recurrenceChipText, recurrenceType === '' && !showCustomRecurrenceDays && styles.recurrenceChipTextActive]}>None</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.recurrenceChip, recurrenceType === 'DAILY' && !showCustomRecurrenceDays && styles.recurrenceChipActive]}
-                  activeOpacity={0.8}
-                  onPress={() => onSelectRecurrenceType('DAILY')}
-                >
-                  <Text style={[styles.recurrenceChipText, recurrenceType === 'DAILY' && !showCustomRecurrenceDays && styles.recurrenceChipTextActive]}>Daily</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.recurrenceChip, recurrenceType === 'WEEKLY' && !showCustomRecurrenceDays && styles.recurrenceChipActive]}
-                  activeOpacity={0.8}
-                  onPress={() => onSelectRecurrenceType('WEEKLY')}
-                >
-                  <Text style={[styles.recurrenceChipText, recurrenceType === 'WEEKLY' && !showCustomRecurrenceDays && styles.recurrenceChipTextActive]}>Weekly</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.recurrenceChip, recurrenceType === 'MONTHLY' && !showCustomRecurrenceDays && styles.recurrenceChipActive]}
-                  activeOpacity={0.8}
-                  onPress={() => onSelectRecurrenceType('MONTHLY')}
-                >
-                  <Text style={[styles.recurrenceChipText, recurrenceType === 'MONTHLY' && !showCustomRecurrenceDays && styles.recurrenceChipTextActive]}>Monthly</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.recurrenceChip, showCustomRecurrenceDays && styles.recurrenceChipActive]}
-                  activeOpacity={0.8}
-                  onPress={onToggleCustomRecurrenceDays}
-                >
-                  <Text style={[styles.recurrenceChipText, showCustomRecurrenceDays && styles.recurrenceChipTextActive]}>Custom</Text>
-                </TouchableOpacity>
-              </View>
-              {showCustomRecurrenceDays && (
-                <View style={styles.recurrenceDaysRow}>
-                  {WEEKDAY_ORDER.map((day) => {
-                    const selected = recurrenceDays.includes(day);
-                    return (
-                      <TouchableOpacity
-                        key={day}
-                        style={[styles.recurrenceDayBtn, selected && styles.recurrenceDayBtnActive]}
-                        activeOpacity={0.8}
-                        onPress={() => onToggleRecurrenceDay(day)}
-                      >
-                        <Text style={[styles.recurrenceDayText, selected && styles.recurrenceDayTextActive]}>
-                          {WEEKDAY_SHORT[day]}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )}
-            </View>
-
-            <View style={styles.placeholderRow}>
-              <View style={styles.placeholderRowTextWrap}>
-                <Text style={styles.placeholderRowTitle}>Require proof</Text>
-              </View>
-              <Switch
-                value={isAiVoucherSelected ? true : requiresProof}
-                onValueChange={setRequiresProof}
-                disabled={isAiVoucherSelected}
-                trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                thumbColor={colors.text}
-              />
-            </View>
-
-            <View style={styles.placeholderRow}>
-              <View style={styles.placeholderRowTextWrap}>
-                <Text style={styles.placeholderRowTitle}>Time bound</Text>
-              </View>
-              <Switch
-                value={timeBoundEnabled}
-                onValueChange={(v) => {
-                  setTimeBoundEnabled(v);
-                  if (!v && !eventSyncEnabled) {
-                    setEventStartDate(null);
-                  }
-                }}
-                trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                thumbColor={colors.text}
-              />
-            </View>
-
-            <View style={styles.placeholderRow}>
-              <View style={styles.placeholderRowTextWrap}>
-                <Text style={styles.placeholderRowTitle}>Is event</Text>
-              </View>
-              <Switch
-                value={eventSyncEnabled}
-                onValueChange={(v) => {
-                  setEventSyncEnabled(v);
-                  if (!v && !timeBoundEnabled) {
-                    setEventStartDate(null);
-                  }
-                }}
-                trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                thumbColor={colors.text}
-              />
-            </View>
-
-            {(timeBoundEnabled || eventSyncEnabled) ? (() => {
-              const pickerDate = eventStartDate ?? suggestedStartDate;
-              const hasManualStartDate = Boolean(eventStartDate);
-
-              return (
-                <View style={styles.placeholderRow}>
-                  <View style={styles.placeholderRowTextWrap}>
-                    <Text style={styles.placeholderRowTitle}>Start time</Text>
-                    <Text style={{ fontSize: 11, color: colors.textMuted }}>
-                      Optional — defaults to deadline − duration
-                    </Text>
-                  </View>
-                  {Platform.OS === 'ios' ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <DateTimePicker
-                        value={pickerDate}
-                        mode="datetime"
-                        display="compact"
-                        onChange={(_e, d) => { if (d) setEventStartDate(d); }}
-                        themeVariant="dark"
-                        accentColor={colors.accentCyan}
-                        style={{ width: 160 }}
-                      />
-                      {hasManualStartDate ? (
+                      return (
                         <TouchableOpacity
-                          onPress={() => setEventStartDate(null)}
-                          activeOpacity={0.75}
-                          style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface2 }}
-                        >
-                          <Text style={{ fontSize: 12, color: colors.accentCyan }}>
-                            Default
-                          </Text>
-                        </TouchableOpacity>
-                      ) : null}
-                    </View>
-                  ) : (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <TouchableOpacity
-                        style={styles.reminderChip}
-                        activeOpacity={0.8}
-                        onPress={() => setShowEventStartAndroidPicker(true)}
-                      >
-                        <Feather name="clock" size={14} color={colors.textMuted} />
-                        <Text style={styles.reminderChipText}>{formatReminderTimeChip(pickerDate)}</Text>
-                      </TouchableOpacity>
-                      {hasManualStartDate ? (
-                        <TouchableOpacity
-                          onPress={() => setEventStartDate(null)}
-                          activeOpacity={0.75}
-                          style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.surface2 }}
-                        >
-                          <Text style={{ fontSize: 12, color: colors.accentCyan }}>
-                            Default
-                          </Text>
-                        </TouchableOpacity>
-                      ) : null}
-                      {showEventStartAndroidPicker ? (
-                        <DateTimePicker
-                          value={pickerDate}
-                          mode="datetime"
-                          display="default"
-                          onChange={(_e, d) => {
-                            setShowEventStartAndroidPicker(false);
-                            if (d) setEventStartDate(d);
+                          key={option}
+                          style={[styles.deadlineRecurrenceRow, isSelected && styles.deadlineRecurrenceRowActive]}
+                          activeOpacity={0.8}
+                          onPress={() => {
+                            if (option === 'CUSTOM') {
+                              if (showCustomRecurrenceDays) {
+                                onClearRecurrence();
+                                return;
+                              }
+                              onToggleCustomRecurrenceDays();
+                              return;
+                            }
+                            if (isSelected) {
+                              onClearRecurrence();
+                              return;
+                            }
+                            onSelectRecurrenceType(option);
                           }}
-                        />
-                      ) : null}
+                        >
+                          <Text style={[styles.deadlineRecurrenceRowText, isSelected && styles.deadlineRecurrenceRowTextActive]}>
+                            {option === 'CUSTOM' ? 'Custom' : option.charAt(0) + option.slice(1).toLowerCase()}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {showCustomRecurrenceDays ? (
+                    <View style={styles.recurrenceDaysRow}>
+                      {WEEKDAY_ORDER.map((day) => {
+                        const selected = recurrenceDays.includes(day);
+                        return (
+                          <TouchableOpacity
+                            key={day}
+                            style={[styles.recurrenceDayBtn, selected && styles.recurrenceDayBtnActive]}
+                            activeOpacity={0.8}
+                            onPress={() => onToggleRecurrenceDay(day)}
+                          >
+                            <Text style={[styles.recurrenceDayText, selected && styles.recurrenceDayTextActive]}>
+                              {WEEKDAY_SHORT[day]}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
+                  ) : null}
+                  <View style={styles.reminderPickerActions}>
+                    <TouchableOpacity
+                      style={styles.reminderPickerCancel}
+                      activeOpacity={0.8}
+                      onPress={() => setShowCustomDeadlineIosModal(false)}
+                    >
+                      <Text style={styles.reminderPickerCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.reminderPickerConfirm}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        const didSet = onConfirmCustomDeadline(customDeadlineDate);
+                        if (didSet) {
+                          setShowCustomDeadlineIosModal(false);
+                        }
+                      }}
+                    >
+                      <Text style={styles.reminderPickerConfirmText}>Set deadline</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </Modal>
+            )}
+
+            <View style={styles.optionRail}>
+              <TouchableOpacity
+                style={[styles.creatorTrafficFooterBtn, styles.creatorTrafficFooterBtnRed]}
+                onPress={onCancel}
+                disabled={isCreatingTask}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel task creation"
+              >
+                <Feather name="x" size={20} color={trafficIconColor} />
+              </TouchableOpacity>
+
+              <Pressable
+                style={styles.optionCostButton}
+                onPress={() => {
+                  setIsCostEditing(true);
+                  setTimeout(() => failureCostInputRef.current?.focus(), 0);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Edit failure cost"
+              >
+                <View style={styles.optionCostInline}>
+                  <Text style={styles.optionCostCurrency}>{currencySymbol}</Text>
+                  {isCostEditing ? (
+                    <TextInput
+                      ref={failureCostInputRef}
+                      style={styles.optionCostInput}
+                      value={failureCostInput}
+                      onChangeText={(text) => setFailureCostInput(text.replace(/[^0-9.]/g, ''))}
+                      keyboardType="decimal-pad"
+                      placeholder={friendsLoading ? '…' : '0'}
+                      placeholderTextColor={colors.bg}
+                      returnKeyType="done"
+                      selection={failureCostSelection}
+                      onFocus={() => setFailureCostSelection({ start: failureCostInput.length, end: failureCostInput.length })}
+                      onSelectionChange={() => setFailureCostSelection(undefined)}
+                      onBlur={() => setIsCostEditing(false)}
+                      onSubmitEditing={() => setIsCostEditing(false)}
+                    />
+                  ) : (
+                    <Text style={styles.optionCostValueText}>
+                      {failureCostInput.trim().length > 0 ? failureCostInput : '0'}
+                    </Text>
                   )}
                 </View>
-              );
-            })() : null}
+              </Pressable>
 
-            {eventSyncEnabled ? (
-              <View style={styles.eventColorCard}>
-                <View style={styles.placeholderRowTextWrap}>
-                  <Text style={styles.placeholderRowTitle}>Event color</Text>
-                  <Text style={styles.eventColorSubtitle}>
-                    Pick the Google Calendar color for this event.
+              <TouchableOpacity
+                style={[
+                  styles.optionIconButton,
+                  isProofEnabled && styles.optionIconButtonProofActive,
+                  isAiVoucherSelected && styles.optionIconButtonDisabled,
+                ]}
+                activeOpacity={0.8}
+                onPress={handleProofIconPress}
+                disabled={isAiVoucherSelected}
+                accessibilityRole="button"
+                accessibilityLabel={isProofEnabled ? 'Disable proof requirement' : 'Enable proof requirement'}
+              >
+                <Feather name="camera" size={18} color={isProofEnabled ? colors.bg : colors.textMuted} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.optionIconButton,
+                  timeBoundEnabled && styles.optionIconButtonActive,
+                  expandedControl === 'timeBound' && styles.optionIconButtonPanelSelected,
+                ]}
+                activeOpacity={0.8}
+                onPress={handleTimeBoundIconPress}
+                accessibilityRole="button"
+                accessibilityLabel={timeBoundEnabled ? 'Edit time bound options' : 'Enable time bound options'}
+              >
+                <Feather name="clock" size={18} color={timeBoundEnabled ? colors.bg : colors.textMuted} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.optionIconButton,
+                  eventSyncEnabled && styles.optionIconButtonActive,
+                  expandedControl === 'eventSync' && styles.optionIconButtonPanelSelected,
+                ]}
+                activeOpacity={0.8}
+                onPress={handleEventSyncIconPress}
+                accessibilityRole="button"
+                accessibilityLabel={eventSyncEnabled ? 'Edit event options' : 'Enable event options'}
+              >
+                <Feather name="calendar" size={18} color={eventSyncEnabled ? colors.bg : colors.textMuted} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.creatorTrafficFooterBtn, styles.creatorTrafficFooterBtnGreen, isCreatingTask && styles.sheetCreateButtonDisabled]}
+                onPress={onCreate}
+                disabled={isCreatingTask}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Create task"
+              >
+                {isCreatingTask
+                  ? <ActivityIndicator size="small" color={trafficIconColor} />
+                  : <Feather name="check" size={20} color={trafficIconColor} />
+                }
+              </TouchableOpacity>
+            </View>
+
+            {expandedControl ? (
+              <View style={styles.optionsPanel}>
+                <View style={styles.optionsPanelHeader}>
+                  <Text style={styles.optionsPanelTitle}>
+                    {expandedControl === 'timeBound'
+                        ? 'Time bound'
+                        : 'Is event'}
                   </Text>
+                  <TouchableOpacity
+                    style={styles.optionsPanelCloseBtn}
+                    onPress={() => setExpandedControl(null)}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close options panel"
+                  >
+                    <Feather name="x" size={14} color={colors.textMuted} />
+                  </TouchableOpacity>
                 </View>
-                <View style={styles.eventColorOptionsWrap}>
-                  {GOOGLE_EVENT_COLOR_OPTIONS.map((option) => {
-                    const isSelected = selectedGoogleEventColorId === option.colorId;
-                    return (
-                      <TouchableOpacity
-                        key={option.colorId}
-                        style={[
-                          styles.eventColorDotButton,
-                          isSelected && styles.eventColorDotButtonSelected,
-                        ]}
-                        activeOpacity={0.85}
-                        onPress={() => setSelectedGoogleEventColorId(option.colorId)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Use ${option.nativeToken.replace('-', '')} event color`}
-                      >
-                        <View
-                          style={[
-                            styles.eventColorDotSwatch,
-                            { backgroundColor: option.swatchHex },
-                          ]}
-                        >
-                          {isSelected ? (
-                            <Feather name="check" size={12} color="#FFFFFF" />
-                          ) : null}
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+
+                {expandedControl === 'timeBound' && (timeBoundEnabled || eventSyncEnabled) && startTimePlacement === 'timeBound'
+                  ? startTimeExpandedContent
+                  : null}
+                {expandedControl === 'eventSync' && (timeBoundEnabled || eventSyncEnabled) && startTimePlacement === 'event'
+                  ? startTimeExpandedContent
+                  : null}
+
+                {expandedControl === 'eventSync' && eventSyncEnabled ? (
+                  <View style={styles.optionsPanelEventColorRow}>
+                    <View style={styles.optionsPanelTextWrap}>
+                      <Text style={styles.optionsPanelLabel}>Event color</Text>
+                    </View>
+                    <View style={styles.eventColorOptionsWrap}>
+                      {GOOGLE_EVENT_COLOR_OPTIONS.map((option) => {
+                        const isSelected = selectedGoogleEventColorId === option.colorId;
+                        return (
+                          <TouchableOpacity
+                            key={option.colorId}
+                            style={[
+                              styles.eventColorDotButton,
+                              isSelected && styles.eventColorDotButtonSelected,
+                            ]}
+                            activeOpacity={0.85}
+                            onPress={() => setSelectedGoogleEventColorId(option.colorId)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Use ${option.nativeToken.replace('-', '')} event color`}
+                          >
+                            <View
+                              style={[
+                                styles.eventColorDotSwatch,
+                                { backgroundColor: option.swatchHex },
+                              ]}
+                            >
+                              {isSelected ? (
+                                <Feather name="check" size={12} color="#FFFFFF" />
+                              ) : null}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ) : null}
               </View>
             ) : null}
-          </View>
-          <View style={styles.creatorFooterInline}>
-            {footerActions}
           </View>
         </KeyboardAwareScrollView>
       </Animated.View>

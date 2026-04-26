@@ -32,6 +32,7 @@ interface TaskContentProps {
   scrollRef?: RefObject<ScrollView | null>;
   onScrollOffsetChange?: (offsetY: number) => void;
   keyboardBottomInset?: number;
+  bottomInsetOffset?: number;
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
 }
 
@@ -58,14 +59,16 @@ export function TaskContent({
   scrollRef,
   onScrollOffsetChange,
   keyboardBottomInset = 0,
+  bottomInsetOffset = 0,
   onSubtaskComposerFocus,
 }: TaskContentProps) {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
   const router = useRouter();
+  const baseInset = bottomInsetOffset + 24;
   const computedBottomInset = keyboardBottomInset > 0
-    ? keyboardBottomInset + 24
-    : 24;
+    ? Math.max(keyboardBottomInset + 24, baseInset)
+    : baseInset;
 
   return (
     <ScrollView

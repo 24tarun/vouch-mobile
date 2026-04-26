@@ -34,6 +34,7 @@ export function SegmentedControl({
         const badgeCount = item.badgeCount ?? 0;
         const showBadge = item.showBadge !== false && badgeCount > 0;
         const badgeText = badgeCount > 99 ? '99+' : String(badgeCount);
+        const signalBadgeText = badgeCount > 9 ? '9+' : String(badgeCount);
         const signalColor = item.color ?? colors.accentCyan;
 
         return (
@@ -45,13 +46,14 @@ export function SegmentedControl({
               isActive && styles.segOptionActive,
               isSignalVariant
                 ? {
-                    borderColor: isActive ? signalColor : `${signalColor}88`,
-                    backgroundColor: isActive ? signalColor : `${signalColor}44`,
+                    borderColor: isActive ? signalColor : `${signalColor}66`,
+                    backgroundColor: signalColor,
+                    opacity: isActive ? 1 : 0.32,
                     shadowColor: signalColor,
-                    shadowOpacity: isActive ? 0.22 : 0.06,
-                    shadowRadius: isActive ? 8 : 3,
+                    shadowOpacity: isActive ? 0.52 : 0.12,
+                    shadowRadius: isActive ? 10 : 3,
                     shadowOffset: { width: 0, height: 0 },
-                    elevation: isActive ? 4 : 0,
+                    elevation: isActive ? 6 : 0,
                   }
                 : null,
             ]}
@@ -59,38 +61,34 @@ export function SegmentedControl({
             activeOpacity={0.8}
             accessibilityLabel={item.label}
           >
-            <Text
-              style={[
-                styles.segLabel,
-                isSignalVariant && styles.segLabelSignal,
-                isActive && styles.segLabelActive,
-                isSignalVariant
-                  ? (isActive
-                    ? styles.segLabelSignalActive
-                    : styles.segLabelSignalInactive)
-                  : null,
-              ]}
-            >
-              {item.label}
-            </Text>
-            {showBadge ? (
-              <View
+            {!isSignalVariant ? (
+              <Text
                 style={[
-                  styles.segBadge,
-                  isSignalVariant && styles.segBadgeSignal,
+                  styles.segLabel,
+                  isSignalVariant && styles.segLabelSignal,
+                  isActive && styles.segLabelActive,
                   isSignalVariant
-                    ? {
-                        backgroundColor: isActive ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.18)',
-                      }
+                    ? (isActive
+                      ? styles.segLabelSignalActive
+                      : styles.segLabelSignalInactive)
                     : null,
                 ]}
               >
-                <Text
-                  style={[
-                    styles.segBadgeText,
-                    isSignalVariant && { color: '#FFFFFF' },
-                  ]}
-                >
+                {item.label}
+              </Text>
+            ) : null}
+            {isSignalVariant && showBadge ? (
+              <Text style={styles.segSignalCount}>
+                {signalBadgeText}
+              </Text>
+            ) : null}
+            {!isSignalVariant && showBadge ? (
+              <View
+                style={[
+                  styles.segBadge,
+                ]}
+              >
+                <Text style={styles.segBadgeText}>
                   {badgeText}
                 </Text>
               </View>
@@ -113,7 +111,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   segControlSignal: {
     paddingHorizontal: 0,
     paddingVertical: 0,
-    gap: 4,
+    gap: 8,
     backgroundColor: 'transparent',
     borderWidth: 0,
   },
@@ -126,12 +124,16 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     borderRadius: 999,
   },
   segOptionSignal: {
-    minHeight: 28,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
+    width: 22,
+    height: 22,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    borderRadius: 11,
     borderWidth: 1,
     borderColor: colors.borderStrong,
-    backgroundColor: colors.surface2,
+    backgroundColor: colors.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   segOptionActive: {
     backgroundColor: colors.surface,
@@ -164,15 +166,16 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 4,
   },
-  segBadgeSignal: {
-    minWidth: 17,
-    height: 17,
-    borderRadius: 8.5,
-    paddingHorizontal: 4,
-  },
   segBadgeText: {
     fontSize: 10,
     fontWeight: typography.bold,
     color: '#fff',
+  },
+  segSignalCount: {
+    fontSize: 9,
+    fontWeight: typography.bold,
+    color: '#FFFFFF',
+    lineHeight: 10,
+    includeFontPadding: false,
   },
 });

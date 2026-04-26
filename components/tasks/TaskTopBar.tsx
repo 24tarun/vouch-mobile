@@ -1,5 +1,4 @@
-import { Pressable, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Text, View } from 'react-native';
 import type { TodayParts } from './types';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
@@ -11,15 +10,6 @@ interface TaskTopBarProps {
   todayParts: TodayParts;
   reputationScore: ReputationScoreData | null | undefined;
   showReputationBar: boolean;
-  creatorAnchorRef: React.RefObject<View | null>;
-  sortButtonRef: React.RefObject<View | null>;
-  searchInputRef: React.RefObject<TextInput | null>;
-  isSearchOpen: boolean;
-  searchQuery: string;
-  setSearchQuery: (value: string) => void;
-  setIsSearchOpen: (value: boolean) => void;
-  expandCreator: () => void;
-  openSortMenu: () => void;
 }
 
 export function TaskTopBar({
@@ -27,15 +17,6 @@ export function TaskTopBar({
   todayParts,
   reputationScore,
   showReputationBar,
-  creatorAnchorRef,
-  sortButtonRef,
-  searchInputRef,
-  isSearchOpen,
-  searchQuery,
-  setSearchQuery,
-  setIsSearchOpen,
-  expandCreator,
-  openSortMenu,
 }: TaskTopBarProps) {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
@@ -55,71 +36,6 @@ export function TaskTopBar({
           <ReputationBar data={reputationScore} />
         </View>
       )}
-
-      <View ref={creatorAnchorRef} collapsable={false} style={styles.inlineCreatorWrap}>
-        <Pressable
-          style={styles.inlineCreatorBar}
-          onPress={expandCreator}
-          android_ripple={{ color: colors.inputBg, radius: 0 }}
-        >
-          {isSearchOpen ? (
-            <View style={styles.inlineCreatorSearchArea}>
-              <TextInput
-                ref={searchInputRef}
-                style={styles.searchInput}
-                placeholderTextColor={colors.textMuted}
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="search"
-              />
-            </View>
-          ) : (
-            <View style={styles.inlineCreatorMain} pointerEvents="none">
-              <Text style={styles.inlineCreatorPlaceholder}>Add, sort, search tasks</Text>
-            </View>
-          )}
-
-          <TouchableOpacity
-            style={styles.sortTriggerButton}
-            onPress={expandCreator}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel="Add a new task"
-          >
-            <Feather name="plus" size={16} color={colors.textMuted} />
-          </TouchableOpacity>
-
-          <View ref={sortButtonRef} collapsable={false}>
-            <TouchableOpacity
-              style={styles.sortTriggerButton}
-              onPress={openSortMenu}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Sort tasks"
-            >
-              <Ionicons name="swap-vertical-outline" size={16} color={colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity
-            style={styles.searchIconButton}
-            onPress={isSearchOpen
-              ? () => {
-                setSearchQuery('');
-                setIsSearchOpen(false);
-              }
-              : () => setIsSearchOpen(true)
-            }
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel={isSearchOpen ? 'Close search' : 'Open task search'}
-          >
-            <Feather name={isSearchOpen ? 'x' : 'search'} size={16} color={colors.textMuted} />
-          </TouchableOpacity>
-        </Pressable>
-      </View>
     </>
   );
 }

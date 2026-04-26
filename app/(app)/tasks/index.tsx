@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Animated,
   Alert,
   Keyboard,
   Platform,
@@ -9,12 +8,14 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { useRouter } from 'expo-router';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useQueryClient } from '@tanstack/react-query';
-import ConfettiCannon from 'react-native-confetti-cannon';
+import LottieView from 'lottie-react-native';
 import Toast from 'react-native-toast-message';
 import { spacing } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
@@ -31,10 +32,12 @@ import {
   type RecurrenceType,
 } from '@/components/tasks/types';
 import { TaskTopBar } from '@/components/tasks/TaskTopBar';
+import { TaskBottomActions } from '@/components/tasks/TaskBottomActions';
 import { TaskContent } from '@/components/tasks/TaskContent';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
 import { VoucherPickerModal } from '@/components/tasks/VoucherPickerModal';
 import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
+import { TaskSearchOverlay } from '@/components/tasks/TaskSearchOverlay';
 import { TaskSortMenu } from '@/components/tasks/TaskSortMenu';
 import { taskCreatorState } from '@/lib/taskCreatorState';
 import {
@@ -80,6 +83,7 @@ const SORT_OPTIONS: { mode: DashboardSortMode; label: string }[] = [
   { mode: 'created_asc', label: 'Sort by time created ascending' },
   { mode: 'created_desc', label: 'Sort by time created descending' },
 ];
+type OverlayMode = 'closed' | 'create' | 'search';
 
 function getFutureBoundaryMs(): number {
   const startOfToday = new Date();
@@ -113,10 +117,16 @@ function formatTimeUntilDeadline(deadlineIso: string, now: Date = new Date()): s
 }
 
 function buildDefaultStartBoundaryDate(deadline: Date, durationMinutes: number): Date {
-  return new Date(deadline.getTime() - durationMinutes * 60 * 1000);
+  const candidate = new Date(deadline.getTime() - durationMinutes * 60 * 1000);
+  const now = new Date();
+  const defaultStart = candidate.getTime() < now.getTime() ? now : candidate;
+  defaultStart.setSeconds(0, 0);
+  return defaultStart;
 }
 
 export default function TasksScreen() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { colors } = useTheme();
   const styles = makeStyles(colors);
   const { profile: authProfile, user } = useAuth();
@@ -139,10 +149,9 @@ export default function TasksScreen() {
     loadMorePastTasks,
   } = useTasks(sortMode);
   const [refreshing, setRefreshing] = useState(false);
-  const [creatorExpanded, setCreatorExpanded] = useState(false);
-  const expandAnim = useRef(new Animated.Value(0)).current;
+  const [overlayMode, setOverlayMode] = useState<OverlayMode>('closed');
+  const expandProgress = useSharedValue(0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchResults, setSearchResults] = useState<TaskRowData[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -163,9 +172,10 @@ export default function TasksScreen() {
   const [taskListKeyboardInset, setTaskListKeyboardInset] = useState(0);
   const [optimisticTasks, setOptimisticTasks] = useState<TaskRowData[]>([]);
   const [optimisticallyCompletingTaskIds, setOptimisticallyCompletingTaskIds] = useState<string[]>([]);
-  const [showCompletionConfetti, setShowCompletionConfetti] = useState(false);
-  const [confettiBurstKey, setConfettiBurstKey] = useState(0);
-  const confettiHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [confettiBursts, setConfettiBursts] = useState<number[]>([]);
+  const [pendingConfettiBursts, setPendingConfettiBursts] = useState(0);
+  const confettiIdRef = useRef(0);
+  const [bottomActionsHeight, setBottomActionsHeight] = useState(0);
 
   const [title, setTitle] = useState('');
   const [deadlineDate, setDeadlineDate] = useState<Date>(() => {
@@ -173,8 +183,15 @@ export default function TasksScreen() {
     d.setHours(23, 59, 0, 0);
     return d;
   });
-  const [datePickerMode, setDatePickerMode] = useState<'date' | 'time'>('date');
-  const [showAndroidPicker, setShowAndroidPicker] = useState(false);
+  const [customDeadlineDate, setCustomDeadlineDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setHours(23, 59, 0, 0);
+    d.setSeconds(0, 0);
+    return d;
+  });
+  const [customDeadlinePickerMode, setCustomDeadlinePickerMode] = useState<'date' | 'time'>('date');
+  const [showCustomDeadlineAndroidPicker, setShowCustomDeadlineAndroidPicker] = useState(false);
+  const [showCustomDeadlineIosModal, setShowCustomDeadlineIosModal] = useState(false);
   // voucherValue: null = unset, 'self' = self-vouch, otherwise a friend's user id
   const [voucherValue, setVoucherValue] = useState<string | null>(null);
   const [voucherSearch, setVoucherSearch] = useState('');
@@ -182,6 +199,7 @@ export default function TasksScreen() {
   const [failureCostInput, setFailureCostInput] = useState('');
   const hasInitializedFailureCostRef = useRef(false);
   const hasInitializedVoucherRef = useRef(false);
+  const lastAppliedDefaultVoucherRef = useRef<string | null>(null);
 
   const { friends, currentUserId, profile, loading: friendsLoading, error: friendsError } = useFriends();
   const defaultPomoDurationMinutes = authProfile?.default_pomo_duration_minutes ?? 25;
@@ -199,26 +217,33 @@ export default function TasksScreen() {
     return 'self';
   }, [profile, currentUserId, friendsLoading, friends]);
 
-  function expandCreator() {
+  function openOverlay(nextMode: Exclude<OverlayMode, 'closed'>) {
     closeVoucherPicker();
-    setRecurrenceType('');
-    setShowCustomRecurrenceDays(false);
-    setRecurrenceDays([]);
+    if (nextMode === 'create') {
+      setRecurrenceType('');
+      setShowCustomRecurrenceDays(false);
+      setRecurrenceDays([]);
+      setSortMenuOpen(false);
+    }
+    if (nextMode === 'search') {
+      setSortMenuOpen(false);
+    }
     if (!creatorAnchorRef.current || !rootRef.current) return;
 
     creatorAnchorRef.current.measureLayout(
       rootRef.current,
       (x, y, width, height) => {
         setCreatorAnchor({ x, y, width, height });
-        expandAnim.setValue(0);
-        setCreatorExpanded(true);
-        Animated.spring(expandAnim, {
-          toValue: 1,
-          tension: 60,
-          friction: 11,
-          useNativeDriver: false,
-        }).start();
-        setTimeout(() => titleInputRef.current?.focus(), 180);
+        expandProgress.value = 0;
+        setOverlayMode(nextMode);
+        expandProgress.value = withTiming(1, { duration: 280, easing: Easing.out(Easing.cubic) });
+        setTimeout(() => {
+          if (nextMode === 'create') {
+            titleInputRef.current?.focus();
+          } else {
+            searchInputRef.current?.focus();
+          }
+        }, 180);
       },
       () => {
         setCreatorAnchor({
@@ -227,38 +252,45 @@ export default function TasksScreen() {
           width: Math.max(220, screenWidth - spacing.lg * 2),
           height: 48,
         });
-        expandAnim.setValue(0);
-        setCreatorExpanded(true);
-        Animated.spring(expandAnim, {
-          toValue: 1,
-          tension: 60,
-          friction: 11,
-          useNativeDriver: false,
-        }).start();
-        setTimeout(() => titleInputRef.current?.focus(), 180);
+        expandProgress.value = 0;
+        setOverlayMode(nextMode);
+        expandProgress.value = withTiming(1, { duration: 280, easing: Easing.out(Easing.cubic) });
+        setTimeout(() => {
+          if (nextMode === 'create') {
+            titleInputRef.current?.focus();
+          } else {
+            searchInputRef.current?.focus();
+          }
+        }, 180);
       },
     );
   }
 
-  function collapseCreator() {
+  function closeOverlay() {
+    const closingMode = overlayMode;
     Keyboard.dismiss();
     closeVoucherPicker();
-    Animated.timing(expandAnim, {
-      toValue: 0,
-      duration: 220,
-      useNativeDriver: false,
-    }).start(() => {
-      setCreatorExpanded(false);
+    function afterClose() {
+      setOverlayMode('closed');
       setCreatorAnchor(null);
-      resetCreateDraftState();
+      if (closingMode === 'create') resetCreateDraftState();
+      if (closingMode === 'search') {
+        setSearchQuery('');
+        setSearchResults([]);
+        setSearchError(null);
+        setSearchLoading(false);
+      }
+    }
+    expandProgress.value = withTiming(0, { duration: 220 }, () => {
+      runOnJS(afterClose)();
     });
   }
 
   // Keep module-level ref in sync so the tab layout can collapse the creator
   // when any nav tab is pressed.
   useEffect(() => {
-    taskCreatorState.isExpanded = creatorExpanded;
-    taskCreatorState.collapse = collapseCreator;
+    taskCreatorState.isExpanded = isOverlayOpen;
+    taskCreatorState.collapse = closeOverlay;
   });
 
   function resetCreateDraftState() {
@@ -282,7 +314,10 @@ export default function TasksScreen() {
     setShowEventStartAndroidPicker(false);
     setDraftSubtasks([]);
     setNewSubtaskDraft('');
-    setShowAndroidPicker(false);
+    setCustomDeadlineDate(nextDeadline);
+    setCustomDeadlinePickerMode('date');
+    setShowCustomDeadlineAndroidPicker(false);
+    setShowCustomDeadlineIosModal(false);
     setShowCustomReminderAndroidPicker(false);
     setShowCustomReminderIosModal(false);
     setCustomReminderPickerMode('date');
@@ -314,12 +349,25 @@ export default function TasksScreen() {
   const [failureCostSelection, setFailureCostSelection] = useState<{ start: number; end: number } | undefined>(undefined);
   const [isTitleFocused, setIsTitleFocused] = useState(false);
   const [isSubtaskFocused, setIsSubtaskFocused] = useState(false);
+  const isCreateOverlayOpen = overlayMode === 'create';
+  const isSearchOverlayOpen = overlayMode === 'search';
+  const isOverlayOpen = overlayMode !== 'closed';
   const trimmedSearchQuery = searchQuery.trim();
-  const isSearchActive = trimmedSearchQuery.length > 0;
+  const isSearchActive = isSearchOverlayOpen && trimmedSearchQuery.length > 0;
   const suggestedStartBoundaryDate = useMemo(
     () => buildDefaultStartBoundaryDate(deadlineDate, defaultEventDurationMinutes),
     [deadlineDate, defaultEventDurationMinutes],
   );
+
+  useEffect(() => {
+    // Queue overflow bursts instead of cancelling active ones.
+    if (pendingConfettiBursts <= 0) return;
+    if (confettiBursts.length >= 2) return;
+    confettiIdRef.current += 1;
+    const queuedBurstId = Date.now() + confettiIdRef.current;
+    setConfettiBursts((prev) => [...prev, queuedBurstId]);
+    setPendingConfettiBursts((prev) => Math.max(0, prev - 1));
+  }, [pendingConfettiBursts, confettiBursts.length]);
 
   const mergedDueSoonTasks = useMemo(() => {
     const existingIds = new Set(dueSoonTasks.map((task) => task.id));
@@ -461,24 +509,62 @@ export default function TasksScreen() {
     if (parsed) setDeadlineDate(parsed);
   }
 
-  function handleDatePickerChange(_event: DateTimePickerEvent, selected?: Date) {
-    if (Platform.OS === 'android') setShowAndroidPicker(false);
-    if (!selected) return;
-    // iOS compact datetime picker provides the full selected datetime directly.
-    if (Platform.OS === 'ios') {
-      setDeadlineDate(selected);
+  function updateCustomDeadlineDatePart(dateValue: Date) {
+    setCustomDeadlineDate((prev) => {
+      const next = new Date(prev);
+      next.setFullYear(dateValue.getFullYear(), dateValue.getMonth(), dateValue.getDate());
+      return next;
+    });
+  }
+
+  function handleCustomDeadlineAndroidPickerChange(_event: DateTimePickerEvent, selected?: Date) {
+    setShowCustomDeadlineAndroidPicker(false);
+    if (_event.type === 'dismissed' || !selected) return;
+
+    if (customDeadlinePickerMode === 'date') {
+      updateCustomDeadlineDatePart(selected);
+      setCustomDeadlinePickerMode('time');
+      setTimeout(() => setShowCustomDeadlineAndroidPicker(true), 0);
       return;
     }
-    // Android uses separate date/time pickers, so merge the picked part manually.
-    if (datePickerMode === 'date') {
-      const next = new Date(selected);
-      next.setHours(deadlineDate.getHours(), deadlineDate.getMinutes(), 0, 0);
-      setDeadlineDate(next);
-    } else {
-      const next = new Date(deadlineDate);
-      next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
-      setDeadlineDate(next);
+
+    const candidate = new Date(customDeadlineDate);
+    candidate.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+    setCustomDeadlineDate(candidate);
+    setCustomDeadlinePickerMode('date');
+    handleConfirmCustomDeadline(candidate);
+  }
+
+  function handleConfirmCustomDeadline(input?: Date) {
+    const candidate = new Date(input ?? customDeadlineDate);
+    candidate.setSeconds(0, 0);
+    if (Number.isNaN(candidate.getTime()) || candidate.getTime() <= Date.now()) {
+      Alert.alert('Invalid deadline', 'Please choose a future deadline.');
+      return false;
     }
+    setDeadlineDate(candidate);
+    return true;
+  }
+
+  function openDeadlinePickerFlow() {
+    const now = Date.now();
+    const candidate = new Date(deadlineDate);
+    candidate.setSeconds(0, 0);
+
+    if (Number.isNaN(candidate.getTime()) || candidate.getTime() <= now) {
+      candidate.setTime(now + 30 * 60 * 1000);
+      candidate.setSeconds(0, 0);
+    }
+
+    setCustomDeadlineDate(candidate);
+
+    if (Platform.OS === 'ios') {
+      setShowCustomDeadlineIosModal(true);
+      return;
+    }
+
+    setCustomDeadlinePickerMode('date');
+    setShowCustomDeadlineAndroidPicker(true);
   }
 
   useEffect(() => {
@@ -643,6 +729,12 @@ function updateCustomReminderDatePart(dateValue: Date) {
     setShowCustomRecurrenceDays(false);
   }
 
+  function clearRecurrenceSelection() {
+    setRecurrenceType('');
+    setShowCustomRecurrenceDays(false);
+    setRecurrenceDays([]);
+  }
+
   function toggleCustomRecurrenceDays() {
     setRecurrenceType('WEEKLY');
     setShowCustomRecurrenceDays((prev) => !prev);
@@ -703,7 +795,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
 
     const rawTitle = title.trim();
     if (!rawTitle) {
-      Alert.alert('Missing title', 'Please enter a task title.');
+      closeOverlay();
       return;
     }
 
@@ -813,7 +905,17 @@ function updateCustomReminderDatePart(dateValue: Date) {
       }
     } else if (effectiveEventSyncEnabled || effectiveTimeBoundEnabled) {
       const selectedStartDate = eventStartDate ?? buildDefaultStartBoundaryDate(deadlineToCreate, eventDurationMinutes);
-      if (Number.isNaN(selectedStartDate.getTime()) || selectedStartDate.getTime() >= deadlineToCreate.getTime()) {
+      if (Number.isNaN(selectedStartDate.getTime())) {
+        Alert.alert('Invalid start time', 'Please pick a valid start time.');
+        return;
+      }
+
+      if (selectedStartDate.getTime() < Date.now()) {
+        Alert.alert('Invalid start time', 'Start time must be now or later.');
+        return;
+      }
+
+      if (selectedStartDate.getTime() >= deadlineToCreate.getTime()) {
         Alert.alert('Invalid start time', 'Start time must be before the deadline.');
         return;
       }
@@ -842,11 +944,6 @@ function updateCustomReminderDatePart(dateValue: Date) {
       if (!reminderByIso.has(iso)) reminderByIso.set(iso, reminder);
     }
     const remindersToCreate = sortDraftReminders(Array.from(reminderByIso.values()));
-    const hasPastReminder = remindersToCreate.some((reminder) => reminder.reminderAt.getTime() <= Date.now());
-    if (hasPastReminder) {
-      Alert.alert('Invalid reminder', 'All reminders must be in the future.');
-      return;
-    }
     const hasReminderAfterDeadline = remindersToCreate.some(
       (reminder) => reminder.reminderAt.getTime() > deadlineToCreate.getTime(),
     );
@@ -884,7 +981,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
     };
 
     setOptimisticTasks((prev) => [optimisticTask, ...prev]);
-    collapseCreator();
+    closeOverlay();
     Toast.show({
       type: 'proofSuccess',
       text1: formatTimeUntilDeadline(deadlineIso),
@@ -1145,25 +1242,14 @@ function updateCustomReminderDatePart(dateValue: Date) {
   }
 
   useEffect(() => {
-    if (!creatorExpanded) return;
-    const id = setTimeout(() => titleInputRef.current?.focus(), 180);
-    return () => clearTimeout(id);
-  }, [creatorExpanded]);
-
-  useEffect(() => {
-    if (creatorExpanded) return;
+    if (isCreateOverlayOpen) return;
     setSelectedGoogleEventColorId(defaultGoogleEventColorId);
-  }, [creatorExpanded, defaultGoogleEventColorId]);
+  }, [isCreateOverlayOpen, defaultGoogleEventColorId]);
 
-  useEffect(() => (
-    () => {
-      if (confettiHideTimeoutRef.current) {
-        clearTimeout(confettiHideTimeoutRef.current);
-      }
-    }
-  ), []);
 
   // Initialize defaults as soon as profile/friends are available on initial screen load.
+  // Also re-apply updated profile defaults later if the user has not manually overridden
+  // the voucher selection in the current app session.
   useEffect(() => {
     if (!hasInitializedFailureCostRef.current && profile) {
       setFailureCostInput(
@@ -1172,19 +1258,31 @@ function updateCustomReminderDatePart(dateValue: Date) {
       hasInitializedFailureCostRef.current = true;
     }
 
-    if (!hasInitializedVoucherRef.current && profile) {
-      const resolvedDefaultVoucher = resolveDefaultVoucherValue();
-      if (resolvedDefaultVoucher !== null) {
-        setVoucherValue(resolvedDefaultVoucher);
-        hasInitializedVoucherRef.current = true;
-      }
+    if (!profile) return;
+    const resolvedDefaultVoucher = resolveDefaultVoucherValue();
+    if (resolvedDefaultVoucher === null) return;
+
+    if (!hasInitializedVoucherRef.current) {
+      setVoucherValue(resolvedDefaultVoucher);
+      lastAppliedDefaultVoucherRef.current = resolvedDefaultVoucher;
+      hasInitializedVoucherRef.current = true;
+      return;
     }
-  }, [profile, resolveDefaultVoucherValue]);
+
+    const lastAppliedDefaultVoucher = lastAppliedDefaultVoucherRef.current;
+    const userOverrodeVoucher = voucherValue !== null && voucherValue !== lastAppliedDefaultVoucher;
+    if (userOverrodeVoucher) return;
+
+    if (voucherValue !== resolvedDefaultVoucher) {
+      setVoucherValue(resolvedDefaultVoucher);
+    }
+    lastAppliedDefaultVoucherRef.current = resolvedDefaultVoucher;
+  }, [profile, resolveDefaultVoucherValue, voucherValue]);
 
   useEffect(() => {
-    if (creatorExpanded) return;
+    if (isCreateOverlayOpen) return;
     setRequiresProof(defaultRequiresProofForAllTasks);
-  }, [creatorExpanded, defaultRequiresProofForAllTasks]);
+  }, [isCreateOverlayOpen, defaultRequiresProofForAllTasks]);
 
   const normalizedFriends = useMemo(
     () =>
@@ -1213,6 +1311,10 @@ function updateCustomReminderDatePart(dateValue: Date) {
   const [voucherDropdownHeight, setVoucherDropdownHeight] = useState(300);
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
   const sortMenuWidth = Math.min(screenWidth - spacing.lg * 2, 320);
+  const bottomDockOffset = spacing.xl + spacing.sm + spacing.xs; // 44px
+  const bottomDockReservedInset = bottomDockOffset + bottomActionsHeight + spacing.sm;
+  const creatorTargetTop = Math.max(insets.top + spacing.md, Math.round(screenHeight * 0.17));
+  const creatorTargetHeight = Math.max(200, screenHeight - creatorTargetTop);
 
   const scrollFocusedSubtaskIntoView = useCallback((inputBottomY: number | null = focusedSubtaskInputBottomYRef.current) => {
     if (inputBottomY == null) return;
@@ -1266,19 +1368,38 @@ function updateCustomReminderDatePart(dateValue: Date) {
   }, [screenHeight, scrollFocusedSubtaskIntoView]);
 
   function openSortMenu() {
+    if (isOverlayOpen) return;
     sortButtonRef.current?.measureInWindow((x, y, width, height) => {
       setSortAnchor({ pageX: x, pageY: y, width, height });
       setSortMenuOpen(true);
     });
   }
 
+  function openCreateSheet() {
+    setSortMenuOpen(false);
+    openOverlay('create');
+  }
+
+  function openSearchSheet() {
+    setSortMenuOpen(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchError(null);
+    openOverlay('search');
+  }
+
+  function handleSearchResultPress(task: TaskRowData) {
+    closeOverlay();
+    router.push(`/tasks/${task.id}` as any);
+  }
+
   useEffect(() => {
-    if (isSearchOpen) {
+    if (isSearchOverlayOpen) {
       const focusTimeout = setTimeout(() => searchInputRef.current?.focus(), 50);
       return () => clearTimeout(focusTimeout);
     }
     searchInputRef.current?.blur();
-  }, [isSearchOpen]);
+  }, [isSearchOverlayOpen]);
 
   function closeVoucherPicker() {
     setVoucherPickerOpen(false);
@@ -1462,15 +1583,13 @@ function updateCustomReminderDatePart(dateValue: Date) {
       return;
     }
 
-    if (confettiHideTimeoutRef.current) {
-      clearTimeout(confettiHideTimeoutRef.current);
+    confettiIdRef.current += 1;
+    const burstId = Date.now() + confettiIdRef.current;
+    if (confettiBursts.length >= 2) {
+      setPendingConfettiBursts((prev) => prev + 1);
+    } else {
+      setConfettiBursts((prev) => [...prev, burstId]);
     }
-    setConfettiBurstKey((prev) => prev + 1);
-    setShowCompletionConfetti(true);
-    confettiHideTimeoutRef.current = setTimeout(() => {
-      setShowCompletionConfetti(false);
-      confettiHideTimeoutRef.current = null;
-    }, 1500);
 
     setOptimisticallyCompletingTaskIds((prev) => (prev.includes(taskId) ? prev : [...prev, taskId]));
     setOptimisticTasks((prev) => prev.filter((task) => task.id !== taskId));
@@ -1538,13 +1657,15 @@ function updateCustomReminderDatePart(dateValue: Date) {
   return (
     <SafeAreaView ref={rootRef} style={styles.safe} edges={['top']}>
       <TaskCreatorOverlay
-        visible={creatorExpanded}
+        visible={isCreateOverlayOpen}
         anchor={creatorAnchor}
-        expandAnim={expandAnim}
+        expandProgress={expandProgress}
         screenWidth={screenWidth}
         screenHeight={screenHeight}
+        targetTop={creatorTargetTop}
+        targetHeight={creatorTargetHeight}
         isCreatingTask={isCreatingTask}
-        onCancel={collapseCreator}
+        onCancel={closeOverlay}
         onCreate={() => {
           void handleCreateTask();
         }}
@@ -1565,11 +1686,15 @@ function updateCustomReminderDatePart(dateValue: Date) {
         setNewSubtaskDraft={setNewSubtaskDraft}
         onAddDraftSubtask={handleAddDraftSubtask}
         deadlineDate={deadlineDate}
-        datePickerMode={datePickerMode}
-        setDatePickerMode={setDatePickerMode}
-        showAndroidPicker={showAndroidPicker}
-        setShowAndroidPicker={setShowAndroidPicker}
-        onDatePickerChange={handleDatePickerChange}
+        customDeadlineDate={customDeadlineDate}
+        customDeadlinePickerMode={customDeadlinePickerMode}
+        showCustomDeadlineAndroidPicker={showCustomDeadlineAndroidPicker}
+        onCustomDeadlineAndroidPickerChange={handleCustomDeadlineAndroidPickerChange}
+        onOpenDeadlinePickerFlow={openDeadlinePickerFlow}
+        showCustomDeadlineIosModal={showCustomDeadlineIosModal}
+        setShowCustomDeadlineIosModal={setShowCustomDeadlineIosModal}
+        setCustomDeadlineDate={setCustomDeadlineDate}
+        onConfirmCustomDeadline={handleConfirmCustomDeadline}
         voucherButtonRef={voucherButtonRef}
         voucherLabel={voucherLabel}
         voucherValue={voucherValue}
@@ -1594,6 +1719,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
         onAddCustomReminder={handleAddCustomReminder}
         recurrenceType={recurrenceType}
         showCustomRecurrenceDays={showCustomRecurrenceDays}
+        onClearRecurrence={clearRecurrenceSelection}
         onSelectRecurrenceType={selectRecurrenceType}
         onToggleCustomRecurrenceDays={toggleCustomRecurrenceDays}
         recurrenceDays={recurrenceDays}
@@ -1613,11 +1739,28 @@ function updateCustomReminderDatePart(dateValue: Date) {
         showEventStartAndroidPicker={showEventStartAndroidPicker}
         setShowEventStartAndroidPicker={setShowEventStartAndroidPicker}
       />
+      <TaskSearchOverlay
+        visible={isSearchOverlayOpen}
+        anchor={creatorAnchor}
+        expandProgress={expandProgress}
+        screenWidth={screenWidth}
+        targetTop={creatorTargetTop}
+        targetHeight={creatorTargetHeight}
+        searchInputRef={searchInputRef}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        searchLoading={searchLoading}
+        searchError={searchError}
+        searchResults={searchResults}
+        onResultPress={handleSearchResultPress}
+        onClose={closeOverlay}
+      />
 
       <TaskSortMenu
         open={sortMenuOpen}
         anchor={sortAnchor}
         sortMenuWidth={sortMenuWidth}
+        safeTopInset={insets.top + spacing.sm}
         options={SORT_OPTIONS}
         sortMode={sortMode}
         onChangeSortMode={setSortMode}
@@ -1630,18 +1773,9 @@ function updateCustomReminderDatePart(dateValue: Date) {
             todayParts={todayParts}
             reputationScore={reputationScore}
             showReputationBar={authProfile?.display_rp_bar_on_dashboard ?? false}
-            creatorAnchorRef={creatorAnchorRef}
-            sortButtonRef={sortButtonRef}
-            searchInputRef={searchInputRef}
-            isSearchOpen={isSearchOpen}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            setIsSearchOpen={setIsSearchOpen}
-            expandCreator={expandCreator}
-            openSortMenu={openSortMenu}
           />
         )}
-        isSearchActive={isSearchActive}
+        isSearchActive={false}
         searchLoading={searchLoading}
         searchError={searchError}
         searchResults={searchResults}
@@ -1668,7 +1802,18 @@ function updateCustomReminderDatePart(dateValue: Date) {
           taskListScrollOffsetYRef.current = offsetY;
         }}
         keyboardBottomInset={taskListKeyboardInset}
+        bottomInsetOffset={bottomDockReservedInset}
         onSubtaskComposerFocus={handleSubtaskComposerFocus}
+      />
+      <TaskBottomActions
+        creatorAnchorRef={creatorAnchorRef}
+        sortButtonRef={sortButtonRef}
+        onOpenSearchSheet={openSearchSheet}
+        onOpenCreateSheet={openCreateSheet}
+        onOpenSortMenu={openSortMenu}
+        onMeasuredHeight={setBottomActionsHeight}
+        overlayOpen={isOverlayOpen}
+        bottomOffset={bottomDockOffset}
       />
 
       <PostponeDeadlineModal
@@ -1684,6 +1829,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
       <VoucherPickerModal
         visible={voucherPickerOpen}
         anchor={voucherAnchor}
+        safeTopInset={insets.top}
         voucherDropdownHeight={voucherDropdownHeight}
         setVoucherDropdownHeight={setVoucherDropdownHeight}
         voucherSearch={voucherSearch}
@@ -1696,26 +1842,20 @@ function updateCustomReminderDatePart(dateValue: Date) {
         filteredFriends={filteredFriends}
       />
 
-      {showCompletionConfetti ? (
+      {confettiBursts.length > 0 ? (
         <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
-          <ConfettiCannon
-            key={`left-${confettiBurstKey}`}
-            count={45}
-            origin={{ x: -20, y: Math.round(screenHeight * 0.5) }}
-            explosionSpeed={350}
-            fallSpeed={1150}
-            fadeOut
-            autoStart
-          />
-          <ConfettiCannon
-            key={`right-${confettiBurstKey}`}
-            count={45}
-            origin={{ x: screenWidth + 20, y: Math.round(screenHeight * 0.5) }}
-            explosionSpeed={350}
-            fallSpeed={1150}
-            fadeOut
-            autoStart
-          />
+          {confettiBursts.map((burstId) => (
+            <LottieView
+              key={`lottie-${burstId}`}
+              source={require('../../../assets/animations/confetti.json')}
+              autoPlay
+              loop={false}
+              speed={1.05}
+              resizeMode="cover"
+              style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+              onAnimationFinish={() => setConfettiBursts((prev) => prev.filter((id) => id !== burstId))}
+            />
+          ))}
         </View>
       ) : null}
     </SafeAreaView>

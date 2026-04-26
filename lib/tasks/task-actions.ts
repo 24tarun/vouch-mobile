@@ -181,7 +181,7 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
       : null,
   });
 
-  if (nextStatus === 'ACCEPTED') {
+  if (nextStatus === 'ACCEPTED' && (task as any).has_proof) {
     const purgeResult = await purgeTaskProofForFinalState(taskId);
     if (!purgeResult.success) {
       return { success: false, userId, error: `Task accepted, but proof cleanup failed: ${purgeResult.error}` };

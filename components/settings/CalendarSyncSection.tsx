@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '@/lib/ThemeContext';
@@ -23,15 +23,6 @@ export function CalendarSyncSection({ onSavingStateChange, onSaveSuccess }: Cale
   const [savingColorId, setSavingColorId] = useState<GoogleEventColorId | null>(null);
   const [colorError, setColorError] = useState<string | null>(null);
   const syncReady = Boolean(data?.readyForAppToGoogleSync);
-	  const statusIcon = syncReady ? 'check-circle' : 'alert-circle';
-	  const statusColor = syncReady ? colors.success : colors.textMuted;
-	  const statusLabel = syncReady
-	    ? 'vouch --> google calendar'
-	    : data?.connected
-	      ? (data.syncAppToGoogleEnabled
-	        ? 'Choose a Google calendar on the website to sync mobile event tasks.'
-	        : 'Vouch to Google sync is off on the website, so mobile event tasks will not sync yet.')
-	      : 'Connect Google Calendar on the website to sync mobile event tasks.';
 
   async function handleSelectDefaultColor(nextColorId: GoogleEventColorId) {
     if (!user?.id || !data?.connected || savingColorId === nextColorId) return;
@@ -60,84 +51,98 @@ export function CalendarSyncSection({ onSavingStateChange, onSaveSuccess }: Cale
   return (
     <View style={styles.section}>
       <Text style={styles.sectionLabel}>Google Calendar</Text>
+      <Text style={styles.settingsHelpText}>Please manage calendar connections on the website tas.tarunh.com.</Text>
       <View style={styles.card}>
         {isLoading ? (
           <View style={[styles.row, { justifyContent: 'center' }]}>
             <ActivityIndicator size="small" color={colors.textMuted} />
           </View>
-        ) : data?.connected ? (
+        ) : (
           <>
             <View style={styles.row}>
               <View style={styles.rowLeft}>
-                <Feather name="check-circle" size={18} color={colors.success} />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.rowLabel}>Connected</Text>
-                  {data.accountEmail ? (
+                  {data?.accountEmail ? (
                     <Text style={{ fontSize: 12, color: colors.textMuted }}>{data.accountEmail}</Text>
                   ) : null}
-                  {data.selectedCalendarSummary ? (
+                  {data?.selectedCalendarSummary ? (
                     <Text style={{ fontSize: 12, color: colors.textMuted }} numberOfLines={1}>
                       Calendar: {data.selectedCalendarSummary}
                     </Text>
                   ) : null}
                 </View>
               </View>
+              <Switch
+                value={Boolean(data?.connected)}
+                disabled
+                trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                thumbColor={colors.text}
+              />
             </View>
             <View style={styles.cardDivider} />
             <View style={styles.row}>
               <View style={styles.rowLeft}>
-                <Feather name={statusIcon} size={18} color={statusColor} />
                 <View style={{ flex: 1, minWidth: 0 }}>
-	                  <Text style={styles.rowLabel}>{statusLabel}</Text>
-	                  <Text style={{ fontSize: 12, color: colors.textMuted }}>
-	                    please manage calendar connects on the website tas.tarunh.com
-	                  </Text>
-	                </View>
-	              </View>
-	            </View>
-            <View style={styles.cardDivider} />
-            <View style={styles.settingsBlock}>
-              <Text style={styles.rowLabel}>Default mobile event color</Text>
-              <View style={styles.eventColorOptionsWrap}>
-                {GOOGLE_EVENT_COLOR_OPTIONS.map((option) => {
-                  const isSelected = data.defaultEventColorId === option.colorId;
-                  const isSaving = savingColorId === option.colorId;
-
-                  return (
-                    <TouchableOpacity
-                      key={option.colorId}
-                      style={[
-                        styles.eventColorDotButton,
-                        isSelected && styles.eventColorDotButtonSelected,
-                        savingColorId && savingColorId !== option.colorId ? styles.rowDisabled : null,
-                      ]}
-                      activeOpacity={0.85}
-                      onPress={() => handleSelectDefaultColor(option.colorId)}
-                      disabled={Boolean(savingColorId)}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Use ${option.nativeToken.replace('-', '')} as the default Google event color`}
-                    >
-                      <View
-                        style={[
-                          styles.eventColorDotSwatch,
-                          { backgroundColor: option.swatchHex },
-                        ]}
-                      >
-                        {isSaving ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : isSelected ? (
-                          <Feather name="check" size={12} color="#FFFFFF" />
-                        ) : null}
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
+                  <Text style={styles.rowLabel}>{'vouch --> google calendar'}</Text>
+                </View>
               </View>
-              {colorError ? (
-                <Text style={styles.errorText}>{colorError}</Text>
-              ) : null}
+              <Switch
+                value={syncReady}
+                disabled
+                trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                thumbColor={colors.text}
+              />
             </View>
-            {data.lastError ? (
+
+            {data?.connected ? (
+              <>
+                <View style={styles.cardDivider} />
+                <View style={styles.settingsBlock}>
+                  <Text style={styles.rowLabel}>Default mobile event color</Text>
+                  <View style={styles.eventColorOptionsWrap}>
+                    {GOOGLE_EVENT_COLOR_OPTIONS.map((option) => {
+                      const isSelected = data?.defaultEventColorId === option.colorId;
+                      const isSaving = savingColorId === option.colorId;
+
+                      return (
+                        <TouchableOpacity
+                          key={option.colorId}
+                          style={[
+                            styles.eventColorDotButton,
+                            isSelected && styles.eventColorDotButtonSelected,
+                            savingColorId && savingColorId !== option.colorId ? styles.rowDisabled : null,
+                          ]}
+                          activeOpacity={0.85}
+                          onPress={() => handleSelectDefaultColor(option.colorId)}
+                          disabled={Boolean(savingColorId)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Use ${option.nativeToken.replace('-', '')} as the default Google event color`}
+                        >
+                          <View
+                            style={[
+                              styles.eventColorDotSwatch,
+                              { backgroundColor: option.swatchHex },
+                            ]}
+                          >
+                            {isSaving ? (
+                              <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : isSelected ? (
+                              <Feather name="check" size={12} color="#FFFFFF" />
+                            ) : null}
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {colorError ? (
+                    <Text style={styles.errorText}>{colorError}</Text>
+                  ) : null}
+                </View>
+              </>
+            ) : null}
+
+            {data?.lastError ? (
               <>
                 <View style={styles.cardDivider} />
                 <View style={styles.rowTinted}>
@@ -152,18 +157,6 @@ export function CalendarSyncSection({ onSavingStateChange, onSaveSuccess }: Cale
               </>
             ) : null}
           </>
-        ) : (
-          <View style={styles.row}>
-            <View style={styles.rowLeft}>
-              <Feather name="calendar" size={18} color={colors.textMuted} />
-	              <View style={{ flex: 1, minWidth: 0 }}>
-	                <Text style={styles.rowLabel}>Please manage calendar connections on the website.</Text>
-	                <Text style={{ fontSize: 12, color: colors.textMuted }}>
-	                  please manage calendar connects on the website tas.tarunh.com
-	                </Text>
-	              </View>
-	            </View>
-	          </View>
         )}
       </View>
     </View>

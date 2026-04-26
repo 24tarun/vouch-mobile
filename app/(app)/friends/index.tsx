@@ -22,6 +22,7 @@ import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
+import Toast from 'react-native-toast-message';
 import { Swiper, type SwiperCardRefType } from 'rn-swiper-list';
 import { supabase } from '@/lib/supabase';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
@@ -31,6 +32,7 @@ import { StatusPill } from '@/components/StatusPill';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { queryKeys } from '@/lib/query/keys';
+import { sendProofRequestedPushNotificationAsync } from '@/lib/notifications';
 import { purgeTaskProofForFinalState } from '@/lib/task-proof-upload';
 import { VOUCHER_ACTIONABLE_STATUSES, VOUCHER_ACTIVE_VIEW_STATUSES } from '@/lib/constants/task-status';
 import { useFriendQueue, type VoucherTaskRow, type VouchHistoryTaskRow } from '@/lib/hooks/useFriendQueue';
@@ -249,7 +251,6 @@ function DeckActions({
   task,
   inFlightAction,
   isActionable,
-  hasNext,
   onAccept,
   onDeny,
   onProof,
@@ -258,7 +259,6 @@ function DeckActions({
   task: VoucherTaskRow;
   inFlightAction: DecisionAction | null;
   isActionable: boolean;
-  hasNext: boolean;
   onAccept: () => void;
   onDeny: () => void;
   onProof: () => void;
@@ -268,26 +268,13 @@ function DeckActions({
   const styles = makeStyles(colors);
   const busy = Boolean(inFlightAction);
   const dimmed = !isActionable;
+  const trafficIconColor = '#0f172a';
 
   return (
     <View style={styles.actionsRow}>
-      {/* Accept */}
-      <TouchableOpacity
-        style={[styles.actionBtn, styles.actionBtnAccept, (busy || dimmed) && styles.actionBtnDisabled]}
-        onPress={onAccept}
-        disabled={busy || dimmed}
-        activeOpacity={0.75}
-        accessibilityRole="button"
-        accessibilityLabel="Accept task"
-      >
-        {inFlightAction === 'accept'
-          ? <ActivityIndicator size="small" color="#34D399" />
-          : <Feather name="check" size={22} color="#34D399" />}
-      </TouchableOpacity>
-
       {/* Deny */}
       <TouchableOpacity
-        style={[styles.actionBtn, styles.actionBtnDeny, (busy || dimmed) && styles.actionBtnDisabled]}
+        style={[styles.actionLightBtn, styles.actionBtnDeny, (busy || dimmed) && styles.actionBtnDisabled]}
         onPress={onDeny}
         disabled={busy || dimmed}
         activeOpacity={0.75}
@@ -295,13 +282,13 @@ function DeckActions({
         accessibilityLabel="Deny task"
       >
         {inFlightAction === 'deny'
-          ? <ActivityIndicator size="small" color="#F87171" />
-          : <Feather name="x" size={22} color="#F87171" />}
+          ? <ActivityIndicator size="small" color={trafficIconColor} />
+          : <Feather name="x" size={22} color={trafficIconColor} />}
       </TouchableOpacity>
 
       {/* Clarify / request proof */}
       <TouchableOpacity
-        style={[styles.actionBtn, styles.actionBtnClarify, (busy || dimmed) && styles.actionBtnDisabled, task.proof_request_open && styles.actionBtnClarifyActive]}
+        style={[styles.actionLightBtn, styles.actionBtnClarify, (busy || dimmed) && styles.actionBtnDisabled]}
         onPress={onProof}
         disabled={busy || dimmed}
         activeOpacity={0.75}
@@ -309,20 +296,33 @@ function DeckActions({
         accessibilityLabel="Request proof"
       >
         {inFlightAction === 'proof'
-          ? <ActivityIndicator size="small" color="#FBBF24" />
-          : <Feather name="help-circle" size={22} color="#FBBF24" />}
+          ? <ActivityIndicator size="small" color={trafficIconColor} />
+          : <Text style={styles.actionQuestionMark}>?</Text>}
+      </TouchableOpacity>
+
+      {/* Accept */}
+      <TouchableOpacity
+        style={[styles.actionLightBtn, styles.actionBtnAccept, (busy || dimmed) && styles.actionBtnDisabled]}
+        onPress={onAccept}
+        disabled={busy || dimmed}
+        activeOpacity={0.75}
+        accessibilityRole="button"
+        accessibilityLabel="Accept task"
+      >
+        {inFlightAction === 'accept'
+          ? <ActivityIndicator size="small" color={trafficIconColor} />
+          : <Feather name="check" size={22} color={trafficIconColor} />}
       </TouchableOpacity>
 
       {/* Next card — always present so all 4 columns stay equal */}
       <TouchableOpacity
-        style={[styles.actionBtn, styles.actionBtnNext, !hasNext && styles.actionBtnHidden]}
+        style={styles.actionBtnNext}
         onPress={onNext}
-        disabled={!hasNext}
         activeOpacity={0.75}
         accessibilityRole="button"
         accessibilityLabel="Next task in deck"
       >
-        <Feather name="chevron-right" size={20} color={hasNext ? colors.textMuted : 'transparent'} />
+        <Feather name="chevron-right" size={20} color={trafficIconColor} />
       </TouchableOpacity>
     </View>
   );
@@ -335,7 +335,6 @@ function CardContent({
   friend,
   inFlight,
   isActionable,
-  hasNext,
   onAccept,
   onDeny,
   onProof,
@@ -346,7 +345,6 @@ function CardContent({
   friend: VoucherTaskRow['user'];
   inFlight: DecisionAction | null;
   isActionable: boolean;
-  hasNext: boolean;
   onAccept: () => void;
   onDeny: () => void;
   onProof: () => void;
@@ -389,20 +387,19 @@ function CardContent({
               {formatVoucherDeadline(task.voucher_response_deadline)}
             </Text>
           </View>
+          {task.proof_request_open && !task.has_proof ? (
+            <View style={styles.proofReqChip}>
+              <Feather name="alert-circle" size={11} color={colors.warning} />
+              <Text style={styles.proofReqChipText}>Proof requested</Text>
+            </View>
+          ) : null}
         </View>
-        {task.proof_request_open && !task.has_proof ? (
-          <View style={styles.proofReqBadge}>
-            <Feather name="alert-circle" size={11} color={colors.warning} />
-            <Text style={styles.proofReqText}>Proof requested</Text>
-          </View>
-        ) : null}
       </View>
       <View style={styles.cardDivider} />
       <DeckActions
         task={task}
         inFlightAction={inFlight}
         isActionable={isActionable}
-        hasNext={hasNext}
         onAccept={onAccept}
         onDeny={onDeny}
         onProof={onProof}
@@ -552,7 +549,6 @@ function FriendDeck({
                   friend={friend}
                   inFlight={inFlight}
                   isActionable={isActionable}
-                  hasNext={hasNext}
                   onAccept={() => triggerDeckSwipe('accept', task)}
                   onDeny={() => triggerDeckSwipe('deny', task)}
                   onProof={() => onProof(task)}
@@ -656,7 +652,6 @@ export default function FriendsScreen() {
   const [searchQuery] = useState('');
   const friendQueue = useFriendQueue(user?.id, searchQuery);
   const [refreshing, setRefreshing] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [inFlightByTaskId, setInFlightByTaskId] = useState<Record<string, DecisionAction | null>>({});
   const [inFlightRectifyByTaskId, setInFlightRectifyByTaskId] = useState<Record<string, boolean>>({});
   // Ids the user has optimistically accepted/denied. Kept separate from
@@ -666,8 +661,7 @@ export default function FriendsScreen() {
   // and ghosting it into the deck. Filter until history confirms terminal state.
   const [resolvedTaskIds, setResolvedTaskIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<TabView>('pending');
-  const [hasInitializedTab, setHasInitializedTab] = useState(false);
-  const [hasUserSelectedTab, setHasUserSelectedTab] = useState(false);
+  const [pendingFocusAutoTabToken, setPendingFocusAutoTabToken] = useState(0);
   const [lightboxProof, setLightboxProof] = useState<TaskProof | null>(null);
 
   const tasks = friendQueue.tasks;
@@ -675,7 +669,7 @@ export default function FriendsScreen() {
   const loading = friendQueue.loading;
   const historyLoading = friendQueue.historyLoading;
   const historyHasMore = friendQueue.historyHasMore;
-  const error = actionError ?? friendQueue.error;
+  const error = friendQueue.error;
   const historyError = friendQueue.historyError;
 
   const resolvedIdSet = useMemo(() => new Set(resolvedTaskIds), [resolvedTaskIds]);
@@ -687,14 +681,19 @@ export default function FriendsScreen() {
     () => tasks.filter((t) => VOUCHER_ACTIVE_VIEW_STATUSES.includes(t.status) && !resolvedIdSet.has(t.id)),
     [tasks, resolvedIdSet],
   );
-  const hasPending = awaitingVoucherTasks.length > 0;
 
   useEffect(() => {
-    if (loading) return;
-    if (hasInitializedTab || hasUserSelectedTab) return;
-    setActiveTab(hasPending ? 'pending' : 'active');
-    setHasInitializedTab(true);
-  }, [hasInitializedTab, hasPending, hasUserSelectedTab, loading]);
+    if (pendingFocusAutoTabToken === 0 || loading) return;
+    const preferredTab: TabView | null = awaitingVoucherTasks.length > 0
+      ? 'pending'
+      : activeTasks.length > 0
+        ? 'active'
+        : null;
+    if (preferredTab) {
+      setActiveTab(preferredTab);
+    }
+    setPendingFocusAutoTabToken(0);
+  }, [activeTasks.length, awaitingVoucherTasks.length, loading, pendingFocusAutoTabToken]);
 
   // Safety net: realtime can drop events during reconnect, app backgrounding,
   // or when the screen was unmounted. Refetch on focus so the list always
@@ -702,6 +701,7 @@ export default function FriendsScreen() {
   const { refetchQueue, refetchHistory } = friendQueue;
   useFocusEffect(
     useCallback(() => {
+      setPendingFocusAutoTabToken((prev) => prev + 1);
       void refetchQueue();
       void refetchHistory();
     }, [refetchQueue, refetchHistory]),
@@ -773,7 +773,6 @@ export default function FriendsScreen() {
 
   async function handleAccept(task: VoucherTaskRow) {
     if (!user) return;
-    setActionError(null);
     updateInFlight(task.id, 'accept');
     const nextUpdatedAt = new Date().toISOString();
     const queueKey = queryKeys.friendQueue(user.id);
@@ -826,10 +825,12 @@ export default function FriendsScreen() {
         task_id: task.id, event_type: 'VOUCHER_ACCEPT', actor_id: user.id,
         actor_user_client_instance_id: instanceId, from_status: task.status, to_status: 'ACCEPTED',
       });
-      if (eventError) setActionError('Task accepted, but event logging failed.');
+      if (eventError) Toast.show({ type: 'proofError', text1: 'Task accepted, but event logging failed.', position: 'bottom' });
 
-      const purge = await purgeTaskProofForFinalState(task.id);
-      if (!purge.success) setActionError(`Task accepted, but proof cleanup failed: ${purge.error}`);
+      if (task.has_proof) {
+        const purge = await purgeTaskProofForFinalState(task.id);
+        if (!purge.success) Toast.show({ type: 'proofError', text1: `Task accepted, but proof cleanup failed: ${purge.error}`, position: 'bottom' });
+      }
     } finally {
       updateInFlight(task.id, null);
     }
@@ -837,7 +838,6 @@ export default function FriendsScreen() {
 
   async function handleDeny(task: VoucherTaskRow) {
     if (!user) return;
-    setActionError(null);
     updateInFlight(task.id, 'deny');
     const nextUpdatedAt = new Date().toISOString();
     const queueKey = queryKeys.friendQueue(user.id);
@@ -890,10 +890,12 @@ export default function FriendsScreen() {
         task_id: task.id, event_type: 'VOUCHER_DENY', actor_id: user.id,
         actor_user_client_instance_id: instanceId, from_status: task.status, to_status: 'DENIED',
       });
-      if (eventError) setActionError('Task denied, but event logging failed.');
+      if (eventError) Toast.show({ type: 'proofError', text1: 'Task denied, but event logging failed.', position: 'bottom' });
 
-      const purge = await purgeTaskProofForFinalState(task.id);
-      if (!purge.success) setActionError(`Task denied, but proof cleanup failed: ${purge.error}`);
+      if (task.has_proof) {
+        const purge = await purgeTaskProofForFinalState(task.id);
+        if (!purge.success) Toast.show({ type: 'proofError', text1: `Task denied, but proof cleanup failed: ${purge.error}`, position: 'bottom' });
+      }
     } finally {
       updateInFlight(task.id, null);
     }
@@ -901,7 +903,6 @@ export default function FriendsScreen() {
 
   async function handleRequestProof(task: VoucherTaskRow) {
     if (!user) return;
-    setActionError(null);
     updateInFlight(task.id, 'proof');
     const nowIso = new Date().toISOString();
     const queueKey = queryKeys.friendQueue(user.id);
@@ -943,7 +944,21 @@ export default function FriendsScreen() {
         task_id: task.id, event_type: 'PROOF_REQUESTED', actor_id: user.id,
         actor_user_client_instance_id: instanceId, from_status: task.status, to_status: task.status,
       });
-      if (eventError) setActionError('Proof requested, but event logging failed.');
+      if (eventError) Toast.show({ type: 'proofError', text1: 'Proof requested, but event logging failed.', position: 'bottom' });
+
+      if (task.user?.id) {
+        const pushDispatch = await sendProofRequestedPushNotificationAsync({
+          taskId: task.id,
+          recipientUserId: task.user.id,
+        });
+        if (!pushDispatch.success && !pushDispatch.skipped) {
+          Toast.show({
+            type: 'proofError',
+            text1: `Proof requested, but push notification failed: ${pushDispatch.error ?? 'Unknown error'}`,
+            position: 'bottom',
+          });
+        }
+      }
     } finally {
       updateInFlight(task.id, null);
     }
@@ -995,7 +1010,7 @@ export default function FriendsScreen() {
               if (writeError) { Alert.alert('Rectify partially failed', writeError.message); return; }
 
               const purge = await purgeTaskProofForFinalState(task.id);
-              if (!purge.success) setActionError(`Rectified, but proof cleanup failed: ${purge.error}`);
+              if (!purge.success) Toast.show({ type: 'proofError', text1: `Rectified, but proof cleanup failed: ${purge.error}`, position: 'bottom' });
 
               const nextUpdatedAt = new Date().toISOString();
               patchFriendHistory((c) => {
@@ -1025,14 +1040,13 @@ export default function FriendsScreen() {
         <Text style={styles.headerTitle}>Friends</Text>
         <SegmentedControl
           items={[
-            { key: 'active', label: 'Active', showBadge: false, color: colors.destructive },
+            { key: 'active', label: 'Active', badgeCount: activeTasks.length, color: colors.destructive },
             { key: 'pending', label: 'Pending', badgeCount: awaitingVoucherTasks.length, color: colors.warning },
             { key: 'history', label: 'History', showBadge: false, color: colors.success },
           ]}
           activeKey={activeTab}
           variant="signal"
           onChange={(key) => {
-            setHasUserSelectedTab(true);
             const tab = key as TabView;
             setActiveTab(tab);
             if (tab === 'history' && historyTasks.length === 0 && !historyLoading) {
@@ -1204,7 +1218,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
   headerTitle: {
@@ -1508,15 +1522,22 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     color: colors.textMuted,
     letterSpacing: 0.3,
   },
-  proofReqBadge: {
+  proofReqChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginTop: 2,
+    backgroundColor: 'rgba(245, 158, 11, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.32)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
-  proofReqText: {
+  proofReqChipText: {
     fontSize: typography.xs,
+    fontWeight: typography.medium,
     color: colors.warning,
+    letterSpacing: 0.3,
   },
   cardDivider: {
     height: StyleSheet.hairlineWidth,
@@ -1535,48 +1556,74 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     width: '100%',
   },
 
-  // Action buttons — all 4 equal flex: 1 so they fill the row uniformly
+  // Action buttons — four circular traffic-light style controls
   actionsRow: {
     flexDirection: 'row',
-    alignItems: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
-    gap: spacing.xs,
+    gap: spacing.md,
   },
-  actionBtn: {
-    flex: 1,
-    height: 58,
-    borderRadius: 14,
+  actionLightBtn: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
+    flexShrink: 0,
+    borderColor: '#00000024',
   },
   actionBtnAccept: {
-    backgroundColor: 'rgba(52, 211, 153, 0.10)',
-    borderColor: 'rgba(52, 211, 153, 0.28)',
+    backgroundColor: colors.success,
+    shadowColor: colors.success,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 2,
   },
   actionBtnDeny: {
-    backgroundColor: 'rgba(248, 113, 113, 0.10)',
-    borderColor: 'rgba(248, 113, 113, 0.25)',
+    backgroundColor: colors.destructive,
+    shadowColor: colors.destructive,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 2,
   },
   actionBtnClarify: {
-    backgroundColor: 'rgba(251, 191, 36, 0.08)',
-    borderColor: 'rgba(251, 191, 36, 0.22)',
-  },
-  actionBtnClarifyActive: {
-    backgroundColor: 'rgba(251, 191, 36, 0.18)',
-    borderColor: 'rgba(251, 191, 36, 0.45)',
+    backgroundColor: colors.warning,
+    shadowColor: colors.warning,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 2,
   },
   actionBtnNext: {
-    backgroundColor: colors.surface2,
-    borderColor: colors.border,
-  },
-  actionBtnHidden: {
-    opacity: 0,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    flexShrink: 0,
+    backgroundColor: '#D946EF',
+    borderColor: '#00000024',
+    shadowColor: '#D946EF',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 2,
   },
   actionBtnDisabled: {
     opacity: 0.35,
+  },
+  actionQuestionMark: {
+    color: '#0f172a',
+    fontSize: 24,
+    fontWeight: '400',
+    lineHeight: 24,
   },
 
   // History

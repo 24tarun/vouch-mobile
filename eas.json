@@ -4,28 +4,43 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "base": {
+      "env": {
+        "EXPO_NO_DOCTOR": "1"
+      }
+    },
     "development": {
+      "extends": "base",
       "developmentClient": true,
       "distribution": "internal"
     },
     "preview": {
+      "extends": "base",
       "distribution": "internal"
     },
     "production": {
+      "extends": "base",
       "autoIncrement": true,
       "env": {
+        "EXPO_NO_DOCTOR": "1",
         "NODE_ENV": "production"
       }
     }
   },
   "submit": {
     "internal": {
+      "ios": {
+        "ascAppId": "6762509922"
+      },
       "android": {
         "track": "internal",
         "releaseStatus": "draft"
       }
     },
     "production": {
+      "ios": {
+        "ascAppId": "6762509922"
+      },
       "android": {
         "track": "production",
         "releaseStatus": "draft"

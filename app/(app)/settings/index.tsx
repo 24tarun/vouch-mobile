@@ -273,53 +273,6 @@ function buildUserSummaryFromCandidate(candidate: SearchCandidate): UserSummary 
   };
 }
 
-type ThemeMode = 'light' | 'dark' | 'system';
-
-function AppearanceSection() {
-  const { colors, theme, setTheme } = useTheme();
-  const styles = makeStyles(colors);
-  const options: { value: ThemeMode; label: string; icon: React.ComponentProps<typeof Feather>['name'] }[] = [
-    { value: 'light', label: 'Light', icon: 'sun' },
-    { value: 'dark', label: 'Dark', icon: 'moon' },
-    { value: 'system', label: 'System', icon: 'smartphone' },
-  ];
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionLabel}>Appearance</Text>
-      <View style={styles.card}>
-        <View style={{ flexDirection: 'row', gap: 8, padding: 12 }}>
-          {options.map((opt) => {
-            const active = theme === opt.value;
-            return (
-              <TouchableOpacity
-                key={opt.value}
-                onPress={() => setTheme(opt.value)}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel={`${opt.label} theme`}
-                style={{
-                  flex: 1,
-                  alignItems: 'center',
-                  paddingVertical: 10,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: active ? colors.accentCyan : colors.border,
-                  backgroundColor: active ? 'rgba(0,217,255,0.08)' : colors.surface,
-                  gap: 5,
-                }}
-              >
-                <Feather name={opt.icon} size={18} color={active ? colors.accentCyan : colors.textMuted} />
-                <Text style={{ fontSize: 12, fontWeight: '600', color: active ? colors.accentCyan : colors.textMuted }}>
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </View>
-    </View>
-  );
-}
 
 interface RowProps {
   icon: React.ComponentProps<typeof Feather>['name'];
@@ -2174,8 +2127,6 @@ export default function SettingsScreen() {
           onSavingStateChange={setCalendarSaving}
           onSaveSuccess={() => setSaveSuccessTick((current) => current + 1)}
         />
-
-        <AppearanceSection />
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Account</Text>

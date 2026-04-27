@@ -1091,11 +1091,7 @@ export default function FriendsScreen() {
           {activeTab === 'pending' ? (
             decksByFriend.length === 0 ? (
               <View style={styles.emptyState}>
-                <Feather name="check-circle" size={30} color={colors.textSubtle} />
-                <Text style={styles.emptyTitle}>All clear</Text>
-                <Text style={styles.emptyText}>
-                  No pending reviews. Tasks from your friends will appear here when they need your sign-off.
-                </Text>
+                <Text style={styles.emptyTitle}>No pending requests</Text>
               </View>
             ) : (
               <View style={styles.deckList}>
@@ -1117,9 +1113,7 @@ export default function FriendsScreen() {
           ) : activeTab === 'active' ? (
             activeTasks.length === 0 ? (
               <View style={styles.emptyState}>
-                <Feather name="activity" size={30} color={colors.textSubtle} />
-                <Text style={styles.emptyTitle}>No active tasks</Text>
-                <Text style={styles.emptyText}>No shared active tasks from your friends right now.</Text>
+                <Text style={styles.emptyTitle}>No Activity from friends...</Text>
               </View>
             ) : (
               <View style={styles.activeList}>
@@ -1141,9 +1135,7 @@ export default function FriendsScreen() {
               </View>
             ) : historyTasks.length === 0 ? (
               <View style={styles.emptyState}>
-                <Feather name="clock" size={30} color={colors.textSubtle} />
-                <Text style={styles.emptyTitle}>No history yet</Text>
-                <Text style={styles.emptyText}>Your past vouching decisions will appear here.</Text>
+                <Text style={styles.emptyTitle}>No History yet</Text>
               </View>
             ) : (
               <View style={styles.historyList}>
@@ -1258,23 +1250,16 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     textAlign: 'center',
   },
   emptyState: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.sm,
     paddingVertical: spacing.xxl,
-    paddingHorizontal: spacing.lg,
   },
   emptyTitle: {
     fontSize: typography.md,
     fontWeight: typography.semibold,
     color: colors.text,
-    marginTop: 4,
-  },
-  emptyText: {
-    fontSize: typography.sm,
-    color: colors.textMuted,
     textAlign: 'center',
-    lineHeight: 20,
   },
   errorBanner: {
     flexDirection: 'row',

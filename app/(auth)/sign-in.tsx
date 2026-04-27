@@ -7,13 +7,11 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
-import { signInWithApple, signInWithGoogle } from '@/lib/auth-social';
 import { Button, TextButton } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { type Colors, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import { AuthScreenShell } from '@/components/auth/AuthScreenShell';
-import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
 
 const PRIVACY_POLICY_URL = 'https://tas.tarunh.com/privacy-policy';
 
@@ -39,7 +37,6 @@ export default function SignInScreen() {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [socialLoading, setSocialLoading] = useState<'google' | 'apple' | null>(null);
   const [error, setError] = useState('');
 
   async function handleSignIn() {
@@ -68,26 +65,6 @@ export default function SignInScreen() {
       } else {
         setError(authError.message);
       }
-    }
-  }
-
-  async function handleGoogleSignIn() {
-    setSocialLoading('google');
-    setError('');
-    const { error: authError } = await signInWithGoogle();
-    setSocialLoading(null);
-    if (authError && authError.message !== 'Sign in was cancelled') {
-      setError(authError.message);
-    }
-  }
-
-  async function handleAppleSignIn() {
-    setSocialLoading('apple');
-    setError('');
-    const { error: authError } = await signInWithApple();
-    setSocialLoading(null);
-    if (authError && authError.message !== 'Sign in was cancelled') {
-      setError(authError.message);
     }
   }
 
@@ -134,19 +111,6 @@ export default function SignInScreen() {
         />
       </View>
 
-      <View style={styles.divider}>
-        <View style={styles.dividerLine} />
-        <Text style={styles.dividerText}>or continue with</Text>
-        <View style={styles.dividerLine} />
-      </View>
-
-      <SocialAuthButtons
-        mode="sign-in"
-        loadingProvider={socialLoading}
-        onGooglePress={handleGoogleSignIn}
-        onApplePress={handleAppleSignIn}
-      />
-
       <Text style={styles.legal}>
         By signing in, you agree to our{' '}
         <Text style={styles.legalLink} onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}>
@@ -189,22 +153,6 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontSize: typography.sm,
     color: colors.destructive,
     paddingVertical: spacing.xs,
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginVertical: spacing.md,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
-    fontSize: typography.xs,
-    color: colors.textSubtle,
-    letterSpacing: 0.5,
   },
   legal: {
     marginTop: spacing.md,

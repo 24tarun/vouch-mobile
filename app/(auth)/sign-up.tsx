@@ -8,14 +8,12 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
-import { signInWithApple, signInWithGoogle } from '@/lib/auth-social';
 import { EMAIL_CONFIRMATION_URL } from '@/lib/auth-urls';
 import { Button, TextButton } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { type Colors, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import { AuthScreenShell } from '@/components/auth/AuthScreenShell';
-import { SocialAuthButtons } from '@/components/auth/SocialAuthButtons';
 
 const PRIVACY_POLICY_URL = 'https://tas.tarunh.com/privacy-policy';
 
@@ -26,7 +24,6 @@ export default function SignUpScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [socialLoading, setSocialLoading] = useState<'google' | 'apple' | null>(null);
   const [globalError, setGlobalError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState(false);
@@ -102,26 +99,6 @@ export default function SignUpScreen() {
     setLoading(false);
   }
 
-  async function handleGoogleSignUp() {
-    setSocialLoading('google');
-    setGlobalError('');
-    const { error: authError } = await signInWithGoogle();
-    setSocialLoading(null);
-    if (authError && authError.message !== 'Sign in was cancelled') {
-      setGlobalError(authError.message);
-    }
-  }
-
-  async function handleAppleSignUp() {
-    setSocialLoading('apple');
-    setGlobalError('');
-    const { error: authError } = await signInWithApple();
-    setSocialLoading(null);
-    if (authError && authError.message !== 'Sign in was cancelled') {
-      setGlobalError(authError.message);
-    }
-  }
-
   if (success) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -187,19 +164,6 @@ export default function SignUpScreen() {
         />
       </View>
 
-      <View style={styles.divider}>
-        <View style={styles.dividerLine} />
-        <Text style={styles.dividerText}>or continue with</Text>
-        <View style={styles.dividerLine} />
-      </View>
-
-      <SocialAuthButtons
-        mode="sign-up"
-        loadingProvider={socialLoading}
-        onGooglePress={handleGoogleSignUp}
-        onApplePress={handleAppleSignUp}
-      />
-
       <Text style={styles.legal}>
         By signing up, you agree to our{' '}
         <Text style={styles.legalLink} onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)}>
@@ -241,22 +205,6 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   signUpButton: {
     marginTop: spacing.xs,
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginVertical: spacing.md,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
-    fontSize: typography.xs,
-    color: colors.textSubtle,
-    letterSpacing: 0.5,
   },
   legal: {
     marginTop: spacing.md,

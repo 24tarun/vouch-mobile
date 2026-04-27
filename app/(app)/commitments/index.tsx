@@ -471,17 +471,12 @@ function CreateModal({
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
-function EmptyState({ onNew }: { onNew: () => void }) {
+function EmptyState({ onNew: _onNew }: { onNew: () => void }) {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
   return (
     <View style={styles.emptyWrap}>
-      <Feather name="target" size={40} color={colors.textSubtle} />
-      <Text style={styles.emptyTitle}>No commitments yet</Text>
-      <TouchableOpacity style={styles.emptyBtn} onPress={onNew}>
-        <Feather name="plus" size={16} color={colors.primaryFg} />
-        <Text style={styles.emptyBtnText}>New commitment</Text>
-      </TouchableOpacity>
+      <Text style={styles.emptyMessage}>{"Create a Commitment and stick to it,\nif you can 😉😉"}</Text>
     </View>
   );
 }
@@ -791,19 +786,8 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   actionBtnText: { fontSize: typography.sm, fontWeight: typography.medium },
 
   // Empty state
-  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: spacing.xl, gap: spacing.md },
-  emptyTitle: { fontSize: typography.md, fontWeight: typography.semibold, color: colors.text },
-  emptyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderRadius: radius.lg,
-  },
-  emptyBtnText: { color: colors.primaryFg, fontSize: typography.sm, fontWeight: typography.semibold },
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: spacing.xl },
+  emptyMessage: { fontSize: typography.md, color: colors.textMuted, textAlign: 'center', lineHeight: 24 },
 
   // Picker modal
   pickerModal: { flex: 1, backgroundColor: colors.bg, padding: spacing.lg },

@@ -666,12 +666,10 @@ export function TaskRow({
                 </Text>
                 <TouchableOpacity
                   onPress={() => { void handleDeleteSubtask(subtask.id); }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   activeOpacity={0.7}
                   accessibilityLabel="Delete subtask"
-                >
-                  <Feather name="trash-2" size={14} color={colors.destructive} />
-                </TouchableOpacity>
+                  style={styles.subtaskDeleteCircle}
+                />
               </View>
             ))}
 
@@ -695,6 +693,14 @@ export function TaskRow({
                 onSubmitEditing={() => { void handleAddSubtask(); }}
                 onFocus={handleSubtaskInputFocus}
               />
+              {newSubtaskDraft.trim().length > 0 && (
+                <TouchableOpacity
+                  onPress={() => { void handleAddSubtask(); }}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Confirm subtask"
+                  style={styles.subtaskConfirmCircle}
+                />
+              )}
             </View>
           </View>
         </View>
@@ -720,7 +726,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     minWidth: 0,
   },
   completedTitle: {
-    fontSize: 18,
+    fontSize: 20,
     color: colors.textMuted,
     textDecorationLine: 'line-through',
   },
@@ -774,7 +780,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   title: {
     flexShrink: 1,
-    fontSize: 18,
+    fontSize: 20,
     color: colors.text,
   },
   subtaskBadge: {
@@ -827,6 +833,32 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   actionBtnDisabled: {
     opacity: 0.45,
   },
+  subtaskDeleteCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.destructive,
+    borderWidth: 1,
+    borderColor: '#00000024',
+    shadowColor: colors.destructive,
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 1,
+  },
+  subtaskConfirmCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.success,
+    borderWidth: 1,
+    borderColor: '#00000024',
+    shadowColor: colors.success,
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 1,
+  },
   actionBtnTimerLabel: {
     fontSize: typography.xs,
     color: '#22D3EE',
@@ -858,7 +890,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   subtaskItemTitle: {
     flex: 1,
-    fontSize: typography.sm,
+    fontSize: typography.md,
     color: colors.text,
   },
   subtaskItemTitleCompleted: {
@@ -876,7 +908,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   subtaskInput: {
     flex: 1,
-    fontSize: typography.base,
+    fontSize: typography.md,
     color: colors.text,
     paddingVertical: 0,
   },

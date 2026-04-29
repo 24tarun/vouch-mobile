@@ -35,6 +35,7 @@ import { TaskTopBar } from '@/components/tasks/TaskTopBar';
 import { TaskBottomActions } from '@/components/tasks/TaskBottomActions';
 import { TaskContent } from '@/components/tasks/TaskContent';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
+import { LegacyPostponeCalendarPicker } from '@/components/tasks/LegacyPostponeCalendarPicker';
 import { VoucherPickerModal } from '@/components/tasks/VoucherPickerModal';
 import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
 import { TaskSearchOverlay } from '@/components/tasks/TaskSearchOverlay';
@@ -124,6 +125,41 @@ function buildDefaultStartBoundaryDate(deadline: Date, durationMinutes: number):
   return defaultStart;
 }
 
+function buildDefaultDeadlineDate(now: Date = new Date()): Date {
+  const candidate = new Date(now);
+  candidate.setHours(23, 0, 0, 0);
+  if (candidate.getTime() <= now.getTime()) {
+    candidate.setDate(candidate.getDate() + 1);
+  }
+  return candidate;
+}
+
+function buildPresetDeadlineReminders(
+  deadline: Date,
+  removedPresetSources: DraftReminderPresetSource[],
+  oneHourEnabled: boolean,
+  finalEnabled: boolean,
+): DraftReminder[] {
+  const presetReminders: DraftReminder[] = [];
+
+  if (oneHourEnabled && !removedPresetSources.includes('DEFAULT_DEADLINE_1H')) {
+    presetReminders.push({
+      id: 'preset-deadline-1h',
+      source: 'DEFAULT_DEADLINE_1H',
+      reminderAt: new Date(deadline.getTime() - 60 * 60 * 1000),
+    });
+  }
+  if (finalEnabled && !removedPresetSources.includes('DEFAULT_DEADLINE_10M')) {
+    presetReminders.push({
+      id: 'preset-deadline-10m',
+      source: 'DEFAULT_DEADLINE_10M',
+      reminderAt: new Date(deadline.getTime() - 10 * 60 * 1000),
+    });
+  }
+
+  return presetReminders;
+}
+
 export default function TasksScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -178,19 +214,12 @@ export default function TasksScreen() {
   const [bottomActionsHeight, setBottomActionsHeight] = useState(0);
 
   const [title, setTitle] = useState('');
-  const [deadlineDate, setDeadlineDate] = useState<Date>(() => {
-    const d = new Date();
-    d.setHours(23, 59, 0, 0);
-    return d;
-  });
-  const [customDeadlineDate, setCustomDeadlineDate] = useState<Date>(() => {
-    const d = new Date();
-    d.setHours(23, 59, 0, 0);
-    d.setSeconds(0, 0);
-    return d;
-  });
+  const [deadlineDate, setDeadlineDate] = useState<Date>(() => buildDefaultDeadlineDate());
+  const [customDeadlineDate, setCustomDeadlineDate] = useState<Date>(() => buildDefaultDeadlineDate());
+  const [isDeadlineCustomized, setIsDeadlineCustomized] = useState(false);
   const [customDeadlinePickerMode, setCustomDeadlinePickerMode] = useState<'date' | 'time'>('date');
   const [showCustomDeadlineAndroidPicker, setShowCustomDeadlineAndroidPicker] = useState(false);
+  const [showCustomDeadlineAndroidModal, setShowCustomDeadlineAndroidModal] = useState(false);
   const [showCustomDeadlineIosModal, setShowCustomDeadlineIosModal] = useState(false);
   // voucherValue: null = unset, 'self' = self-vouch, otherwise a friend's user id
   const [voucherValue, setVoucherValue] = useState<string | null>(null);
@@ -218,21 +247,18 @@ export default function TasksScreen() {
   }, [profile, currentUserId, friendsLoading, friends]);
 
   function openOverlay(nextMode: Exclude<OverlayMode, 'closed'>) {
-    closeVoucherPicker();
-    if (nextMode === 'create') {
-      setRecurrenceType('');
-      setShowCustomRecurrenceDays(false);
-      setRecurrenceDays([]);
-      setSortMenuOpen(false);
-    }
-    if (nextMode === 'search') {
-      setSortMenuOpen(false);
-    }
     if (!creatorAnchorRef.current || !rootRef.current) return;
 
     creatorAnchorRef.current.measureLayout(
       rootRef.current,
       (x, y, width, height) => {
+        closeVoucherPicker();
+        if (nextMode === 'create') {
+          setRecurrenceType('');
+          setShowCustomRecurrenceDays(false);
+          setRecurrenceDays([]);
+        }
+        setSortMenuOpen(false);
         setCreatorAnchor({ x, y, width, height });
         expandProgress.value = 0;
         setOverlayMode(nextMode);
@@ -246,6 +272,13 @@ export default function TasksScreen() {
         }, 180);
       },
       () => {
+        closeVoucherPicker();
+        if (nextMode === 'create') {
+          setRecurrenceType('');
+          setShowCustomRecurrenceDays(false);
+          setRecurrenceDays([]);
+        }
+        setSortMenuOpen(false);
         setCreatorAnchor({
           x: spacing.lg,
           y: spacing.lg * 2,
@@ -295,8 +328,7 @@ export default function TasksScreen() {
 
   function resetCreateDraftState() {
     setTitle('');
-    const nextDeadline = new Date();
-    nextDeadline.setHours(23, 59, 0, 0);
+    const nextDeadline = buildDefaultDeadlineDate();
     setDeadlineDate(nextDeadline);
     setRemovedPresetSources([]);
     setDraftReminders([]);
@@ -321,6 +353,7 @@ export default function TasksScreen() {
     setShowCustomReminderAndroidPicker(false);
     setShowCustomReminderIosModal(false);
     setCustomReminderPickerMode('date');
+    setIsDeadlineCustomized(false);
   }
 
   const [draftReminders, setDraftReminders] = useState<DraftReminder[]>([]);
@@ -506,7 +539,10 @@ export default function TasksScreen() {
   function handleTitleChange(text: string) {
     setTitle(text);
     const parsed = parseTitleForDeadline(text, deadlineDate);
-    if (parsed) setDeadlineDate(parsed);
+    if (parsed) {
+      setDeadlineDate(parsed);
+      setIsDeadlineCustomized(true);
+    }
   }
 
   function updateCustomDeadlineDatePart(dateValue: Date) {
@@ -543,6 +579,7 @@ export default function TasksScreen() {
       return false;
     }
     setDeadlineDate(candidate);
+    setIsDeadlineCustomized(true);
     return true;
   }
 
@@ -563,29 +600,18 @@ export default function TasksScreen() {
       return;
     }
 
-    setCustomDeadlinePickerMode('date');
-    setShowCustomDeadlineAndroidPicker(true);
+    setShowCustomDeadlineAndroidModal(true);
   }
 
   useEffect(() => {
-    const presetReminders: DraftReminder[] = [];
     const oneHourEnabled = profile?.deadline_one_hour_warning_enabled ?? true;
     const finalEnabled = profile?.deadline_final_warning_enabled ?? true;
-
-    if (oneHourEnabled && !removedPresetSources.includes('DEFAULT_DEADLINE_1H')) {
-      presetReminders.push({
-        id: 'preset-deadline-1h',
-        source: 'DEFAULT_DEADLINE_1H',
-        reminderAt: new Date(deadlineDate.getTime() - 60 * 60 * 1000),
-      });
-    }
-    if (finalEnabled && !removedPresetSources.includes('DEFAULT_DEADLINE_10M')) {
-      presetReminders.push({
-        id: 'preset-deadline-10m',
-        source: 'DEFAULT_DEADLINE_10M',
-        reminderAt: new Date(deadlineDate.getTime() - 10 * 60 * 1000),
-      });
-    }
+    const presetReminders = buildPresetDeadlineReminders(
+      deadlineDate,
+      removedPresetSources,
+      oneHourEnabled,
+      finalEnabled,
+    );
 
     setDraftReminders((prev) => {
       const custom = prev.filter((item) => item.source === 'MANUAL');
@@ -790,7 +816,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
     return match?.id ?? null;
   }
 
-  async function handleCreateTask() {
+  async function handleCreateTask(deadlineOverride?: Date) {
     if (isCreatingTask) return;
 
     const rawTitle = title.trim();
@@ -854,7 +880,13 @@ function updateCustomReminderDatePart(dateValue: Date) {
     const isStrict = /(^|\s)-strict(?=\s|$)/i.test(rawTitle);
     const effectiveTimeBoundEnabled = timeBoundEnabled || isStrict;
 
-    let deadlineToCreate = new Date(deadlineDate);
+    let deadlineToCreate = new Date(deadlineOverride ?? deadlineDate);
+    deadlineToCreate.setSeconds(0, 0);
+    if (!isDeadlineCustomized && deadlineToCreate.getTime() <= Date.now()) {
+      deadlineToCreate = buildDefaultDeadlineDate();
+      setDeadlineDate(deadlineToCreate);
+      setCustomDeadlineDate(deadlineToCreate);
+    }
     const titleHasParserDeadline = titleHasDeadlineToken(rawTitle) || parsedEventToken;
     if (titleHasParserDeadline) {
       const parserResolution = resolveTaskDeadline(rawTitle, new Date(), eventDurationMinutes);
@@ -933,13 +965,23 @@ function updateCustomReminderDatePart(dateValue: Date) {
     }
 
     const parsedReminderTimes = parseReminderTimesFromTitle(rawTitle);
+    const oneHourEnabled = profile?.deadline_one_hour_warning_enabled ?? true;
+    const finalEnabled = profile?.deadline_final_warning_enabled ?? true;
+    const recalculatedPresetReminders = buildPresetDeadlineReminders(
+      deadlineToCreate,
+      removedPresetSources,
+      oneHourEnabled,
+      finalEnabled,
+    );
+    const manualDraftReminders = draftReminders.filter((item) => item.source === 'MANUAL');
+    const effectiveDraftReminders = sortDraftReminders([...manualDraftReminders, ...recalculatedPresetReminders]);
     const parserReminderEntries: DraftReminder[] = parsedReminderTimes.map(({ hours, minutes }, index) => ({
       id: `parser-reminder-${index}-${hours}-${minutes}`,
       source: 'MANUAL',
       reminderAt: buildReminderDateOnDeadlineDay(deadlineToCreate, hours, minutes),
     }));
     const reminderByIso = new Map<string, DraftReminder>();
-    for (const reminder of [...draftReminders, ...parserReminderEntries]) {
+    for (const reminder of [...effectiveDraftReminders, ...parserReminderEntries]) {
       const iso = reminder.reminderAt.toISOString();
       if (!reminderByIso.has(iso)) reminderByIso.set(iso, reminder);
     }
@@ -996,7 +1038,9 @@ function updateCustomReminderDatePart(dateValue: Date) {
       const userClientInstanceId = await resolveUserClientInstanceId(currentUserId);
       let recurrenceRuleId: string | null = null;
       const isAiVoucher = effectiveVoucherId === AI_PROFILE_ID;
-      const finalRequiresProof = isAiVoucher ? true : (requiresProof || titleRequiresProof);
+      const finalRequiresProof = isAiVoucher
+        ? true
+        : (defaultRequiresProofForAllTasks || requiresProof || titleRequiresProof);
       const googleEventColorId = effectiveEventSyncEnabled ? selectedGoogleEventColorId : null;
 
       if (effectiveRecurrenceType) {
@@ -1280,7 +1324,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
   }, [profile, resolveDefaultVoucherValue, voucherValue]);
 
   useEffect(() => {
-    if (isCreateOverlayOpen) return;
+    if (!isCreateOverlayOpen) return;
     setRequiresProof(defaultRequiresProofForAllTasks);
   }, [isCreateOverlayOpen, defaultRequiresProofForAllTasks]);
 
@@ -1654,6 +1698,12 @@ function updateCustomReminderDatePart(dateValue: Date) {
     }
   }
 
+  const handleCreateTaskRef = useRef(handleCreateTask);
+  handleCreateTaskRef.current = handleCreateTask;
+  const handleCreateTaskCallback = useCallback((deadlineOverride?: Date) => {
+    void handleCreateTaskRef.current(deadlineOverride);
+  }, []);
+
   return (
     <SafeAreaView ref={rootRef} style={styles.safe} edges={['top']}>
       <TaskCreatorOverlay
@@ -1666,9 +1716,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
         targetHeight={creatorTargetHeight}
         isCreatingTask={isCreatingTask}
         onCancel={closeOverlay}
-        onCreate={() => {
-          void handleCreateTask();
-        }}
+        onCreate={handleCreateTaskCallback}
         titleInputRef={titleInputRef}
         title={title}
         onTitleChange={handleTitleChange}
@@ -1693,6 +1741,8 @@ function updateCustomReminderDatePart(dateValue: Date) {
         onOpenDeadlinePickerFlow={openDeadlinePickerFlow}
         showCustomDeadlineIosModal={showCustomDeadlineIosModal}
         setShowCustomDeadlineIosModal={setShowCustomDeadlineIosModal}
+        showCustomDeadlineAndroidModal={showCustomDeadlineAndroidModal}
+        setShowCustomDeadlineAndroidModal={setShowCustomDeadlineAndroidModal}
         setCustomDeadlineDate={setCustomDeadlineDate}
         onConfirmCustomDeadline={handleConfirmCustomDeadline}
         voucherButtonRef={voucherButtonRef}
@@ -1804,6 +1854,7 @@ function updateCustomReminderDatePart(dateValue: Date) {
         keyboardBottomInset={taskListKeyboardInset}
         bottomInsetOffset={bottomDockReservedInset}
         onSubtaskComposerFocus={handleSubtaskComposerFocus}
+        proofUploadTaskId={proofUploadTaskId}
       />
       <TaskBottomActions
         creatorAnchorRef={creatorAnchorRef}
@@ -1816,15 +1867,25 @@ function updateCustomReminderDatePart(dateValue: Date) {
         bottomOffset={bottomDockOffset}
       />
 
-      <PostponeDeadlineModal
-        task={postponePickerTask}
-        date={postponePickerDate}
-        setTask={setPostponePickerTask}
-        onDateChange={handlePostponePickerChange}
-        onAndroidDateChange={handlePostponeAndroidDateChange}
-        onAndroidTimeChange={handlePostponeAndroidTimeChange}
-        onConfirm={confirmPostponeWithPicker}
-      />
+      {Platform.OS === 'ios' ? (
+        <LegacyPostponeCalendarPicker
+          task={postponePickerTask}
+          date={postponePickerDate}
+          setTask={setPostponePickerTask}
+          onDateChange={handlePostponePickerChange}
+          onAndroidDateChange={handlePostponeAndroidDateChange}
+          onAndroidTimeChange={handlePostponeAndroidTimeChange}
+          onConfirm={confirmPostponeWithPicker}
+        />
+      ) : (
+        <PostponeDeadlineModal
+          task={postponePickerTask}
+          date={postponePickerDate}
+          setTask={setPostponePickerTask}
+          onDateChange={handlePostponePickerChange}
+          onConfirm={confirmPostponeWithPicker}
+        />
+      )}
 
       <VoucherPickerModal
         visible={voucherPickerOpen}

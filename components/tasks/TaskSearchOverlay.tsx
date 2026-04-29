@@ -1,11 +1,12 @@
 import { Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import Animated, { useAnimatedStyle, interpolate, interpolateColor, type SharedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useAnimatedReaction, interpolate, interpolateColor, runOnJS, type SharedValue } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
 import { radius } from '@/lib/theme';
 import { StatusPill } from '@/components/StatusPill';
 import type { TaskRowData } from '@/components/TaskRow';
+import { memo, useState, useEffect } from 'react';
 
 interface SearchAnchor {
   x: number;
@@ -31,7 +32,7 @@ interface TaskSearchOverlayProps {
   onClose: () => void;
 }
 
-export function TaskSearchOverlay({
+export const TaskSearchOverlay = memo(function TaskSearchOverlay({
   visible,
   anchor,
   expandProgress,
@@ -50,6 +51,23 @@ export function TaskSearchOverlay({
   const { colors } = useTheme();
   const styles = makeStyles(colors);
   const trimmedQuery = searchQuery.trim();
+  const [contentVisible, setContentVisible] = useState(false);
+
+  useAnimatedReaction(
+    () => expandProgress.value,
+    (progress) => {
+      if (progress > 0.01 && !contentVisible) {
+        runOnJS(setContentVisible)(true);
+      }
+    },
+    [contentVisible],
+  );
+
+  useEffect(() => {
+    if (!visible) {
+      setContentVisible(false);
+    }
+  }, [visible]);
 
   const animatedOverlayStyle = useAnimatedStyle(() => ({
     top: interpolate(expandProgress.value, [0, 1], [anchor?.y ?? 0, targetTop]),
@@ -71,6 +89,8 @@ export function TaskSearchOverlay({
     <>
       <Pressable style={styles.creatorOverlayBackdrop} onPress={onClose} />
       <Animated.View style={[styles.creatorOverlay, animatedOverlayStyle]}>
+        {contentVisible && (
+        <>
         <View style={styles.searchSheetHeader}>
           <View style={styles.searchSheetInputWrap}>
             <Feather name="search" size={16} color={colors.textMuted} />
@@ -130,7 +150,9 @@ export function TaskSearchOverlay({
             ))
           )}
         </ScrollView>
+        </>
+        )}
       </Animated.View>
     </>
   );
-}
+});

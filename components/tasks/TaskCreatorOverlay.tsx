@@ -1,20 +1,24 @@
-import { useEffect, useMemo, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
   Modal,
   Platform,
   Pressable,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import Animated, { useAnimatedStyle, interpolate, interpolateColor, type SharedValue } from 'react-native-reanimated';
+import UiDateTimePicker from 'react-native-ui-datepicker';
+// @ts-ignore — internal module, not in public exports
+import WheelPicker from 'react-native-ui-datepicker/lib/commonjs/components/time-picker/wheel-picker/wheel-picker';
+import Animated, { useAnimatedStyle, useAnimatedReaction, interpolate, interpolateColor, runOnJS, type SharedValue } from 'react-native-reanimated';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Feather } from '@expo/vector-icons';
-import { radius } from '@/lib/theme';
+import { radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import {
   GOOGLE_EVENT_COLOR_OPTIONS,
@@ -50,7 +54,7 @@ interface TaskCreatorOverlayProps {
   targetHeight?: number;
   isCreatingTask: boolean;
   onCancel: () => void;
-  onCreate: () => void;
+  onCreate: (deadlineOverride?: Date) => void;
   titleInputRef: RefObject<TextInput | null>;
   title: string;
   onTitleChange: (text: string) => void;
@@ -74,6 +78,8 @@ interface TaskCreatorOverlayProps {
   onOpenDeadlinePickerFlow: () => void;
   showCustomDeadlineIosModal: boolean;
   setShowCustomDeadlineIosModal: Dispatch<SetStateAction<boolean>>;
+  showCustomDeadlineAndroidModal: boolean;
+  setShowCustomDeadlineAndroidModal: Dispatch<SetStateAction<boolean>>;
   setCustomDeadlineDate: Dispatch<SetStateAction<Date>>;
   onConfirmCustomDeadline: (input?: Date) => boolean | void;
   voucherButtonRef: RefObject<View | null>;
@@ -121,7 +127,7 @@ interface TaskCreatorOverlayProps {
   setShowEventStartAndroidPicker: Dispatch<SetStateAction<boolean>>;
 }
 
-export function TaskCreatorOverlay({
+export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
   visible,
   anchor,
   expandProgress,
@@ -155,6 +161,8 @@ export function TaskCreatorOverlay({
   onOpenDeadlinePickerFlow,
   showCustomDeadlineIosModal,
   setShowCustomDeadlineIosModal,
+  showCustomDeadlineAndroidModal,
+  setShowCustomDeadlineAndroidModal,
   setCustomDeadlineDate,
   onConfirmCustomDeadline,
   voucherButtonRef,
@@ -206,7 +214,9 @@ export function TaskCreatorOverlay({
   const trafficIconColor = colors.bg;
   const [startTimePlacement, setStartTimePlacement] = useState<'timeBound' | 'event'>('timeBound');
   const [expandedControl, setExpandedControl] = useState<'timeBound' | 'eventSync' | null>(null);
+  const [contentVisible, setContentVisible] = useState(false);
   const [isCostEditing, setIsCostEditing] = useState(false);
+  const latestCustomDeadlineDateRef = useRef(customDeadlineDate);
   const isRepeatEnabled = recurrenceType !== '' || showCustomRecurrenceDays;
   const isProofEnabled = isAiVoucherSelected ? true : requiresProof;
   const sanitizedSuggestedStartDate = useMemo(() => {
@@ -218,6 +228,16 @@ export function TaskCreatorOverlay({
     }
     return suggestedStartDate;
   }, [suggestedStartDate]);
+
+  useAnimatedReaction(
+    () => expandProgress.value,
+    (progress) => {
+      if (progress > 0.01 && !contentVisible) {
+        runOnJS(setContentVisible)(true);
+      }
+    },
+    [contentVisible],
+  );
 
   // Computed before early return so hooks are always called unconditionally
   const resolvedTargetTop = targetTop ?? (anchor?.y ?? 0);
@@ -253,8 +273,13 @@ export function TaskCreatorOverlay({
     if (!visible) {
       setExpandedControl(null);
       setIsCostEditing(false);
+      setContentVisible(false);
     }
   }, [visible]);
+
+  useEffect(() => {
+    latestCustomDeadlineDateRef.current = customDeadlineDate;
+  }, [customDeadlineDate]);
 
   useEffect(() => {
     if (expandedControl === 'timeBound' && !timeBoundEnabled) {
@@ -269,6 +294,15 @@ export function TaskCreatorOverlay({
   function handleDismissGesture() {
     Keyboard.dismiss();
     onCancel();
+  }
+
+  function updateCustomDeadlineSelection(nextDate: Date) {
+    latestCustomDeadlineDateRef.current = nextDate;
+    setCustomDeadlineDate(nextDate);
+  }
+
+  function resolveLatestCustomDeadlineDate() {
+    return latestCustomDeadlineDateRef.current;
   }
 
   function prepareIconInteraction() {
@@ -381,6 +415,7 @@ export function TaskCreatorOverlay({
     <>
       <Pressable style={styles.creatorOverlayBackdrop} onPress={handleDismissGesture} />
       <Animated.View style={[styles.creatorOverlay, animatedOverlayStyle]}>
+        {contentVisible && (
         <KeyboardAwareScrollView
           style={styles.creatorBody}
           enableOnAndroid
@@ -405,7 +440,7 @@ export function TaskCreatorOverlay({
                 value={title}
                 onChangeText={onTitleChange}
                 returnKeyType="done"
-                onSubmitEditing={onCreate}
+                onSubmitEditing={() => onCreate()}
                 onFocus={() => setIsTitleFocused(true)}
                 onBlur={() => setIsTitleFocused(false)}
               />
@@ -658,7 +693,7 @@ export function TaskCreatorOverlay({
                     minimumDate={new Date()}
                     onChange={(_event, selected) => {
                       if (selected) {
-                        setCustomDeadlineDate(selected);
+                        updateCustomDeadlineSelection(selected);
                       }
                     }}
                     themeVariant="dark"
@@ -731,7 +766,7 @@ export function TaskCreatorOverlay({
                       style={styles.deadlineModalSetBtn}
                       activeOpacity={0.85}
                       onPress={() => {
-                        const didSet = onConfirmCustomDeadline(customDeadlineDate);
+                        const didSet = onConfirmCustomDeadline(resolveLatestCustomDeadlineDate());
                         if (didSet) {
                           setShowCustomDeadlineIosModal(false);
                         }
@@ -746,13 +781,188 @@ export function TaskCreatorOverlay({
                       activeOpacity={0.85}
                       disabled={isCreatingTask}
                       onPress={() => {
-                        const didSet = onConfirmCustomDeadline(customDeadlineDate);
+                        const didSet = onConfirmCustomDeadline(resolveLatestCustomDeadlineDate());
                         if (!didSet) return;
                         setShowCustomDeadlineIosModal(false);
-                        onCreate();
+                        onCreate(resolveLatestCustomDeadlineDate());
                       }}
                       accessibilityRole="button"
                       accessibilityLabel="Set deadline and create task"
+                    >
+                      {isCreatingTask
+                        ? <ActivityIndicator size="small" color={trafficIconColor} />
+                        : <Feather name="check" size={16} color={trafficIconColor} />
+                      }
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </Modal>
+            )}
+
+            {Platform.OS === 'android' && (
+              <Modal
+                visible={showCustomDeadlineAndroidModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowCustomDeadlineAndroidModal(false)}
+              >
+                <Pressable
+                  style={styles.reminderPickerBackdrop}
+                  onPress={() => setShowCustomDeadlineAndroidModal(false)}
+                />
+                <View style={styles.reminderPickerSheet}>
+                  <UiDateTimePicker
+                    mode="single"
+                    date={customDeadlineDate}
+                    minDate={new Date()}
+                    disableMonthPicker
+                    disableYearPicker
+                    onChange={({ date: selected }) => {
+                      if (selected) {
+                        const next = new Date(selected as string | number | Date);
+                        next.setHours(customDeadlineDate.getHours(), customDeadlineDate.getMinutes(), 0, 0);
+                        setCustomDeadlineDate(next);
+                      }
+                    }}
+                    styles={{
+                      day: { borderRadius: 100 },
+                      day_label: { color: colors.text, fontSize: 13 },
+                      weekday_label: { color: colors.textMuted, fontSize: 12 },
+                      month_selector_label: { color: colors.text, fontWeight: '700', fontSize: 16 },
+                      year_selector_label: { color: colors.text, fontWeight: '700', fontSize: 16 },
+                      button_next: { backgroundColor: colors.surface, borderRadius: 8, padding: 6 },
+                      button_prev: { backgroundColor: colors.surface, borderRadius: 8, padding: 6 },
+                      selected: { backgroundColor: colors.warning },
+                      selected_label: { color: '#000' },
+                      today_label: { color: colors.warning },
+                      disabled_label: { color: colors.textMuted, opacity: 0.4 },
+                    } as any}
+                    style={{ backgroundColor: 'transparent' }}
+                  />
+
+                  {/* Wheel time pickers */}
+                  <View style={androidModalStyles.timeRow}>
+                    <Text style={[androidModalStyles.timeLabel, { color: colors.textMuted }]}>Time</Text>
+                    <View style={androidModalStyles.wheels}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setCustomDeadlineDate((prev) => {
+                            const next = new Date(prev);
+                            next.setHours(23, 0, 0, 0);
+                            return next;
+                          });
+                        }}
+                        hitSlop={10}
+                        style={[androidModalStyles.resetTimeBtn, { borderColor: colors.borderStrong, backgroundColor: colors.surface2 }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Reset time to 23:00"
+                      >
+                        <Feather name="rotate-ccw" size={15} color={colors.textMuted} />
+                      </TouchableOpacity>
+                      <WheelPicker
+                        value={customDeadlineDate.getHours()}
+                        options={DEADLINE_HOURS}
+                        onChange={(h: number) => setCustomDeadlineDate((prev) => { const next = new Date(prev); next.setHours(h); return next; })}
+                        itemHeight={44}
+                        visibleRest={0}
+                        decelerationRate="fast"
+                        itemTextStyle={{ color: colors.text, fontSize: typography.lg, fontWeight: '600' }}
+                        selectedIndicatorStyle={{ backgroundColor: colors.surface2, borderRadius: radius.md }}
+                        containerStyle={{ width: 64 }}
+                        flatListProps={WHEEL_LIST_PROPS}
+                      />
+                      <Text style={[androidModalStyles.colon, { color: colors.textMuted }]}>:</Text>
+                      <WheelPicker
+                        value={customDeadlineDate.getMinutes()}
+                        options={DEADLINE_MINUTES}
+                        onChange={(m: number) => setCustomDeadlineDate((prev) => { const next = new Date(prev); next.setMinutes(m); return next; })}
+                        itemHeight={44}
+                        visibleRest={0}
+                        decelerationRate="fast"
+                        itemTextStyle={{ color: colors.text, fontSize: typography.lg, fontWeight: '600' }}
+                        selectedIndicatorStyle={{ backgroundColor: colors.surface2, borderRadius: radius.md }}
+                        containerStyle={{ width: 64 }}
+                        flatListProps={WHEEL_LIST_PROPS}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Recurrence buttons */}
+                  <View style={styles.deadlineRecurrenceRows}>
+                    {(['DAILY', 'WEEKLY', 'MONTHLY', 'CUSTOM'] as const).map((option) => {
+                      const isSelected = option === 'CUSTOM'
+                        ? showCustomRecurrenceDays
+                        : recurrenceType === option && !showCustomRecurrenceDays;
+                      return (
+                        <TouchableOpacity
+                          key={option}
+                          style={[styles.deadlineRecurrenceRow, isSelected && styles.deadlineRecurrenceRowActive]}
+                          activeOpacity={0.8}
+                          onPress={() => {
+                            if (option === 'CUSTOM') {
+                              if (showCustomRecurrenceDays) { onClearRecurrence(); return; }
+                              onToggleCustomRecurrenceDays(); return;
+                            }
+                            if (isSelected) { onClearRecurrence(); return; }
+                            onSelectRecurrenceType(option);
+                          }}
+                        >
+                          <Text style={[styles.deadlineRecurrenceRowText, isSelected && styles.deadlineRecurrenceRowTextActive]}>
+                            {option === 'CUSTOM' ? 'Custom' : option.charAt(0) + option.slice(1).toLowerCase()}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {showCustomRecurrenceDays && (
+                    <View style={styles.recurrenceDaysRow}>
+                      {WEEKDAY_ORDER.map((day) => {
+                        const selected = recurrenceDays.includes(day);
+                        return (
+                          <TouchableOpacity
+                            key={day}
+                            style={[styles.recurrenceDayBtn, selected && styles.recurrenceDayBtnActive]}
+                            activeOpacity={0.8}
+                            onPress={() => onToggleRecurrenceDay(day)}
+                          >
+                            <Text style={[styles.recurrenceDayText, selected && styles.recurrenceDayTextActive]}>
+                              {WEEKDAY_SHORT[day]}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {/* Action buttons */}
+                  <View style={[styles.reminderPickerActions, styles.deadlineModalActions]}>
+                    <TouchableOpacity
+                      style={styles.deadlineModalTrafficCancelBtn}
+                      activeOpacity={0.8}
+                      onPress={() => setShowCustomDeadlineAndroidModal(false)}
+                    >
+                      <Feather name="x" size={16} color={trafficIconColor} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.deadlineModalSetBtn}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        const didSet = onConfirmCustomDeadline(customDeadlineDate);
+                        if (didSet) setShowCustomDeadlineAndroidModal(false);
+                      }}
+                    >
+                      <Feather name="calendar" size={16} color={trafficIconColor} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.deadlineQuickCreateBtn, isCreatingTask && styles.sheetCreateButtonDisabled]}
+                      activeOpacity={0.85}
+                      disabled={isCreatingTask}
+                      onPress={() => {
+                        const didSet = onConfirmCustomDeadline(customDeadlineDate);
+                        if (!didSet) return;
+                        setShowCustomDeadlineAndroidModal(false);
+                        onCreate(customDeadlineDate);
+                      }}
                     >
                       {isCreatingTask
                         ? <ActivityIndicator size="small" color={trafficIconColor} />
@@ -856,7 +1066,7 @@ export function TaskCreatorOverlay({
 
               <TouchableOpacity
                 style={[styles.creatorTrafficFooterBtn, styles.creatorTrafficFooterBtnGreen, isCreatingTask && styles.sheetCreateButtonDisabled]}
-                onPress={onCreate}
+                onPress={() => onCreate()}
                 disabled={isCreatingTask}
                 activeOpacity={0.8}
                 accessibilityRole="button"
@@ -935,7 +1145,51 @@ export function TaskCreatorOverlay({
             ) : null}
           </View>
         </KeyboardAwareScrollView>
+        )}
       </Animated.View>
     </>
   );
+});
+
+function buildWheelOptions(count: number, start = 0) {
+  return Array.from({ length: count }, (_, i) => ({
+    value: i + start,
+    text: String(i + start).padStart(2, '0'),
+  }));
 }
+
+const DEADLINE_HOURS = buildWheelOptions(24);
+const DEADLINE_MINUTES = buildWheelOptions(60);
+const WHEEL_LIST_PROPS = { windowSize: 3, maxToRenderPerBatch: 5, updateCellsBatchingPeriod: 100, removeClippedSubviews: true };
+
+const androidModalStyles = StyleSheet.create({
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
+  },
+  timeLabel: {
+    fontSize: typography.base,
+    fontWeight: '600',
+  },
+  wheels: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  resetTimeBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.xs,
+  },
+  colon: {
+    fontSize: typography.xl,
+    fontWeight: '700',
+  },
+});

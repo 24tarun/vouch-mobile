@@ -34,6 +34,7 @@ interface TaskContentProps {
   keyboardBottomInset?: number;
   bottomInsetOffset?: number;
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
+  proofUploadTaskId?: string | null;
 }
 
 export function TaskContent({
@@ -61,6 +62,7 @@ export function TaskContent({
   keyboardBottomInset = 0,
   bottomInsetOffset = 0,
   onSubtaskComposerFocus,
+  proofUploadTaskId = null,
 }: TaskContentProps) {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
@@ -137,6 +139,7 @@ export function TaskContent({
               onDelete={onDelete}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}
               onSubtaskComposerFocus={onSubtaskComposerFocus}
+              proofActionInProgress={proofUploadTaskId === task.id}
             />
           ))}
           <CollapsibleSection
@@ -149,6 +152,7 @@ export function TaskContent({
             onDelete={onDelete}
             defaultPomoDurationMinutes={defaultPomoDurationMinutes}
             onSubtaskComposerFocus={onSubtaskComposerFocus}
+            proofUploadTaskId={proofUploadTaskId}
           />
           <CollapsibleSection
             title="Past"
@@ -163,6 +167,7 @@ export function TaskContent({
             onDelete={onDelete}
             defaultPomoDurationMinutes={defaultPomoDurationMinutes}
             onSubtaskComposerFocus={onSubtaskComposerFocus}
+            proofUploadTaskId={proofUploadTaskId}
           />
         </>
       )}

@@ -8,6 +8,7 @@ import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import { StatusPill } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
+import { ProofCaptureModal } from '@/components/tasks/ProofCaptureModal';
 import { supabase } from '@/lib/supabase';
 import { TASK_COMPLETED_LIKE_STATUSES } from '@/lib/constants/task-status';
 import type { TaskStatus } from '@/lib/types';
@@ -46,6 +47,7 @@ interface TaskRowProps {
   onDelete?: (task: TaskRowData) => void | Promise<void>;
   defaultPomoDurationMinutes?: number;
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
+  proofActionInProgress?: boolean;
 }
 
 // Format deadline as `HH:MM` for today/past or `HH:MM DD mon` for future
@@ -68,6 +70,7 @@ export function TaskRow({
   onDelete,
   defaultPomoDurationMinutes = 25,
   onSubtaskComposerFocus,
+  proofActionInProgress = false,
 }: TaskRowProps) {
   const { colors } = useTheme();
   const styles = makeStyles(colors);
@@ -82,13 +85,13 @@ export function TaskRow({
   const isCompleted = task.status
     ? TASK_COMPLETED_LIKE_STATUSES.has(task.status as TaskStatus)
     : (task.completed ?? false);
+  const isRepeatingTask = Boolean(task.recurrence_rule_id);
 
   // Active rows are tappable to expand the action tray
   const [expanded, setExpanded] = useState(false);
   const [isPostponing, setIsPostponing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [firstActionX, setFirstActionX] = useState(0);
-
+  const [proofCaptureOpen, setProofCaptureOpen] = useState(false);
   // Subtasks
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [subtasksLoaded, setSubtasksLoaded] = useState(false);
@@ -298,34 +301,6 @@ export function TaskRow({
   const isCurrentTaskPomo = activePomoSession?.task_id === task.id;
   const currentTaskPomoStatus = isCurrentTaskPomo ? activePomoSession?.status : null;
 
-  async function ensureCameraPermission(): Promise<boolean> {
-    const current = await ImagePicker.getCameraPermissionsAsync();
-    if (current.granted) return true;
-
-    const requested = await ImagePicker.requestCameraPermissionsAsync();
-    if (requested.granted) return true;
-
-    Alert.alert(
-      'Camera permission required',
-      'Allow camera access in Settings to capture proof media.',
-    );
-    return false;
-  }
-
-  async function ensureGalleryPermission(): Promise<boolean> {
-    const current = await ImagePicker.getMediaLibraryPermissionsAsync();
-    if (current.granted) return true;
-
-    const requested = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (requested.granted) return true;
-
-    Alert.alert(
-      'Photos permission required',
-      'Allow photo library access in Settings to attach existing media.',
-    );
-    return false;
-  }
-
   async function handlePickedResult(result: ImagePicker.ImagePickerResult) {
     if (result.canceled || result.assets.length === 0) return;
 
@@ -346,69 +321,14 @@ export function TaskRow({
     );
   }
 
-  async function handleTakePhoto() {
-    try {
-      const allowed = await ensureCameraPermission();
-      if (!allowed) return;
-
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: 'images',
-        quality: 0.9,
-        allowsEditing: false,
-        exif: true,
-      });
-
-      await handlePickedResult(result);
-    } catch {
-      Alert.alert('Could not open camera', 'Please try again.');
-    }
-  }
-
-  async function handleRecordVideo() {
-    try {
-      const allowed = await ensureCameraPermission();
-      if (!allowed) return;
-
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: 'videos',
-        videoMaxDuration: 15,
-        quality: 0.8,
-        exif: true,
-      });
-
-      await handlePickedResult(result);
-    } catch {
-      Alert.alert('Could not record video', 'Please try again.');
-    }
-  }
-
-  async function handleChooseFromGallery() {
-    try {
-      const allowed = await ensureGalleryPermission();
-      if (!allowed) return;
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images', 'videos'],
-        allowsMultipleSelection: false,
-        quality: 0.9,
-        videoMaxDuration: 15,
-        exif: true,
-        ...(Platform.OS === 'ios'
-          ? {
-              preferredAssetRepresentationMode:
-                ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
-            }
-          : {}),
-      });
-
-      await handlePickedResult(result);
-    } catch {
-      Alert.alert('Could not open photo library', 'Please try again.');
-    }
-  }
-
   function openProofSourcePicker() {
+    if (proofActionInProgress) return;
     const hasProof = Boolean(task.has_proof);
+    if (!hasProof) {
+      setProofCaptureOpen(true);
+      return;
+    }
+
     const takePhotoLabel = hasProof ? 'Replace: Take Photo' : 'Take Photo';
     const recordVideoLabel = hasProof ? 'Replace: Record Video' : 'Record Video';
     const galleryLabel = hasProof ? 'Replace: Choose from Library' : 'Choose from Library';
@@ -425,9 +345,7 @@ export function TaskRow({
           userInterfaceStyle: 'dark',
         },
         (selectedIndex) => {
-          if (selectedIndex === 0) void handleTakePhoto();
-          if (selectedIndex === 1) void handleRecordVideo();
-          if (selectedIndex === 2) void handleChooseFromGallery();
+          if (selectedIndex === 0 || selectedIndex === 1 || selectedIndex === 2) setProofCaptureOpen(true);
           if (hasProof && selectedIndex === 3) void onProofRemoved?.(task.id);
         },
       );
@@ -439,16 +357,14 @@ export function TaskRow({
       'Choose a media source.',
       hasProof
         ? [
-            { text: takePhotoLabel, onPress: () => void handleTakePhoto() },
-            { text: recordVideoLabel, onPress: () => void handleRecordVideo() },
-            { text: galleryLabel, onPress: () => void handleChooseFromGallery() },
+            { text: 'Replace proof', onPress: () => setProofCaptureOpen(true) },
             { text: removeLabel, style: 'destructive', onPress: () => void onProofRemoved?.(task.id) },
             { text: 'Cancel', style: 'cancel' },
           ]
         : [
-            { text: takePhotoLabel, onPress: () => void handleTakePhoto() },
-            { text: recordVideoLabel, onPress: () => void handleRecordVideo() },
-            { text: galleryLabel, onPress: () => void handleChooseFromGallery() },
+            { text: takePhotoLabel, onPress: () => setProofCaptureOpen(true) },
+            { text: recordVideoLabel, onPress: () => setProofCaptureOpen(true) },
+            { text: galleryLabel, onPress: () => setProofCaptureOpen(true) },
             { text: 'Cancel', style: 'cancel' },
           ],
       { cancelable: true },
@@ -532,7 +448,12 @@ export function TaskRow({
           <Feather name="check" size={13} color={colors.textMuted} />
         </View>
         <View style={styles.completedMain}>
-          <Text style={styles.completedTitle} numberOfLines={1}>{task.title}</Text>
+          <View style={styles.completedTitleRow}>
+            <Text style={styles.completedTitle} numberOfLines={1}>{task.title}</Text>
+            {isRepeatingTask ? (
+              <Feather name="repeat" size={16} color="#C084FC" style={styles.repeatIcon} />
+            ) : null}
+          </View>
         </View>
         <View style={styles.completedMeta}>
           {task.status && <StatusPill status={task.status} />}
@@ -545,6 +466,13 @@ export function TaskRow({
   // ── Active row ─────────────────────────────────────────────────────────────
   return (
     <View style={[styles.container, expanded && styles.containerExpanded]}>
+      <ProofCaptureModal
+        visible={proofCaptureOpen}
+        onClose={() => setProofCaptureOpen(false)}
+        onAssetPicked={async (asset) => {
+          await handlePickedResult({ canceled: false, assets: [asset] });
+        }}
+      />
       <Pressable
         onPress={() => setExpanded((prev) => !prev)}
         style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
@@ -573,6 +501,9 @@ export function TaskRow({
           <Text style={styles.title} numberOfLines={1}>
             {task.title}
           </Text>
+          {isRepeatingTask ? (
+            <Feather name="repeat" size={16} color="#C084FC" style={styles.repeatIcon} />
+          ) : null}
           {hasSubtasks && (
             <Text style={styles.subtaskBadge}>
               {task.subtaskCompleted ?? 0}/{task.subtaskTotal}
@@ -592,9 +523,13 @@ export function TaskRow({
               activeOpacity={0.65}
               accessibilityLabel={task.has_proof ? 'Replace proof' : 'Attach proof'}
               onPress={openProofSourcePicker}
-              onLayout={(e) => setFirstActionX(e.nativeEvent.layout.x)}
+              disabled={proofActionInProgress}
             >
-              <Feather name={task.has_proof ? 'refresh-cw' : 'camera'} size={20} color="#F472B6" />
+              {proofActionInProgress ? (
+                <ActivityIndicator size="small" color="#F472B6" />
+              ) : (
+                <Feather name={task.has_proof ? 'refresh-cw' : 'camera'} size={20} color="#F472B6" />
+              )}
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionBtn, !canPostpone && styles.actionBtnDisabled]}
@@ -647,7 +582,7 @@ export function TaskRow({
             </TouchableOpacity>
           </View>
 
-          <View style={[styles.subtasksSection, { marginLeft: firstActionX }]}>
+          <View style={styles.subtasksSection}>
             {subtasks.map((subtask) => (
               <View key={subtask.id} style={styles.subtaskItemRow}>
                 <TouchableOpacity
@@ -725,7 +660,14 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  completedTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minWidth: 0,
+  },
   completedTitle: {
+    flexShrink: 1,
     fontSize: 20,
     color: colors.textMuted,
     textDecorationLine: 'line-through',
@@ -783,6 +725,9 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontSize: 20,
     color: colors.text,
   },
+  repeatIcon: {
+    flexShrink: 0,
+  },
   subtaskBadge: {
     fontSize: typography.xs,
     color: colors.textMuted,
@@ -816,7 +761,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-evenly',
+    justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
@@ -865,6 +810,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontWeight: typography.medium,
   },
   subtasksSection: {
+    marginLeft: spacing.lg,
     marginRight: spacing.lg,
     marginTop: spacing.sm,
   },

@@ -138,7 +138,7 @@ function isValidCalendarDate(year: number, month: number, day: number): boolean 
 
 function getDefaultDeadline(now: Date = new Date()): Date {
   const deadline = new Date(now);
-  deadline.setHours(23, 59, 0, 0);
+  deadline.setHours(23, 0, 0, 0);
   if (deadline.getTime() <= now.getTime()) {
     deadline.setDate(deadline.getDate() + 1);
   }
@@ -469,7 +469,7 @@ export function resolveTaskDeadline(
       return { deadline: defaultDeadline, error: 'Date is invalid. Use 28th, 05/03, or 05/03/2026.' };
     }
 
-    const deadline = new Date(year, month - 1, day, parsedTime?.hours ?? 23, parsedTime?.minutes ?? 59, 0, 0);
+    const deadline = new Date(year, month - 1, day, parsedTime?.hours ?? 23, parsedTime?.minutes ?? 0, 0, 0);
     if (deadline.getTime() <= now.getTime()) {
       return { deadline, error: 'Deadline must be in the future.' };
     }
@@ -479,7 +479,7 @@ export function resolveTaskDeadline(
 
   if (parsedWeekdayTokens.length === 1) {
     const deadline = resolveUpcomingWeekdayDate(parsedWeekdayTokens[0].weekday, now);
-    deadline.setHours(parsedTime?.hours ?? 23, parsedTime?.minutes ?? 59, 0, 0);
+    deadline.setHours(parsedTime?.hours ?? 23, parsedTime?.minutes ?? 0, 0, 0);
 
     if (deadline.getTime() <= now.getTime()) {
       return { deadline, error: 'Deadline must be in the future.' };
@@ -491,7 +491,7 @@ export function resolveTaskDeadline(
   if (hasTomorrowKeyword) {
     const deadline = new Date(now);
     deadline.setDate(deadline.getDate() + 1);
-    deadline.setHours(parsedTime?.hours ?? 23, parsedTime?.minutes ?? 59, 0, 0);
+    deadline.setHours(parsedTime?.hours ?? 23, parsedTime?.minutes ?? 0, 0, 0);
     return { deadline, error: null };
   }
 

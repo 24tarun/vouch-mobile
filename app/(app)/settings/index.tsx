@@ -333,7 +333,7 @@ function SettingsRow({
 }
 
 export default function SettingsScreen() {
-  const { colors } = useTheme();
+  const { colors, theme, setTheme } = useTheme();
   const styles = makeStyles(colors);
   const { user, profile } = useAuth();
   const queryClient = useQueryClient();
@@ -1817,6 +1817,36 @@ export default function SettingsScreen() {
           loading={statsLoading}
           error={statsError}
         />
+
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Appearance</Text>
+          <View style={styles.card}>
+            <View style={styles.themeModeRow}>
+              {[
+                { key: 'system', label: 'System' },
+                { key: 'dark', label: 'Dark' },
+                { key: 'light', label: 'Light' },
+              ].map((mode) => {
+                const selected = theme === mode.key;
+                return (
+                  <TouchableOpacity
+                    key={mode.key}
+                    style={[styles.themeModeButton, selected && styles.themeModeButtonActive]}
+                    activeOpacity={0.85}
+                    onPress={() => setTheme(mode.key as 'system' | 'dark' | 'light')}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Set theme to ${mode.label}`}
+                    accessibilityState={{ selected }}
+                  >
+                    <Text style={[styles.themeModeButtonText, selected && styles.themeModeButtonTextActive]}>
+                      {mode.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </View>
 
         <FriendsSection
           friendSearchQuery={friendSearchQuery}

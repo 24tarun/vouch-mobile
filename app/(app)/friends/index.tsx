@@ -210,12 +210,14 @@ function MediaBox({ proof, taskId, onExpand }: { proof: TaskProof | null; taskId
       {proof ? (
         <>
           {proof.mediaKind === 'image' ? (
-            <Image
-              source={{ uri: proof.signedUrl }}
-              style={StyleSheet.absoluteFill}
-              resizeMode="cover"
-              fadeDuration={0}
-            />
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={0.95} onPress={onExpand}>
+              <Image
+                source={{ uri: proof.signedUrl }}
+                style={StyleSheet.absoluteFill}
+                resizeMode="cover"
+                fadeDuration={0}
+              />
+            </TouchableOpacity>
           ) : (
             <VideoProofPlayer
               key={proof.signedUrl}
@@ -1202,7 +1204,8 @@ export default function FriendsScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const CARD_RADIUS = 16;
-const MEDIA_HEIGHT = 186;
+const MEDIA_MIN_HEIGHT = 176;
+const MEDIA_MAX_HEIGHT = 248;
 
 const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: {
@@ -1335,7 +1338,9 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
 
   // Media box
   mediaBox: {
-    height: MEDIA_HEIGHT,
+    aspectRatio: 4 / 3,
+    minHeight: MEDIA_MIN_HEIGHT,
+    maxHeight: MEDIA_MAX_HEIGHT,
     borderRadius: CARD_RADIUS - 2,
     overflow: 'hidden',
     backgroundColor: colors.surface2,

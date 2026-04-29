@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.vouch.mobile",
+      "bundleIdentifier": "com.tarun.vouch",
       "icon": "./assets/icon.png",
       "usesAppleSignIn": true,
       "infoPlist": {
@@ -29,7 +29,7 @@
         "foregroundImage": "./assets/adaptive-icon-foreground.png",
         "backgroundColor": "#0F0F0F"
       },
-      "package": "com.tarun.vouch",
+      "package": "com.vouch.mobile",
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.RECORD_AUDIO"

@@ -25,3 +25,4 @@ expo-env.d.ts
 *.apk
 *.ipa
 build/
+ios/

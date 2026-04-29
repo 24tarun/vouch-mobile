@@ -258,7 +258,38 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     color: colors.text,
     fontSize: typography.base,
     textAlign: 'right',
+    flex: 1,
+    minWidth: 0,
     flexShrink: 1,
+  },
+  themeModeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  themeModeButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surface2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+  },
+  themeModeButtonActive: {
+    borderColor: colors.accentCyan,
+    backgroundColor: `${colors.accentCyan}22`,
+  },
+  themeModeButtonText: {
+    fontSize: typography.sm,
+    color: colors.textMuted,
+    fontWeight: typography.medium,
+  },
+  themeModeButtonTextActive: {
+    color: colors.text,
+    fontWeight: typography.semibold,
   },
   toggleRow: {
     flexDirection: 'row',

@@ -22,14 +22,13 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
-import * as ImagePicker from 'expo-image-picker';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import Toast from 'react-native-toast-message';
 import { supabase } from '@/lib/supabase';
 import { purgeTaskProofForFinalState, removeTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
-import { stopTaskRepetitions, undoCompleteTask } from '@/lib/tasks/task-actions';
+import { completeTask, stopTaskRepetitions, undoCompleteTask, deleteTask, postponeTaskDeadline, isTaskWithinDeleteWindow } from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
@@ -42,6 +41,9 @@ import { TASK_AWAITING_STATUSES } from '@/lib/constants/task-status';
 import { useAuth } from '@/hooks/useAuth';
 import { useTaskDetail } from '@/lib/hooks/useTaskDetail';
 import { queryKeys } from '@/lib/query/keys';
+import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
+import { LegacyPostponeCalendarPicker } from '@/components/tasks/LegacyPostponeCalendarPicker';
+import { ProofCaptureModal } from '@/components/tasks/ProofCaptureModal';
 
 // ─── Event labels ─────────────────────────────────────────────────────────────
 
@@ -77,12 +79,15 @@ const EVENT_LABEL: Record<string, string> = {
 // ─── Button color tokens ──────────────────────────────────────────────────────
 
 const BTN = {
+  complete:      { bg: '#22C55E1A', border: '#22C55E59', text: '#22C55E' },
   pomo:          { bg: '#22D3EE1A', border: '#22D3EE4D', text: '#22D3EE' },
   proof:         { bg: '#F472B61A', border: '#F472B659', text: '#F472B6' },
   stopRepeating: { bg: '#C084FC1A', border: '#C084FC59', text: '#C084FC' },
   override:      { bg: '#A21CAF33', border: '#A21CAFB3', text: '#F0ABFC' },
   reminders:     { bg: '#FBBF2426', border: '#FBBF2459', text: '#FBBF24' },
   undoComplete:  { bg: '#34D3991A', border: '#34D39959', text: '#34D399' },
+  postpone:      { bg: '#F59E0B1A', border: '#F59E0B59', text: '#F59E0B' },
+  delete:        { bg: '#F871711A', border: '#F8717159', text: '#F87171' },
 } as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -441,11 +446,85 @@ export default function TaskDetailScreen() {
     }
   };
 
+  // ── Subtasks ───────────────────────────────────────────────────────────────
+  interface Subtask { id: string; title: string; is_completed: boolean; completed_at: string | null }
+  const MAX_SUBTASKS = 20;
+  const [subtasks, setSubtasks] = useState<Subtask[]>([]);
+  const [newSubtaskDraft, setNewSubtaskDraft] = useState('');
+  const subtaskInputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    setSubtasks([]);
+    supabase
+      .from('task_subtasks')
+      .select('id, title, is_completed, completed_at')
+      .eq('parent_task_id', id)
+      .order('created_at', { ascending: true })
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        setSubtasks(data as Subtask[]);
+      });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  async function handleAddSubtask() {
+    const title = newSubtaskDraft.trim();
+    if (!title || subtasks.length >= MAX_SUBTASKS || !user?.id || !id) return;
+    setNewSubtaskDraft('');
+    const tempId = `temp-${Date.now()}`;
+    setSubtasks((prev) => [...prev, { id: tempId, title, is_completed: false, completed_at: null }]);
+    try {
+      const { data, error } = await supabase
+        .from('task_subtasks')
+        .insert({ parent_task_id: id, user_id: user.id, title, is_completed: false, completed_at: null })
+        .select('id, title, is_completed, completed_at')
+        .single();
+      if (error || !data) { setSubtasks((prev) => prev.filter((s) => s.id !== tempId)); return; }
+      setSubtasks((prev) => prev.map((s) => (s.id === tempId ? (data as Subtask) : s)));
+      subtaskInputRef.current?.focus();
+    } catch {
+      setSubtasks((prev) => prev.filter((s) => s.id !== tempId));
+    }
+  }
+
+  async function handleToggleSubtask(subtask: Subtask) {
+    const nowCompleted = !subtask.is_completed;
+    const completedAt = nowCompleted ? new Date().toISOString() : null;
+    setSubtasks((prev) => prev.map((s) => (s.id === subtask.id ? { ...s, is_completed: nowCompleted, completed_at: completedAt } : s)));
+    try {
+      const { error } = await supabase
+        .from('task_subtasks')
+        .update({ is_completed: nowCompleted, completed_at: completedAt })
+        .eq('id', subtask.id)
+        .eq('parent_task_id', id);
+      if (error) setSubtasks((prev) => prev.map((s) => (s.id === subtask.id ? subtask : s)));
+    } catch {
+      setSubtasks((prev) => prev.map((s) => (s.id === subtask.id ? subtask : s)));
+    }
+  }
+
+  async function handleDeleteSubtask(subtaskId: string) {
+    const snapshot = subtasks;
+    setSubtasks((prev) => prev.filter((s) => s.id !== subtaskId));
+    try {
+      const { error } = await supabase
+        .from('task_subtasks')
+        .delete()
+        .eq('id', subtaskId)
+        .eq('parent_task_id', id);
+      if (error) setSubtasks(snapshot);
+    } catch {
+      setSubtasks(snapshot);
+    }
+  }
+
   const [currency, setCurrency] = useState('USD');
   const [pomoDuration, setPomoDuration] = useState(25);
   const [pomoDraft, setPomoDraft] = useState('25');
   const [isEditingPomo, setIsEditingPomo] = useState(false);
-  const [remindersOpen, setRemindersOpen] = useState(false);
+  const [expandedPanel, setExpandedPanel] = useState<'reminders' | 'subtasks' | null>(null);
   const [isMutatingReminder, setIsMutatingReminder] = useState(false);
   const [customReminderDate, setCustomReminderDate] = useState<Date>(() => {
     const d = new Date();
@@ -460,7 +539,14 @@ export default function TaskDetailScreen() {
   const [isOverriding, setIsOverriding] = useState(false);
   const [isUndoingComplete, setIsUndoingComplete] = useState(false);
   const [isStoppingRepetitions, setIsStoppingRepetitions] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [isPostponing, setIsPostponing] = useState(false);
+  const [postponePickerOpen, setPostponePickerOpen] = useState(false);
+  const [postponePickerDate, setPostponePickerDate] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
+  const [proofLightboxOpen, setProofLightboxOpen] = useState(false);
+  const [proofCaptureOpen, setProofCaptureOpen] = useState(false);
   const {
     session: activePomoSession,
     isLoading: pomoLoading,
@@ -517,28 +603,6 @@ export default function TaskDetailScreen() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.ledger(user.id) });
   }
 
-  async function ensureCameraPermission(): Promise<boolean> {
-    const current = await ImagePicker.getCameraPermissionsAsync();
-    if (current.granted) return true;
-
-    const requested = await ImagePicker.requestCameraPermissionsAsync();
-    if (requested.granted) return true;
-
-    Alert.alert('Camera permission required', 'Allow camera access in Settings to capture proof media.');
-    return false;
-  }
-
-  async function ensureGalleryPermission(): Promise<boolean> {
-    const current = await ImagePicker.getMediaLibraryPermissionsAsync();
-    if (current.granted) return true;
-
-    const requested = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (requested.granted) return true;
-
-    Alert.alert('Photos permission required', 'Allow photo library access in Settings to attach proof.');
-    return false;
-  }
-
   async function uploadSelectedProof(asset: ImagePickerAsset) {
     if (!task || proofUploading) return;
 
@@ -551,6 +615,8 @@ export default function TaskDetailScreen() {
         return;
       }
 
+      const optimisticProofMediaKind: 'image' | 'video' = asset.type === 'video' ? 'video' : 'image';
+      const optimisticProofUrl = asset.uri;
       queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
         ...previous,
         task: previous.task
@@ -562,6 +628,15 @@ export default function TaskDetailScreen() {
               proof_requested_by: null,
             }
           : previous.task,
+        proof: optimisticProofUrl
+          ? {
+              signedUrl: optimisticProofUrl,
+              mediaKind: optimisticProofMediaKind,
+              overlayTimestampText: '',
+              bucket: previous.proof?.bucket ?? 'task-proofs',
+              objectPath: previous.proof?.objectPath ?? '',
+            }
+          : previous.proof ?? null,
       } : previous);
       await Promise.resolve(detail.refetch());
       invalidateDerivedTaskViews();
@@ -570,61 +645,6 @@ export default function TaskDetailScreen() {
       }
     } finally {
       setProofUploading(false);
-    }
-  }
-
-  async function handleCameraPhoto() {
-    const allowed = await ensureCameraPermission();
-    if (!allowed) return;
-
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: 'images',
-      quality: 0.9,
-      allowsEditing: false,
-      exif: true,
-    });
-
-    if (!result.canceled && result.assets.length > 0) {
-      await uploadSelectedProof(result.assets[0]);
-    }
-  }
-
-  async function handleCameraVideo() {
-    const allowed = await ensureCameraPermission();
-    if (!allowed) return;
-
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: 'videos',
-      videoMaxDuration: 15,
-      quality: 0.8,
-      exif: true,
-    });
-
-    if (!result.canceled && result.assets.length > 0) {
-      await uploadSelectedProof(result.assets[0]);
-    }
-  }
-
-  async function handleGalleryPick() {
-    const allowed = await ensureGalleryPermission();
-    if (!allowed) return;
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'],
-      allowsMultipleSelection: false,
-      quality: 0.9,
-      videoMaxDuration: 15,
-      exif: true,
-      ...(Platform.OS === 'ios'
-        ? {
-            preferredAssetRepresentationMode:
-              ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
-          }
-        : {}),
-    });
-
-    if (!result.canceled && result.assets.length > 0) {
-      await uploadSelectedProof(result.assets[0]);
     }
   }
 
@@ -676,47 +696,30 @@ export default function TaskDetailScreen() {
 
   function openProofPicker() {
     if (proofUploading || proofRemoving) return;
+    if (!proof) {
+      setProofCaptureOpen(true);
+      return;
+    }
 
     if (Platform.OS === 'ios') {
-      const hasExistingProof = Boolean(proof);
-      const options = hasExistingProof
-        ? ['Replace: Take Photo', 'Replace: Record Video', 'Replace: Choose from Library', 'Remove proof', 'Cancel']
-        : ['Take Photo', 'Record Video', 'Choose from Library', 'Cancel'];
-      const cancelButtonIndex = hasExistingProof ? 4 : 3;
-      const destructiveButtonIndex = hasExistingProof ? 3 : undefined;
-
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          options,
-          cancelButtonIndex,
-          destructiveButtonIndex,
+          options: ['Replace proof', 'Remove proof', 'Cancel'],
+          cancelButtonIndex: 2,
+          destructiveButtonIndex: 1,
           userInterfaceStyle: 'dark',
         },
         (selectedIndex) => {
-          if (selectedIndex === 0) void handleCameraPhoto();
-          if (selectedIndex === 1) void handleCameraVideo();
-          if (selectedIndex === 2) void handleGalleryPick();
-          if (hasExistingProof && selectedIndex === 3) void removeCurrentProof();
+          if (selectedIndex === 0) setProofCaptureOpen(true);
+          if (selectedIndex === 1) void removeCurrentProof();
         },
       );
       return;
     }
 
-    if (proof) {
-      Alert.alert('Manage proof', 'Replace the current proof or remove it.', [
-        { text: 'Replace: Take Photo', onPress: () => void handleCameraPhoto() },
-        { text: 'Replace: Record Video', onPress: () => void handleCameraVideo() },
-        { text: 'Replace: Choose from Library', onPress: () => void handleGalleryPick() },
-        { text: 'Remove proof', style: 'destructive', onPress: () => void removeCurrentProof() },
-        { text: 'Cancel', style: 'cancel' },
-      ], { cancelable: true });
-      return;
-    }
-
-    Alert.alert('Attach proof', 'Choose a media source.', [
-      { text: 'Take Photo', onPress: () => void handleCameraPhoto() },
-      { text: 'Record Video', onPress: () => void handleCameraVideo() },
-      { text: 'Choose from Library', onPress: () => void handleGalleryPick() },
+    Alert.alert('Manage proof', 'Replace the current proof or remove it.', [
+      { text: 'Replace proof', onPress: () => setProofCaptureOpen(true) },
+      { text: 'Remove proof', style: 'destructive', onPress: () => void removeCurrentProof() },
       { text: 'Cancel', style: 'cancel' },
     ], { cancelable: true });
   }
@@ -828,10 +831,11 @@ export default function TaskDetailScreen() {
   // ── Undo complete ──────────────────────────────────────────────────────────
   async function handleUndoComplete() {
     if (!task || isUndoingComplete) return;
+    const targetStatusLabel = task.postponed_at ? 'postponed' : 'active';
 
     Alert.alert(
       'Undo completion?',
-      `"${task.title}" will be moved back to active.`,
+      `The selected task will be moved back to ${targetStatusLabel} status.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -867,8 +871,39 @@ export default function TaskDetailScreen() {
     );
   }
 
+  // ── Complete task ──────────────────────────────────────────────────────────
+  async function handleMarkComplete() {
+    if (!task || isCompleting) return;
+
+    setIsCompleting(true);
+    try {
+      const result = await completeTask(task.id);
+      if (!result.success) {
+        Alert.alert('Could not complete task', result.error ?? 'Unknown error');
+        return;
+      }
+      await Promise.resolve(detail.refetch());
+      invalidateDerivedTaskViews();
+    } finally {
+      setIsCompleting(false);
+    }
+  }
+
   async function handleStopRepetitions() {
     if (!task || isStoppingRepetitions) return;
+
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'Stop repetitions',
+        'This task will no longer repeat after this. Are you sure?',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Stop', style: 'destructive', onPress: () => resolve(true) },
+        ],
+      );
+    });
+
+    if (!confirmed) return;
 
     setIsStoppingRepetitions(true);
     try {
@@ -892,6 +927,66 @@ export default function TaskDetailScreen() {
       invalidateDerivedTaskViews();
     } finally {
       setIsStoppingRepetitions(false);
+    }
+  }
+
+  function handlePostponePress() {
+    if (!task) return;
+    const currentDeadline = new Date(task.deadline);
+    setPostponePickerDate(Number.isNaN(currentDeadline.getTime()) ? new Date() : currentDeadline);
+    setPostponePickerOpen(true);
+  }
+
+  async function confirmPostpone() {
+    if (!task) return;
+    const minDate = task.created_at ? new Date(task.created_at) : new Date(0);
+    if (postponePickerDate.getTime() <= minDate.getTime()) {
+      Alert.alert('Invalid deadline', 'New deadline must be after the task was created.');
+      return;
+    }
+    setPostponePickerOpen(false);
+    setIsPostponing(true);
+    try {
+      const result = await postponeTaskDeadline(task.id, postponePickerDate.toISOString());
+      if (!result.success) {
+        Alert.alert('Could not move deadline', result.error ?? 'Unknown error');
+        return;
+      }
+      if (result.userId) void syncLocalReminderNotificationsAsync(result.userId);
+      invalidateDerivedTaskViews();
+    } finally {
+      setIsPostponing(false);
+    }
+  }
+
+  async function handleDeletePress() {
+    if (!task || isDeleting) return;
+    if (!isTaskWithinDeleteWindow(task.created_at)) {
+      Alert.alert('Delete unavailable', 'Tasks can only be deleted within 10 minutes of creation.');
+      return;
+    }
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'Delete task',
+        'This task will be moved to deleted.',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Delete', style: 'destructive', onPress: () => resolve(true) },
+        ],
+      );
+    });
+    if (!confirmed) return;
+    setIsDeleting(true);
+    try {
+      const result = await deleteTask(task.id);
+      if (!result.success) {
+        Alert.alert('Could not delete task', result.error ?? 'Unknown error');
+        return;
+      }
+      invalidateDerivedTaskViews();
+      router.back();
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -1056,11 +1151,6 @@ export default function TaskDetailScreen() {
   if (detail.loading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleBack} hitSlop={12}>
-            <Feather name="arrow-left" size={22} color={colors.text} />
-          </TouchableOpacity>
-        </View>
         <View style={styles.centered}><ActivityIndicator color={colors.textMuted} /></View>
       </SafeAreaView>
     );
@@ -1070,11 +1160,6 @@ export default function TaskDetailScreen() {
   if (detail.error || !task) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleBack} hitSlop={12}>
-            <Feather name="arrow-left" size={22} color={colors.text} />
-          </TouchableOpacity>
-        </View>
         <View style={styles.centered}>
           <Text style={styles.errorText}>{detail.error ?? 'Task not found.'}</Text>
           <TouchableOpacity onPress={handleBack} style={styles.retryBtn}>
@@ -1093,10 +1178,13 @@ export default function TaskDetailScreen() {
   const isOwnTask = task.user_id === user?.id;
 
   const canPomo          = isOwnTask && isActiveOrPostponed;
+  const canComplete      = isOwnTask && isActiveOrPostponed && !isCompleting;
   const canProof         = isOwnTask && (isActiveOrPostponed || isAwaiting);
   const canStopRepeating = isOwnTask && isActiveOrPostponed && !!task.recurrence_rule_id;
   const canOverride      = isOwnTask && isMissedOrDenied && !isOverriding;
   const canUndoComplete  = isOwnTask && (s === 'MARKED_COMPLETE' || s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI') && !isUndoingComplete;
+  const canPostpone      = isOwnTask && s === 'ACTIVE' && !task.postponed_at && !isPostponing;
+  const canDelete        = isOwnTask && (s === 'ACTIVE' || s === 'POSTPONED') && isTaskWithinDeleteWindow(task.created_at) && !isDeleting;
 
   const isSelfVouch = task.voucher_id === task.user_id;
   const isCurrentTaskPomo = activePomoSession?.task_id === task.id;
@@ -1113,14 +1201,6 @@ export default function TaskDetailScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={handleBack} hitSlop={12} accessibilityRole="button" accessibilityLabel="Go back">
-          <Feather name="arrow-left" size={22} color={colors.text} />
-        </TouchableOpacity>
-        <StatusPill status={task.status} size="large" />
-        <View style={{ width: 22 }} />
-      </View>
-
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}
@@ -1153,6 +1233,14 @@ export default function TaskDetailScreen() {
 
         {/* Info block */}
         <View style={styles.infoBlock}>
+          <View style={styles.infoRow}>
+            <Feather name="activity" size={15} color={colors.textMuted} style={{ flexShrink: 0 }} />
+            <Text style={styles.infoLabel}>Status</Text>
+            <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'flex-end' }}>
+              <StatusPill status={task.status} size="small" />
+            </View>
+          </View>
+          <Divider />
           <InfoRow icon="clock"         label="Deadline"     value={formatFullDeadline(task.deadline)} />
           <Divider />
           <InfoRow icon="stopwatch-outline" iconSet="ionicons" label="Focused" value={formatFocusedTime(totalFocusedSeconds)} />
@@ -1176,18 +1264,27 @@ export default function TaskDetailScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Uploaded Proof</Text>
             {proof.mediaKind === 'image' ? (
-              <View style={[styles.proofPreviewWrap, { width: proofPreviewWidth }]}>
-                <Image
-                  source={{ uri: proof.signedUrl }}
-                  style={styles.proofPreviewImage}
-                  resizeMode="cover"
-                />
-                {proof.overlayTimestampText ? (
-                  <View style={styles.proofTimestampWrap}>
-                    <Text style={styles.proofTimestampText}>{proof.overlayTimestampText}</Text>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={() => setProofLightboxOpen(true)}
+                accessibilityLabel="Expand proof image"
+              >
+                <View style={[styles.proofPreviewWrap, { width: proofPreviewWidth }]}>
+                  <Image
+                    source={{ uri: proof.signedUrl }}
+                    style={styles.proofPreviewImage}
+                    resizeMode="cover"
+                  />
+                  {proof.overlayTimestampText ? (
+                    <View style={styles.proofTimestampWrap}>
+                      <Text style={styles.proofTimestampText}>{proof.overlayTimestampText}</Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.proofExpandHint}>
+                    <Feather name="maximize-2" size={14} color="rgba(255,255,255,0.7)" />
                   </View>
-                ) : null}
-              </View>
+                </View>
+              </TouchableOpacity>
             ) : (
               <VideoProofPreview
                 signedUrl={proof.signedUrl}
@@ -1198,9 +1295,48 @@ export default function TaskDetailScreen() {
           </View>
         ) : null}
 
+        {/* Proof image lightbox */}
+        {proof?.mediaKind === 'image' ? (
+          <Modal
+            visible={proofLightboxOpen}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setProofLightboxOpen(false)}
+            statusBarTranslucent
+          >
+            <Pressable
+              style={styles.lightboxBackdrop}
+              onPress={() => setProofLightboxOpen(false)}
+            >
+              <Image
+                source={{ uri: proof.signedUrl }}
+                style={styles.lightboxImage}
+                resizeMode="contain"
+              />
+              {proof.overlayTimestampText ? (
+                <View style={styles.lightboxTimestampWrap}>
+                  <Text style={styles.proofTimestampText}>{proof.overlayTimestampText}</Text>
+                </View>
+              ) : null}
+              <TouchableOpacity
+                style={styles.lightboxClose}
+                onPress={() => setProofLightboxOpen(false)}
+                hitSlop={12}
+                accessibilityLabel="Close"
+              >
+                <Feather name="x" size={22} color="#fff" />
+              </TouchableOpacity>
+            </Pressable>
+          </Modal>
+        ) : null}
+        <ProofCaptureModal
+          visible={proofCaptureOpen}
+          onClose={() => setProofCaptureOpen(false)}
+          onAssetPicked={uploadSelectedProof}
+        />
+
         {/* ── Actions ───────────────────────────────────────────────────────── */}
         <View style={styles.actionsBlock}>
-
           {/* Pomodoro + Proof row — only rendered when at least one is available */}
           {(canPomo || canProof) && (
             <View style={styles.pomoCameraRow}>
@@ -1208,7 +1344,7 @@ export default function TaskDetailScreen() {
                 <View style={{ flex: 1 }}>
                   {isCurrentTaskPomo ? (
                     <TouchableOpacity
-                      style={[styles.pomoRunningBtn, pomoLoading && styles.pomoDisabled]}
+                      style={[styles.pomoRunningBtn, { flex: 1 }, pomoLoading && styles.pomoDisabled]}
                       onPress={handlePomoPress}
                       activeOpacity={0.8}
                       accessibilityLabel="Open pomodoro timer"
@@ -1269,10 +1405,23 @@ export default function TaskDetailScreen() {
                   accessibilityLabel={proof ? 'Manage proof' : 'Attach proof'}
                   disabled={proofUploading || proofRemoving}
                 >
-                  {(proofUploading || proofRemoving) ? (
-                    <ActivityIndicator size="small" color={BTN.proof.text} />
+                  {proofUploading ? (
+                    <>
+                      <ActivityIndicator size="small" color={BTN.proof.text} />
+                      <Text style={[styles.actionBtnLabel, { color: BTN.proof.text, marginLeft: spacing.xs }]}>Uploading</Text>
+                    </>
+                  ) : proofRemoving ? (
+                    <>
+                      <ActivityIndicator size="small" color={BTN.proof.text} />
+                      <Text style={[styles.actionBtnLabel, { color: BTN.proof.text, marginLeft: spacing.xs }]}>Removing</Text>
+                    </>
+                  ) : proof ? (
+                    <>
+                      <Feather name="refresh-cw" size={18} color={BTN.proof.text} style={styles.actionBtnIcon} />
+                      <Text style={[styles.actionBtnLabel, { color: BTN.proof.text }]}>Replace</Text>
+                    </>
                   ) : (
-                    <Feather name={proof ? 'refresh-cw' : 'camera'} size={20} color={BTN.proof.text} />
+                    <Feather name="camera" size={20} color={BTN.proof.text} />
                   )}
                 </TouchableOpacity>
               )}
@@ -1320,20 +1469,88 @@ export default function TaskDetailScreen() {
             />
           )}
 
-          {/* Reminders toggle — only relevant for active tasks */}
+          {/* Postpone + Complete row */}
+          {(canPostpone || canComplete) && (
+            <View style={styles.pomoCameraRow}>
+              {canPostpone && (
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.equalWidthActionBtn, { backgroundColor: BTN.postpone.bg, borderColor: BTN.postpone.border }]}
+                  onPress={handlePostponePress}
+                  activeOpacity={0.75}
+                  accessibilityLabel="Postpone"
+                  disabled={isPostponing}
+                >
+                  {isPostponing ? (
+                    <ActivityIndicator size="small" color={BTN.postpone.text} />
+                  ) : (
+                    <Feather name="alert-triangle" size={20} color={BTN.postpone.text} />
+                  )}
+                </TouchableOpacity>
+              )}
+              {canComplete && (
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.equalWidthActionBtn, { backgroundColor: BTN.complete.bg, borderColor: BTN.complete.border }]}
+                  onPress={() => { void handleMarkComplete(); }}
+                  activeOpacity={0.75}
+                  accessibilityLabel={isCompleting ? 'Completing task' : 'Mark complete'}
+                  disabled={isCompleting}
+                >
+                  {isCompleting ? (
+                    <ActivityIndicator size="small" color={BTN.complete.text} />
+                  ) : (
+                    <Feather name="check" size={20} color={BTN.complete.text} />
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* Delete row */}
+          {canDelete && (
+            <ActionBtn
+              allowed
+              token={BTN.delete}
+              label={isDeleting ? 'Deleting…' : 'Delete'}
+              icon="trash-2"
+              onPress={() => { void handleDeletePress(); }}
+              onDeny={() => {}}
+              containerStyle={{}}
+            />
+          )}
+
+          {/* Reminders + Subtasks paired toggles — only relevant for own active/postponed tasks */}
           {isOwnTask && isActiveOrPostponed && (
             <>
-              <TouchableOpacity
-                style={[styles.toggleBtn, { backgroundColor: BTN.reminders.bg, borderColor: BTN.reminders.border }]}
-                onPress={() => setRemindersOpen((v) => !v)}
-                activeOpacity={0.75}
-                accessibilityLabel={`Reminders, ${reminders.length} set`}
-              >
-                <Text style={[styles.toggleLabel, { color: BTN.reminders.text }]}>Reminders</Text>
-                <Text style={[styles.toggleCount, { color: BTN.reminders.text }]}>{reminders.length}</Text>
-              </TouchableOpacity>
+              <View style={styles.togglePairRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.toggleBtn,
+                    styles.toggleHalfBtn,
+                    { backgroundColor: BTN.reminders.bg, borderColor: BTN.reminders.border },
+                  ]}
+                  onPress={() => setExpandedPanel((current) => (current === 'reminders' ? null : 'reminders'))}
+                  activeOpacity={0.75}
+                  accessibilityLabel={`Reminders, ${reminders.length} set`}
+                >
+                  <Text style={[styles.toggleLabel, { color: BTN.reminders.text }]}>Reminders</Text>
+                  <Text style={[styles.toggleCount, { color: BTN.reminders.text }]}>{reminders.length}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.toggleBtn,
+                    styles.toggleHalfBtn,
+                    { backgroundColor: colors.surface2, borderColor: colors.borderStrong },
+                  ]}
+                  onPress={() => setExpandedPanel((current) => (current === 'subtasks' ? null : 'subtasks'))}
+                  activeOpacity={0.75}
+                  accessibilityLabel={`Subtasks, ${subtasks.length} items`}
+                >
+                  <Text style={styles.toggleLabel}>Subtasks</Text>
+                  <Text style={styles.toggleCount}>{subtasks.length}</Text>
+                </TouchableOpacity>
+              </View>
 
-              {remindersOpen && (
+              {expandedPanel === 'reminders' && (
                 <View style={styles.toggleBody}>
                   <View style={styles.reminderToolbar}>
                     {showCustomReminderAndroidPicker && (
@@ -1396,6 +1613,68 @@ export default function TaskDetailScreen() {
                         </View>
                       ))
                   }
+                </View>
+              )}
+
+              {expandedPanel === 'subtasks' && (
+                <View style={styles.toggleBody}>
+                  <View style={styles.subtasksPanel}>
+                    {subtasks.length > 0 && (
+                      subtasks.map((subtask) => (
+                        <View key={subtask.id} style={styles.subtaskItemRow}>
+                          <TouchableOpacity
+                            onPress={() => { void handleToggleSubtask(subtask); }}
+                            style={[styles.subtaskCircle, subtask.is_completed && styles.subtaskCircleCompleted]}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            activeOpacity={0.7}
+                          >
+                            {subtask.is_completed && <Feather name="check" size={11} color={colors.success} />}
+                          </TouchableOpacity>
+                          <Text style={[styles.subtaskItemTitle, subtask.is_completed && styles.subtaskItemTitleCompleted]}>
+                            {subtask.title}
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => { void handleDeleteSubtask(subtask.id); }}
+                            activeOpacity={0.7}
+                            accessibilityLabel="Delete subtask"
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={styles.subtaskDeleteCircle}
+                          />
+                        </View>
+                      ))
+                    )}
+                    {subtasks.length < MAX_SUBTASKS && (
+                      <View style={styles.subtaskAddRow}>
+                        <TouchableOpacity
+                          onPress={() => { void handleAddSubtask(); }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          activeOpacity={0.6}
+                        >
+                          <Feather name="plus" size={16} color={colors.textMuted} />
+                        </TouchableOpacity>
+                        <TextInput
+                          ref={subtaskInputRef}
+                          style={styles.subtaskInput}
+                          placeholder="Add subtask..."
+                          placeholderTextColor={colors.textMuted}
+                          value={newSubtaskDraft}
+                          onChangeText={setNewSubtaskDraft}
+                          returnKeyType="done"
+                          blurOnSubmit={false}
+                          onSubmitEditing={() => { void handleAddSubtask(); }}
+                        />
+                        {newSubtaskDraft.trim().length > 0 && (
+                          <TouchableOpacity
+                            onPress={() => { void handleAddSubtask(); }}
+                            activeOpacity={0.7}
+                            accessibilityLabel="Confirm subtask"
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={styles.subtaskConfirmCircle}
+                          />
+                        )}
+                      </View>
+                    )}
+                  </View>
                 </View>
               )}
             </>
@@ -1577,6 +1856,48 @@ export default function TaskDetailScreen() {
 
       </ScrollView>
 
+      {Platform.OS === 'ios' ? (
+        <LegacyPostponeCalendarPicker
+          task={postponePickerOpen && task ? { id: task.id, title: task.title, deadline: task.deadline, created_at: task.created_at ?? undefined, postponed_at: task.postponed_at } : null}
+          date={postponePickerDate}
+          setTask={(t) => { if (!t) setPostponePickerOpen(false); }}
+          onDateChange={(_e, selected) => { if (selected) setPostponePickerDate(selected); }}
+          onAndroidDateChange={(_e, selected) => {
+            if (!selected) return;
+            const next = new Date(selected);
+            next.setHours(postponePickerDate.getHours(), postponePickerDate.getMinutes(), 0, 0);
+            setPostponePickerDate(next);
+          }}
+          onAndroidTimeChange={(_e, selected) => {
+            if (!selected) return;
+            const next = new Date(postponePickerDate);
+            next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+            setPostponePickerDate(next);
+          }}
+          onConfirm={confirmPostpone}
+        />
+      ) : (
+        <PostponeDeadlineModal
+          task={postponePickerOpen && task ? { id: task.id, title: task.title, deadline: task.deadline, created_at: task.created_at ?? undefined, postponed_at: task.postponed_at } : null}
+          date={postponePickerDate}
+          setTask={(t) => { if (!t) setPostponePickerOpen(false); }}
+          onDateChange={(_e, selected) => { if (selected) setPostponePickerDate(selected); }}
+          onAndroidDateChange={(_e, selected) => {
+            if (!selected) return;
+            const next = new Date(selected);
+            next.setHours(postponePickerDate.getHours(), postponePickerDate.getMinutes(), 0, 0);
+            setPostponePickerDate(next);
+          }}
+          onAndroidTimeChange={(_e, selected) => {
+            if (!selected) return;
+            const next = new Date(postponePickerDate);
+            next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+            setPostponePickerDate(next);
+          }}
+          onConfirm={confirmPostpone}
+        />
+      )}
+
     </SafeAreaView>
   );
 }
@@ -1705,9 +2026,8 @@ function FlagPill({ icon, label, active }: { icon: string; label: string; active
 
 const makeStyles = (colors: Colors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
   scroll: { flex: 1 },
-  content: { padding: spacing.lg, gap: spacing.lg, paddingBottom: spacing.xxl },
+  content: { padding: spacing.lg, gap: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xxl },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
   errorText: { fontSize: typography.sm, color: colors.textMuted, textAlign: 'center' },
   retryBtn: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surface2 },
@@ -1732,7 +2052,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   actionsBlock: { gap: spacing.sm },
 
 
-  pomoCameraRow: { flexDirection: 'row', gap: spacing.sm },
+  pomoCameraRow: { flexDirection: 'row', gap: spacing.sm, width: '100%' },
   pomoBtn: { height: 56, flexDirection: 'row', alignItems: 'center', borderRadius: radius.lg, borderWidth: 1, paddingHorizontal: spacing.lg, backgroundColor: BTN.pomo.bg, borderColor: BTN.pomo.border, gap: spacing.md },
   pomoRunningBtn: {
     height: 36,
@@ -1758,13 +2078,16 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   pomoLabel: { fontSize: typography.sm },
 
   actionBtn: { height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: radius.lg, borderWidth: 1, paddingHorizontal: spacing.lg },
+  equalWidthActionBtn: { flex: 1, minWidth: 0, paddingHorizontal: 0 },
   actionBtnIcon: { marginRight: spacing.sm },
   actionBtnLabel: { fontSize: typography.sm, fontWeight: typography.semibold },
 
   toggleBtn: { height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: radius.lg, borderWidth: 1, paddingHorizontal: spacing.lg },
+  togglePairRow: { flexDirection: 'row', gap: spacing.sm, width: '100%' },
+  toggleHalfBtn: { flex: 1, minWidth: 0 },
   toggleBtnDisabled: { opacity: 0.5 },
-  toggleLabel: { fontSize: typography.sm, fontWeight: typography.semibold },
-  toggleCount: { fontSize: typography.sm, fontWeight: typography.semibold },
+  toggleLabel: { fontSize: typography.sm, fontWeight: typography.semibold, color: colors.text },
+  toggleCount: { fontSize: typography.sm, fontWeight: typography.semibold, color: colors.text },
   toggleBody: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, overflow: 'hidden', marginTop: -spacing.xs },
   toggleEmpty: { fontSize: typography.sm, color: colors.textMuted, textAlign: 'center', paddingVertical: spacing.md },
   reminderToolbar: {
@@ -1790,8 +2113,18 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     color: BTN.reminders.text,
   },
 
+  subtasksBlock: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, overflow: 'hidden', paddingHorizontal: spacing.md },
+  subtasksPanel: { paddingHorizontal: spacing.md },
+  subtaskItemRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 11, gap: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  subtaskCircle: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, borderColor: colors.textMuted, alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 },
+  subtaskCircleCompleted: { borderColor: colors.success, backgroundColor: colors.successMuted },
+  subtaskItemTitle: { flex: 1, fontSize: typography.sm, color: colors.text, lineHeight: 20 },
+  subtaskItemTitleCompleted: { textDecorationLine: 'line-through', color: colors.textMuted },
+  subtaskDeleteCircle: { width: 18, height: 18, borderRadius: 9, backgroundColor: colors.destructive, borderWidth: 1, borderColor: '#00000024', flexShrink: 0, marginTop: 2 },
+  subtaskConfirmCircle: { width: 18, height: 18, borderRadius: 9, backgroundColor: colors.success, borderWidth: 1, borderColor: '#00000024', flexShrink: 0 },
+  subtaskAddRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm, gap: spacing.sm },
+  subtaskInput: { flex: 1, fontSize: typography.sm, color: colors.text, paddingVertical: 0 },
   subtaskRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: 12, gap: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
-  subtaskCircle: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, borderColor: colors.textMuted, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   subtaskCircleDone: { backgroundColor: colors.success, borderColor: colors.success },
   subtaskTitle: { flex: 1, fontSize: typography.sm, color: colors.text },
   subtaskTitleDone: { color: colors.textMuted, textDecorationLine: 'line-through' },
@@ -1876,6 +2209,14 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.18)',
   },
+  proofExpandHint: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.sm,
+    backgroundColor: '#00000066',
+    borderRadius: radius.sm,
+    padding: 5,
+  },
   proofTimestampWrap: {
     position: 'absolute',
     left: spacing.sm,
@@ -1889,6 +2230,33 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     color: '#fff',
     fontSize: typography.xs,
     fontWeight: typography.medium,
+  },
+  lightboxBackdrop: {
+    flex: 1,
+    backgroundColor: '#000000EE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lightboxImage: {
+    width: '100%',
+    height: '100%',
+  },
+  lightboxTimestampWrap: {
+    position: 'absolute',
+    left: spacing.lg,
+    bottom: spacing.xxl,
+    backgroundColor: '#000000AA',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+  },
+  lightboxClose: {
+    position: 'absolute',
+    top: 52,
+    right: spacing.lg,
+    backgroundColor: '#00000066',
+    borderRadius: radius.full,
+    padding: spacing.sm,
   },
   timeline: { paddingVertical: spacing.xs, paddingBottom: spacing.md },
   timelineRow: { flexDirection: 'row', alignItems: 'stretch' },

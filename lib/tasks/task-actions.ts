@@ -75,7 +75,7 @@ function getVoucherResponseDeadlineUtc(baseDate: Date = new Date(), userTimeZone
   const month = String(targetLocal.month).padStart(2, '0');
   const day = String(targetLocal.day).padStart(2, '0');
   const tzSuffix = offsetIso === 'Z' ? 'Z' : offsetIso;
-  const targetIso = `${targetLocal.year}-${month}-${day}T23:59:59.999${tzSuffix}`;
+  const targetIso = `${targetLocal.year}-${month}-${day}T23:00:00.000${tzSuffix}`;
 
   return new Date(targetIso);
 }
@@ -112,24 +112,21 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
   }
 
   if ((task as any).requires_proof) {
-    const taskHasProofFlag = Boolean((task as any).has_proof);
+    const { data: proofRows, error: proofCheckError } = await supabase
+      .from('task_completion_proofs')
+      .select('id')
+      .eq('task_id', taskId)
+      .eq('upload_state', 'UPLOADED')
+      .not('object_path', 'is', null)
+      .limit(1);
 
-    if (!taskHasProofFlag) {
-      const { data: proofRows, error: proofCheckError } = await supabase
-        .from('task_completion_proofs')
-        .select('id')
-        .eq('task_id', taskId)
-        .eq('upload_state', 'UPLOADED')
-        .limit(1);
+    if (proofCheckError) {
+      return { success: false, userId, error: proofCheckError.message };
+    }
 
-      if (proofCheckError) {
-        return { success: false, userId, error: proofCheckError.message };
-      }
-
-      const hasUploadedProof = Boolean(proofRows && proofRows.length > 0);
-      if (!hasUploadedProof) {
-        return { success: false, userId, error: 'Please upload proof before marking this task complete.' };
-      }
+    const hasUploadedProof = Boolean(proofRows && proofRows.length > 0);
+    if (!hasUploadedProof) {
+      return { success: false, userId, error: 'Please upload proof before marking this task complete.' };
     }
   }
 

@@ -21,6 +21,7 @@ interface CollapsibleSectionProps {
   onDelete?: (task: TaskRowData) => void | Promise<void>;
   defaultPomoDurationMinutes?: number;
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
+  proofUploadTaskId?: string | null;
 }
 
 export function CollapsibleSection({
@@ -37,6 +38,7 @@ export function CollapsibleSection({
   onDelete,
   defaultPomoDurationMinutes = 25,
   onSubtaskComposerFocus,
+  proofUploadTaskId = null,
 }: CollapsibleSectionProps) {
   const { colors } = useTheme();
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -75,6 +77,7 @@ export function CollapsibleSection({
               onDelete={onDelete}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}
               onSubtaskComposerFocus={onSubtaskComposerFocus}
+              proofActionInProgress={proofUploadTaskId === task.id}
             />
           ))}
 

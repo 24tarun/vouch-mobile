@@ -670,15 +670,15 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   reminderPickerSheet: {
     position: 'absolute',
-    left: spacing.lg,
-    right: spacing.lg,
-    top: '24%',
+    left: spacing.sm,
+    right: spacing.sm,
+    top: '10%',
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.sm,
     paddingBottom: spacing.sm,
     gap: spacing.sm,
   },
@@ -1310,6 +1310,13 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   postponeAndroidRow: {
     gap: spacing.xs,
+  },
+  postponeAndroidSpinners: {
+    flexDirection: 'column',
+    gap: 0,
+  },
+  postponeAndroidSpinner: {
+    width: '100%',
   },
   postponeActions: {
     flexDirection: 'row',

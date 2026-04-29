@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.tarun.vouch'
+    namespace 'com.vouch.mobile'
     defaultConfig {
-        applicationId 'com.tarun.vouch'
+        applicationId 'com.vouch.mobile'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

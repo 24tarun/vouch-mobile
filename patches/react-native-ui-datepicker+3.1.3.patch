@@ -1,0 +1,21 @@
+diff --git a/node_modules/react-native-ui-datepicker/package.json b/node_modules/react-native-ui-datepicker/package.json
+index fd4a9ce..1bcf78d 100644
+--- a/node_modules/react-native-ui-datepicker/package.json
++++ b/node_modules/react-native-ui-datepicker/package.json
+@@ -10,7 +10,15 @@
+   "exports": {
+     "import": "./lib/module/index.js",
+     "require": "./lib/commonjs/index.js",
+-    "types": "./lib/typescript/index.d.ts"
++    "types": "./lib/typescript/index.d.ts",
++    "./lib/commonjs/components/time-picker/wheel-picker/wheel-picker": {
++      "require": "./lib/commonjs/components/time-picker/wheel-picker/wheel-picker.js",
++      "import": "./lib/module/components/time-picker/wheel-picker/wheel-picker.js"
++    },
++    "./lib/module/components/time-picker/wheel-picker/wheel-picker": {
++      "import": "./lib/module/components/time-picker/wheel-picker/wheel-picker.js",
++      "require": "./lib/commonjs/components/time-picker/wheel-picker/wheel-picker.js"
++    }
+   },
+   "files": [
+     "src",

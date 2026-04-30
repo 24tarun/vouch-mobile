@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { spacing } from '@/lib/theme';
@@ -48,7 +48,7 @@ export function TaskSortMenu({
   onClose,
 }: TaskSortMenuProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [menuHeight, setMenuHeight] = useState(0);
   if (!open || !anchor) {
     return null;

@@ -1,4 +1,6 @@
 import { Text, TouchableOpacity, View } from 'react-native';
+import { useMemo } from 'react';
+
 import type { BlockedUserOption } from '@/lib/settings/relationships';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
@@ -19,7 +21,7 @@ export function BlockedUsersSection({
   onUnblockUser,
 }: BlockedUsersSectionProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={styles.section}>
       <Text style={styles.sectionLabel}>Blocked Users</Text>

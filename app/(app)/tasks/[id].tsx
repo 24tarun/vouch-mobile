@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   Animated,
@@ -26,6 +26,7 @@ import type { ImagePickerAsset } from 'expo-image-picker';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import Toast from 'react-native-toast-message';
+import { DEFAULT_REMINDER_OFFSET_MS, normalizePomoDurationMinutes } from '@/lib/constants/timings';
 import { supabase } from '@/lib/supabase';
 import { purgeTaskProofForFinalState, removeTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
 import { completeTask, stopTaskRepetitions, undoCompleteTask, deleteTask, postponeTaskDeadline, isTaskWithinDeleteWindow } from '@/lib/tasks/task-actions';
@@ -41,6 +42,7 @@ import { TASK_AWAITING_STATUSES } from '@/lib/constants/task-status';
 import { useAuth } from '@/hooks/useAuth';
 import { useTaskDetail } from '@/lib/hooks/useTaskDetail';
 import { queryKeys } from '@/lib/query/keys';
+import { isOptimisticTaskId } from '@/lib/tasks/task-id';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
 import { LegacyPostponeCalendarPicker } from '@/components/tasks/LegacyPostponeCalendarPicker';
 import { ProofCaptureModal } from '@/components/tasks/ProofCaptureModal';
@@ -384,7 +386,7 @@ function VideoProofPreview({
     p.muted = false;
   });
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
@@ -429,15 +431,20 @@ function VideoProofPreview({
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export default function TaskDetailScreen() {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const { id, back } = useLocalSearchParams<{ id: string; back?: string }>();
+  const routeTaskId = typeof id === 'string' ? id : '';
+  const optimisticTask = isOptimisticTaskId(routeTaskId);
+  const isValidId = optimisticTask || UUID_REGEX.test(routeTaskId);
   const router = useRouter();
   const queryClient = useQueryClient();
   const { width: screenWidth } = useWindowDimensions();
   const { user, profile } = useAuth();
-  const detail = useTaskDetail(id);
+  const detail = useTaskDetail(isValidId && routeTaskId ? routeTaskId : null);
   const handleBack = () => {
     if (back === 'friends') {
       router.navigate('/friends' as any);
@@ -446,12 +453,20 @@ export default function TaskDetailScreen() {
     }
   };
 
+  useEffect(() => {
+    if (routeTaskId && !isValidId) {
+      router.back();
+    }
+  }, [routeTaskId, isValidId, router]);
+
   // ── Subtasks ───────────────────────────────────────────────────────────────
   interface Subtask { id: string; title: string; is_completed: boolean; completed_at: string | null }
   const MAX_SUBTASKS = 20;
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [newSubtaskDraft, setNewSubtaskDraft] = useState('');
   const subtaskInputRef = useRef<TextInput>(null);
+  const subtaskSnapshotRef = useRef<Subtask[]>([]);
+  const mutatingSubtaskIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!id) return;
@@ -490,6 +505,9 @@ export default function TaskDetailScreen() {
   }
 
   async function handleToggleSubtask(subtask: Subtask) {
+    if (mutatingSubtaskIdsRef.current.has(subtask.id)) return;
+    mutatingSubtaskIdsRef.current.add(subtask.id);
+
     const nowCompleted = !subtask.is_completed;
     const completedAt = nowCompleted ? new Date().toISOString() : null;
     setSubtasks((prev) => prev.map((s) => (s.id === subtask.id ? { ...s, is_completed: nowCompleted, completed_at: completedAt } : s)));
@@ -502,21 +520,25 @@ export default function TaskDetailScreen() {
       if (error) setSubtasks((prev) => prev.map((s) => (s.id === subtask.id ? subtask : s)));
     } catch {
       setSubtasks((prev) => prev.map((s) => (s.id === subtask.id ? subtask : s)));
+    } finally {
+      mutatingSubtaskIdsRef.current.delete(subtask.id);
     }
   }
 
   async function handleDeleteSubtask(subtaskId: string) {
-    const snapshot = subtasks;
-    setSubtasks((prev) => prev.filter((s) => s.id !== subtaskId));
+    setSubtasks((prev) => {
+      subtaskSnapshotRef.current = prev;
+      return prev.filter((s) => s.id !== subtaskId);
+    });
     try {
       const { error } = await supabase
         .from('task_subtasks')
         .delete()
         .eq('id', subtaskId)
         .eq('parent_task_id', id);
-      if (error) setSubtasks(snapshot);
+      if (error) setSubtasks(subtaskSnapshotRef.current);
     } catch {
-      setSubtasks(snapshot);
+      setSubtasks(subtaskSnapshotRef.current);
     }
   }
 
@@ -535,6 +557,7 @@ export default function TaskDetailScreen() {
   const [showCustomReminderAndroidPicker, setShowCustomReminderAndroidPicker] = useState(false);
   const [showCustomReminderIosModal, setShowCustomReminderIosModal] = useState(false);
   const [proofUploading, setProofUploading] = useState(false);
+  const proofUploadLockRef = useRef(false);
   const [proofRemoving, setProofRemoving] = useState(false);
   const [isOverriding, setIsOverriding] = useState(false);
   const [isUndoingComplete, setIsUndoingComplete] = useState(false);
@@ -561,6 +584,7 @@ export default function TaskDetailScreen() {
   const events = detail.data?.events ?? [];
   const totalFocusedSeconds = detail.data?.totalFocusedSeconds ?? 0;
   const proof = detail.data?.proof ?? null;
+  const hasUploadedProof = Boolean(proof);
   const recurrenceRule = detail.data?.recurrenceRule ?? null;
   const proofPreviewWidth = screenWidth - spacing.lg * 2;
 
@@ -574,7 +598,7 @@ export default function TaskDetailScreen() {
   useEffect(() => {
     const nextCurrency = profile?.currency ?? 'USD';
     setCurrency(nextCurrency);
-    const defaultPomo = profile?.default_pomo_duration_minutes ?? 25;
+    const defaultPomo = normalizePomoDurationMinutes(profile?.default_pomo_duration_minutes);
     setPomoDuration(defaultPomo);
     setPomoDraft(String(defaultPomo));
   }, [profile?.currency, profile?.default_pomo_duration_minutes]);
@@ -604,9 +628,10 @@ export default function TaskDetailScreen() {
   }
 
   async function uploadSelectedProof(asset: ImagePickerAsset) {
-    if (!task || proofUploading) return;
+    if (!task || proofUploadLockRef.current) return;
 
     const isReplacingProof = Boolean(proof);
+    proofUploadLockRef.current = true;
     setProofUploading(true);
     try {
       const result = await uploadTaskProofAsset(task.id, asset);
@@ -615,28 +640,16 @@ export default function TaskDetailScreen() {
         return;
       }
 
-      const optimisticProofMediaKind: 'image' | 'video' = asset.type === 'video' ? 'video' : 'image';
-      const optimisticProofUrl = asset.uri;
-      queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
+      queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
         ...previous,
         task: previous.task
           ? {
               ...previous.task,
-              has_proof: true,
               proof_request_open: false,
               proof_requested_at: null,
               proof_requested_by: null,
             }
           : previous.task,
-        proof: optimisticProofUrl
-          ? {
-              signedUrl: optimisticProofUrl,
-              mediaKind: optimisticProofMediaKind,
-              overlayTimestampText: '',
-              bucket: previous.proof?.bucket ?? 'task-proofs',
-              objectPath: previous.proof?.objectPath ?? '',
-            }
-          : previous.proof ?? null,
       } : previous);
       await Promise.resolve(detail.refetch());
       invalidateDerivedTaskViews();
@@ -644,25 +657,19 @@ export default function TaskDetailScreen() {
         showProofToast('Proof replaced successfully.', 'success');
       }
     } finally {
+      proofUploadLockRef.current = false;
       setProofUploading(false);
     }
   }
 
   async function removeCurrentProof() {
-    if (!task || !proof || proofUploading || proofRemoving) return;
+    if (!task || !proof || proofUploadLockRef.current || proofRemoving) return;
 
+    proofUploadLockRef.current = true;
     setProofRemoving(true);
     try {
-      const removeResult = await removeTaskProofAsset(task.id, {
-        bucket: proof.bucket,
-        objectPath: proof.objectPath,
-      });
-
-      if (!removeResult.success) {
-        Alert.alert('Could not remove proof', removeResult.error);
-        return;
-      }
-
+      // 1. Update DB ground truth first so realtime events never see has_proof=true
+      //    after the proof is gone. A dangling storage file is harmless.
       const nowIso = new Date().toISOString();
       const { error: taskUpdateError } = await supabase
         .from('tasks')
@@ -674,10 +681,21 @@ export default function TaskDetailScreen() {
         .eq('user_id', task.user_id);
 
       if (taskUpdateError) {
-        Alert.alert('Proof removed', 'Proof file was removed, but task state did not refresh yet. Pull to refresh.');
+        Alert.alert('Could not update task', taskUpdateError.message);
+        return;
       }
 
-      queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
+      // 2. Best-effort storage cleanup
+      const removeResult = await removeTaskProofAsset(task.id, {
+        bucket: proof.bucket,
+        objectPath: proof.objectPath,
+      });
+
+      if (!removeResult.success) {
+        Alert.alert('Proof removed', 'Task state was updated, but the proof file could not be deleted from storage.');
+      }
+
+      queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
         ...previous,
         task: previous.task
           ? {
@@ -690,12 +708,13 @@ export default function TaskDetailScreen() {
       await Promise.resolve(detail.refetch());
       invalidateDerivedTaskViews();
     } finally {
+      proofUploadLockRef.current = false;
       setProofRemoving(false);
     }
   }
 
   function openProofPicker() {
-    if (proofUploading || proofRemoving) return;
+    if (proofUploadLockRef.current || proofRemoving) return;
     if (!proof) {
       setProofCaptureOpen(true);
       return;
@@ -768,15 +787,9 @@ export default function TaskDetailScreen() {
               const fromStatus = task.status;
               const actorUserClientInstanceId = await resolveUserClientInstanceId(userId);
 
-              const { error: taskErr } = await supabase
-                .from('tasks')
-                .update({ status: 'SETTLED', updated_at: now })
-                .eq('id', task.id)
-                .eq('user_id', userId);
-
-              if (taskErr) { Alert.alert('Override failed', taskErr.message); return; }
-
-              await Promise.all([
+              // 1. Insert supporting records first so the task can't be left
+              //    in SETTLED while override/ledger data is missing.
+              const [overrideRes, ledgerRes, eventRes] = await Promise.all([
                 supabase.from('overrides').insert({
                   user_id: userId,
                   task_id: task.id,
@@ -799,14 +812,38 @@ export default function TaskDetailScreen() {
                 }),
               ]);
 
-              if (task.has_proof) {
+              if (overrideRes.error || ledgerRes.error || eventRes.error) {
+                const firstError = overrideRes.error ?? ledgerRes.error ?? eventRes.error;
+                Alert.alert('Override failed', firstError?.message ?? 'Could not record override.');
+                return;
+              }
+
+              // 2. Only update task status after inserts succeed
+              const { error: taskErr } = await supabase
+                .from('tasks')
+                .update({ status: 'SETTLED', updated_at: now })
+                .eq('id', task.id)
+                .eq('user_id', userId);
+
+              if (taskErr) {
+                // Best-effort rollback so we don't leave orphaned records
+                await Promise.all([
+                  supabase.from('overrides').delete().eq('task_id', task.id).eq('period', currentPeriod),
+                  supabase.from('ledger_entries').delete().eq('task_id', task.id).eq('entry_type', 'override').eq('period', currentPeriod),
+                  supabase.from('task_events').delete().eq('task_id', task.id).eq('event_type', 'OVERRIDE'),
+                ]);
+                Alert.alert('Override failed', taskErr.message);
+                return;
+              }
+
+              if (hasUploadedProof) {
                 const purgeResult = await purgeTaskProofForFinalState(task.id);
                 if (!purgeResult.success) {
                   Alert.alert('Override applied, cleanup failed', purgeResult.error);
                 }
               }
 
-              queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
+              queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
                 ...previous,
                 task: previous.task
                   ? {
@@ -849,7 +886,7 @@ export default function TaskDetailScreen() {
                 return;
               }
               const nowIso = new Date().toISOString();
-              queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
+              queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
                 ...previous,
                 task: previous.task
                   ? {
@@ -914,7 +951,7 @@ export default function TaskDetailScreen() {
       }
 
       const nowIso = new Date().toISOString();
-      queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
+      queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
         ...previous,
         task: previous.task
           ? {
@@ -1069,7 +1106,7 @@ export default function TaskDetailScreen() {
 
       const insertedReminder = (insertedRows?.[0] ?? null) as TaskReminder | null;
       if (insertedReminder) {
-        queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
+        queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
           ...previous,
           reminders: [...(previous.reminders ?? []), insertedReminder].sort(
             (a: TaskReminder, b: TaskReminder) => new Date(a.reminder_at).getTime() - new Date(b.reminder_at).getTime(),
@@ -1094,7 +1131,7 @@ export default function TaskDetailScreen() {
     candidate.setSeconds(0, 0);
 
     if (Number.isNaN(candidate.getTime()) || candidate.getTime() <= now) {
-      candidate.setTime(now + 30 * 60 * 1000);
+      candidate.setTime(now + DEFAULT_REMINDER_OFFSET_MS);
       candidate.setSeconds(0, 0);
     }
 
@@ -1137,7 +1174,7 @@ export default function TaskDetailScreen() {
         return;
       }
 
-      queryClient.setQueryData(queryKeys.taskDetail(id), (previous: any) => previous ? {
+      queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
         ...previous,
         reminders: (previous.reminders ?? []).filter((item: TaskReminder) => item.id !== reminder.id),
       } : previous);
@@ -1145,6 +1182,20 @@ export default function TaskDetailScreen() {
     } finally {
       setIsMutatingReminder(false);
     }
+  }
+
+  // ── Loading ────────────────────────────────────────────────────────────────
+  if (optimisticTask) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>Task is still being created.</Text>
+          <TouchableOpacity onPress={handleBack} style={styles.retryBtn}>
+            <Text style={styles.retryText}>Go back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   // ── Loading ────────────────────────────────────────────────────────────────
@@ -1254,7 +1305,7 @@ export default function TaskDetailScreen() {
         {/* Flags */}
         {(task.requires_proof || task.required_pomo_minutes || task.is_strict) && (
           <View style={styles.flagsRow}>
-            {task.requires_proof && <FlagPill icon="camera" label={task.has_proof ? 'Proof uploaded' : 'Proof required'} active={task.has_proof} />}
+            {task.requires_proof && <FlagPill icon="camera" label={hasUploadedProof ? 'Proof uploaded' : 'Proof required'} active={hasUploadedProof} />}
             {task.required_pomo_minutes != null && <FlagPill icon="clock" label={`${task.required_pomo_minutes} pomo min`} active={false} />}
             {task.is_strict && <FlagPill icon="lock" label="Strict window" active={false} />}
           </View>
@@ -1961,7 +2012,7 @@ function ActionBtn({ allowed, token, label, icon, onPress, onDeny, containerStyl
   containerStyle?: object | object[];
 }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <ShakeBtn
       allowed={allowed}
@@ -1991,7 +2042,7 @@ function InfoRow({
   iconSet?: 'feather' | 'ionicons';
 }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={styles.infoRow}>
       {iconSet === 'ionicons' ? (
@@ -2007,13 +2058,13 @@ function InfoRow({
 
 function Divider() {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return <View style={styles.infoDivider} />;
 }
 
 function FlagPill({ icon, label, active }: { icon: string; label: string; active: boolean }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={[styles.flagPill, active && styles.flagPillActive]}>
       <Feather name={icon as any} size={12} color={active ? colors.success : colors.textMuted} />

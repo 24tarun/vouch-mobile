@@ -1,4 +1,6 @@
 import { Modal, Platform, Pressable, Text, TouchableOpacity, View } from 'react-native';
+import { useMemo } from 'react';
+
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import type { TaskRowData } from '@/components/TaskRow';
 import { useTheme } from '@/lib/ThemeContext';
@@ -25,7 +27,7 @@ export function LegacyPostponeCalendarPicker({
   onConfirm,
 }: LegacyPostponeCalendarPickerProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <Modal
       visible={task !== null}

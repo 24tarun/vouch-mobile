@@ -1,4 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
+import { useMemo } from 'react';
+
 import {
   ActivityIndicator,
   Text,
@@ -56,7 +58,7 @@ export function FriendsSection({
   onRemoveFriend,
 }: FriendsSectionProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const isSearchActive = friendSearchQuery.trim().length > 0;
 
   return (

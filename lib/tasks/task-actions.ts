@@ -5,45 +5,14 @@ import { purgeTaskProofForFinalState, removeCurrentTaskProofAsset, uploadTaskPro
 import { syncGoogleCalendarTaskAfterDelete } from '@/lib/google-calendar-mobile-sync';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { AI_PROFILE_ID } from '@/lib/constants/ai-profile';
-
-const TASK_DELETE_WINDOW_MS = 10 * 60 * 1000;
+import { TASK_DELETE_WINDOW_MS } from '@/lib/constants/timings';
+import { isValidTimeZone, getDatePartsInTimeZone } from '@/lib/utils/timezone';
 
 interface TaskMutationResult {
   success: boolean;
   userId?: string;
   error?: string;
   warningMessage?: string;
-}
-
-function isValidTimeZone(timeZone: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function getDatePartsInTimeZone(date: Date, timeZone: string): { year: number; month: number; day: number } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-
-  const map: Record<string, string> = {};
-  for (const part of parts) {
-    if (part.type !== 'literal') {
-      map[part.type] = part.value;
-    }
-  }
-
-  return {
-    year: Number(map.year),
-    month: Number(map.month),
-    day: Number(map.day),
-  };
 }
 
 function getOffsetIsoForTimeZone(date: Date, timeZone: string): string {
@@ -163,7 +132,7 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
     return { success: false, userId, error: 'Task can no longer be marked complete. Please refresh.' };
   }
 
-  await supabase.from('task_events').insert({
+  const { error: eventError } = await supabase.from('task_events').insert({
     task_id: taskId,
     event_type: 'MARK_COMPLETE',
     actor_id: userId,
@@ -177,6 +146,7 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
         }
       : null,
   });
+  if (eventError) console.warn('[task-actions] MARK_COMPLETE event insert failed:', eventError.message);
 
   if (nextStatus === 'ACCEPTED' && (task as any).has_proof) {
     const purgeResult = await purgeTaskProofForFinalState(taskId);
@@ -209,7 +179,7 @@ export async function undoCompleteTask(taskId: string, fromStatus: string): Prom
 
   if (error) return { success: false, userId, error: error.message };
 
-  await supabase.from('task_events').insert({
+  const { error: undoEventError } = await supabase.from('task_events').insert({
     task_id: taskId,
     event_type: 'UNDO_COMPLETE',
     actor_id: userId,
@@ -217,6 +187,7 @@ export async function undoCompleteTask(taskId: string, fromStatus: string): Prom
     from_status: fromStatus,
     to_status: 'ACTIVE',
   });
+  if (undoEventError) console.warn('[task-actions] UNDO_COMPLETE event insert failed:', undoEventError.message);
 
   return { success: true, userId };
 }
@@ -331,7 +302,7 @@ export async function stopTaskRepetitions(taskId: string): Promise<TaskMutationR
     return { success: false, userId, error: ruleDeleteError.message };
   }
 
-  await supabase.from('task_events').insert({
+  const { error: stopEventError } = await supabase.from('task_events').insert({
     task_id: task.id,
     event_type: 'REPETITION_STOPPED',
     actor_id: userId,
@@ -339,6 +310,7 @@ export async function stopTaskRepetitions(taskId: string): Promise<TaskMutationR
     from_status: task.status,
     to_status: task.status,
   });
+  if (stopEventError) console.warn('[task-actions] REPETITION_STOPPED event insert failed:', stopEventError.message);
 
   return { success: true, userId };
 }

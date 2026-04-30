@@ -16,6 +16,14 @@ const LOCAL_REMINDER_NOTIFICATION_MAP_KEY = 'vouch_local_reminder_notification_i
 const LOCAL_REMINDER_SOUND_KEY = 'vouch_local_reminder_sound_key_v1';
 const ACTIVE_TASK_STATUSES = new Set(['ACTIVE', 'POSTPONED']);
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const err = new Error('Aborted');
+    err.name = 'AbortError';
+    throw err;
+  }
+}
+
 function extractNotificationTimestampMs(
   data: Record<string, unknown> | undefined | null,
 ): number | null {
@@ -119,10 +127,12 @@ export function getTaskIdFromNotificationResponse(
   return typeof taskId === 'string' && taskId.trim().length > 0 ? taskId : null;
 }
 
-async function hasGrantedNotificationPermissionAsync(): Promise<boolean> {
+async function hasGrantedNotificationPermissionAsync(signal?: AbortSignal): Promise<boolean> {
   const { status } = await Notifications.getPermissionsAsync();
   if (status === 'granted') return true;
+  throwIfAborted(signal);
   const requested = await Notifications.requestPermissionsAsync();
+  throwIfAborted(signal);
   return requested.status === 'granted';
 }
 
@@ -239,6 +249,16 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     const pendingReminderRows = reminderRows.filter((row) => !row.notified_at);
     if (pendingReminderRows.length === 0) {
       await clearLocalReminderNotificationsAsync();
+      console.log('[notifications] local reminder sync summary', {
+        userId,
+        fetchedReminders: reminderRows.length,
+        pendingReminders: 0,
+        activeTasks: 0,
+        scheduled: 0,
+        canceled: 0,
+        skippedPast: 0,
+        reused: 0,
+      });
       return;
     }
 
@@ -259,17 +279,24 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
         .map((task) => [task.id, task]),
     );
 
+    const nowMs = Date.now();
+
     const validReminders = pendingReminderRows.filter((row) => {
       const reminderAt = new Date(row.reminder_at).getTime();
-      return Number.isFinite(reminderAt) && reminderAt > Date.now() && tasksById.has(row.parent_task_id);
+      return Number.isFinite(reminderAt) && reminderAt > nowMs && tasksById.has(row.parent_task_id);
     });
 
     const desiredReminderIds = new Set(validReminders.map((row) => row.id));
+    let canceledCount = 0;
+    let scheduledCount = 0;
+    let reusedCount = 0;
+    let skippedPastCount = 0;
     let persistedMap = await readLocalReminderNotificationMapAsync();
     if (lastScheduledSoundKey !== null && lastScheduledSoundKey !== notificationSoundKey) {
       for (const notificationId of Object.values(persistedMap)) {
         try {
           await Notifications.cancelScheduledNotificationAsync(notificationId);
+          canceledCount += 1;
         } catch {
           // Notification may already be delivered or canceled.
         }
@@ -281,9 +308,11 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     for (const [reminderId, notificationId] of Object.entries(persistedMap)) {
       if (desiredReminderIds.has(reminderId)) {
         nextMap[reminderId] = notificationId;
+        reusedCount += 1;
       } else {
         try {
           await Notifications.cancelScheduledNotificationAsync(notificationId);
+          canceledCount += 1;
         } catch {
           // Notification may already be delivered or canceled.
         }
@@ -296,8 +325,11 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       const task = tasksById.get(reminder.parent_task_id);
       if (!task) continue;
 
-      const delayMs = new Date(reminder.reminder_at).getTime() - Date.now();
-      if (!Number.isFinite(delayMs) || delayMs <= 0) continue;
+      const delayMs = new Date(reminder.reminder_at).getTime() - nowMs;
+      if (!Number.isFinite(delayMs) || delayMs <= 0) {
+        skippedPastCount += 1;
+        continue;
+      }
 
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
@@ -307,6 +339,8 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
             notificationSoundKey,
           }),
           data: {
+            kind: 'DEADLINE_REMINDER',
+            category: 'DEADLINE_REMINDER',
             task_id: reminder.parent_task_id,
             reminder_id: reminder.id,
             reminder_source: reminder.source ?? 'MANUAL',
@@ -325,10 +359,22 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       });
 
       nextMap[reminder.id] = notificationId;
+      scheduledCount += 1;
     }
 
     await writeLocalReminderNotificationMapAsync(nextMap);
     await writeLocalReminderSoundKeyAsync(notificationSoundKey);
+    console.log('[notifications] local reminder sync summary', {
+      userId,
+      fetchedReminders: reminderRows.length,
+      pendingReminders: pendingReminderRows.length,
+      activeTasks: tasksById.size,
+      validFutureReminders: validReminders.length,
+      reused: reusedCount,
+      scheduled: scheduledCount,
+      canceled: canceledCount,
+      skippedPast: skippedPastCount,
+    });
   } catch (err) {
     console.warn('[notifications] local reminder sync failed:', err);
   }
@@ -341,11 +387,16 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
  * Safe to call on every app launch — the upsert is idempotent.
  * Silently no-ops on simulators or when the user denies permission.
  */
-export async function registerForPushNotificationsAsync(userId: string): Promise<void> {
+export async function registerForPushNotificationsAsync(
+  userId: string,
+  signal?: AbortSignal,
+): Promise<void> {
   try {
     await ensureAndroidNotificationChannelsAsync();
+    throwIfAborted(signal);
 
-    const finalStatus = (await hasGrantedNotificationPermissionAsync()) ? 'granted' : 'denied';
+    const finalStatus = (await hasGrantedNotificationPermissionAsync(signal)) ? 'granted' : 'denied';
+    throwIfAborted(signal);
 
     if (finalStatus !== 'granted') {
       return;
@@ -354,6 +405,8 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
     const token = await getExpoPushTokenAsync();
     if (!token) return;
 
+    throwIfAborted(signal);
+
     await supabase
       .from('expo_push_tokens')
       .upsert(
@@ -361,7 +414,7 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
         { onConflict: 'user_id,token' },
       );
   } catch (err) {
-    // Silently swallow — common on simulators where tokens are unavailable.
+    if (err instanceof Error && err.name === 'AbortError') return;
     console.warn('[notifications] registration failed:', err);
   }
 }

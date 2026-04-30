@@ -1,4 +1,6 @@
 import { Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { memo, useEffect, useMemo, useState } from 'react';
+
 import Animated, { useAnimatedStyle, useAnimatedReaction, interpolate, interpolateColor, runOnJS, type SharedValue } from 'react-native-reanimated';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '@/lib/ThemeContext';
@@ -6,7 +8,6 @@ import { makeStyles } from './styles';
 import { radius } from '@/lib/theme';
 import { StatusPill } from '@/components/StatusPill';
 import type { TaskRowData } from '@/components/TaskRow';
-import { memo, useState, useEffect } from 'react';
 
 interface SearchAnchor {
   x: number;
@@ -49,7 +50,7 @@ export const TaskSearchOverlay = memo(function TaskSearchOverlay({
   onClose,
 }: TaskSearchOverlayProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const trimmedQuery = searchQuery.trim();
   const [contentVisible, setContentVisible] = useState(false);
 

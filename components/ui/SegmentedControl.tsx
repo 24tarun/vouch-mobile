@@ -1,4 +1,6 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useMemo } from 'react';
+
 import { useTheme } from '@/lib/ThemeContext';
 import { type Colors, typography } from '@/lib/theme';
 
@@ -24,7 +26,7 @@ export function SegmentedControl({
   variant = 'default',
 }: SegmentedControlProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const isSignalVariant = variant === 'signal';
 
   return (

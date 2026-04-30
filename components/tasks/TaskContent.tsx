@@ -1,10 +1,13 @@
 import type { ReactNode, RefObject } from 'react';
-import { Platform, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { useMemo } from 'react';
+
+import { Alert, Platform, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
+import { isOptimisticTaskId } from '@/lib/tasks/task-id';
 import { StatusPill } from '@/components/StatusPill';
 import { TaskRow, type TaskRowData } from '@/components/TaskRow';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
@@ -65,7 +68,7 @@ export function TaskContent({
   proofUploadTaskId = null,
 }: TaskContentProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const router = useRouter();
   const baseInset = bottomInsetOffset + 24;
   const computedBottomInset = keyboardBottomInset > 0
@@ -109,7 +112,13 @@ export function TaskContent({
                 key={`search-${task.id}`}
                 style={styles.searchResultRow}
                 activeOpacity={0.7}
-                onPress={() => router.push(`/tasks/${task.id}` as any)}
+                onPress={() => {
+                  if (isOptimisticTaskId(task.id)) {
+                    Alert.alert('Please wait', 'Task is still being created.');
+                    return;
+                  }
+                  router.push(`/tasks/${task.id}` as any);
+                }}
                 accessibilityRole="button"
                 accessibilityLabel={task.title}
               >

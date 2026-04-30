@@ -4,12 +4,21 @@ import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
 import type { TaskStatus } from '@/lib/types';
+import { SIGNED_URL_EXPIRY_SECONDS } from '@/lib/constants/timings';
 import {
   VOUCHER_ACTIONABLE_STATUSES,
   VOUCHER_ACTIVE_VIEW_STATUSES,
   VOUCHER_HISTORY_STATUSES,
   VOUCHER_VISIBLE_STATUSES,
 } from '@/lib/constants/task-status';
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const err = new Error('Aborted');
+    err.name = 'AbortError';
+    throw err;
+  }
+}
 
 interface TaskProof {
   signedUrl: string;
@@ -73,8 +82,13 @@ function canVoucherSeeTask(task: VoucherTaskRow): boolean {
   return true;
 }
 
-async function fetchProofsForTasks(taskIds: string[]): Promise<Record<string, TaskProof>> {
+async function fetchProofsForTasks(
+  taskIds: string[],
+  signal?: AbortSignal,
+): Promise<Record<string, TaskProof>> {
   if (taskIds.length === 0) return {};
+
+  throwIfAborted(signal);
 
   const { data, error } = await supabase
     .from('task_completion_proofs')
@@ -84,14 +98,20 @@ async function fetchProofsForTasks(taskIds: string[]): Promise<Record<string, Ta
 
   if (error || !data) return {};
 
+  throwIfAborted(signal);
+
   const result: Record<string, TaskProof> = {};
   await Promise.all(
     (data as any[]).map(async (row) => {
+      throwIfAborted(signal);
+
       const { data: signedData, error: signedError } = await supabase.storage
         .from('task-proofs')
-        .createSignedUrl(row.object_path as string, 3600);
+        .createSignedUrl(row.object_path as string, SIGNED_URL_EXPIRY_SECONDS);
 
       if (signedError || !signedData?.signedUrl) return;
+
+      throwIfAborted(signal);
 
       result[row.task_id as string] = {
         signedUrl: signedData.signedUrl,
@@ -104,7 +124,7 @@ async function fetchProofsForTasks(taskIds: string[]): Promise<Record<string, Ta
   return result;
 }
 
-async function fetchFriendQueue(userId: string): Promise<VoucherTaskRow[]> {
+async function fetchFriendQueue(userId: string, signal?: AbortSignal): Promise<VoucherTaskRow[]> {
   const { data, error } = await supabase
     .from('tasks')
     .select(`
@@ -168,6 +188,7 @@ async function fetchFriendQueue(userId: string): Promise<VoucherTaskRow[]> {
     filtered
       .filter((task) => task.has_proof || task.status === 'AWAITING_VOUCHER')
       .map((task) => task.id),
+    signal,
   );
 
   return filtered.map((task) => ({
@@ -233,7 +254,7 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
 
   const queueQuery = useQuery({
     queryKey: queryKeys.friendQueue(userId),
-    queryFn: () => fetchFriendQueue(userId!),
+    queryFn: ({ signal }) => fetchFriendQueue(userId!, signal),
     enabled: Boolean(userId),
   });
 

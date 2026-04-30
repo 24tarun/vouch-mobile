@@ -1,4 +1,4 @@
-package com.vouch.mobile
+package com.tarun.vouch
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

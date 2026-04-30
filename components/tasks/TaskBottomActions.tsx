@@ -1,4 +1,6 @@
 import { TouchableOpacity, View } from 'react-native';
+import { useMemo } from 'react';
+
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
@@ -25,7 +27,7 @@ export function TaskBottomActions({
   bottomOffset,
 }: TaskBottomActionsProps) {
   const { colors, isDark } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const trafficIconColor = isDark ? '#0b1329' : '#0f172a';
   const actionDisabled = overlayOpen;
 

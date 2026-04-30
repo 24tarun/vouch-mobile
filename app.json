@@ -29,7 +29,7 @@
         "foregroundImage": "./assets/adaptive-icon-foreground.png",
         "backgroundColor": "#0F0F0F"
       },
-      "package": "com.vouch.mobile",
+      "package": "com.tarun.vouch",
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.RECORD_AUDIO"

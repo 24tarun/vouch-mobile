@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ActivityIndicator, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
@@ -16,7 +16,7 @@ interface CalendarSyncSectionProps {
 
 export function CalendarSyncSection({ onSavingStateChange, onSaveSuccess }: CalendarSyncSectionProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const { data, isLoading } = useGoogleCalendarConnection();

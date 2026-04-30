@@ -38,6 +38,7 @@ import {
 } from '@/lib/constants/ai-profile';
 import { getFailureCostBounds } from '@/lib/domain/failure-cost';
 import { ACTIVE_VOUCHER_TASK_STATUSES } from '@/lib/constants/task-status';
+import { normalizePomoDurationMinutes } from '@/lib/constants/timings';
 import { FriendsSection } from '@/components/settings/FriendsSection';
 import { BlockedUsersSection } from '@/components/settings/BlockedUsersSection';
 import { CalendarSyncSection } from '@/components/settings/CalendarSyncSection';
@@ -296,7 +297,7 @@ function SettingsRow({
   accessibilityHint,
 }: RowProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const tint = destructive ? colors.destructive : colors.text;
   return (
     <TouchableOpacity
@@ -334,7 +335,7 @@ function SettingsRow({
 
 export default function SettingsScreen() {
   const { colors, theme, setTheme } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user, profile } = useAuth();
   const queryClient = useQueryClient();
   const relationshipsQuery = useRelationships(user?.id);
@@ -436,7 +437,7 @@ export default function SettingsScreen() {
     if (!profile || !user) return;
     const nextEmail = (user.email ?? profile.email ?? '').trim().toLowerCase();
     const nextUsername = profile.username;
-    const nextPomo = profile.default_pomo_duration_minutes ?? 25;
+    const nextPomo = normalizePomoDurationMinutes(profile.default_pomo_duration_minutes);
     const nextEventDuration = Number.isInteger(profile.default_event_duration_minutes)
       && profile.default_event_duration_minutes >= EVENT_DURATION_MIN_MINUTES
       && profile.default_event_duration_minutes <= EVENT_DURATION_MAX_MINUTES

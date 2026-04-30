@@ -132,7 +132,7 @@ function Metric({
   color: string;
 }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={styles.metric}>
       <Text style={styles.metricLabel}>{label}</Text>
@@ -149,7 +149,7 @@ function LedgerEntryRow({
   currency: CurrencyCode;
 }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const router = useRouter();
   const badge = badgeForKind(entry.kind, colors);
   const reversal = isReversal(entry.kind, entry.amountCents);
@@ -201,7 +201,7 @@ function LedgerEntryRow({
 
 export default function LedgerScreen() {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const { user, profile } = useAuth();
   const currency = useMemo(() => resolveCurrency(profile?.currency), [profile?.currency]);
   const ledger = useLedger(user?.id);

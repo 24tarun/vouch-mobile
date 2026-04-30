@@ -56,7 +56,7 @@ function SlideView({ item, styles }: { item: Slide; styles: ReturnType<typeof ma
 
 export default function OnboardingScreen() {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const SLIDES: Slide[] = useMemo(() => [
     {

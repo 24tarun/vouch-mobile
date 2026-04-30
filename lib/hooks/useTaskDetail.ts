@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import type { RecurrenceRule, Task, TaskEvent, TaskReminder } from '@/lib/types';
+import { SIGNED_URL_EXPIRY_SECONDS } from '@/lib/constants/timings';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
 
@@ -23,7 +24,9 @@ export interface TaskDetailData {
   proof: TaskProofData | null;
 }
 
-async function fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<TaskDetailData> {
   const { data: taskData, error: taskError } = await supabase
     .from('tasks')
     .select(`
@@ -31,6 +34,7 @@ async function fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
       voucher:profiles!tasks_voucher_id_fkey(username)
     `)
     .eq('id', taskId)
+    .abortSignal(signal)
     .single();
 
   if (taskError || !taskData) {
@@ -38,9 +42,9 @@ async function fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
   }
 
   const [remindersRes, eventsRes, sessionsRes] = await Promise.all([
-    supabase.from('task_reminders').select('*').eq('parent_task_id', taskId).order('reminder_at', { ascending: true }),
-    supabase.from('task_events').select('*').eq('task_id', taskId).order('created_at', { ascending: true }),
-    supabase.from('pomo_sessions').select('elapsed_seconds').eq('task_id', taskId).neq('status', 'DELETED'),
+    supabase.from('task_reminders').select('*').eq('parent_task_id', taskId).order('reminder_at', { ascending: true }).abortSignal(signal),
+    supabase.from('task_events').select('*').eq('task_id', taskId).order('created_at', { ascending: true }).abortSignal(signal),
+    supabase.from('pomo_sessions').select('elapsed_seconds').eq('task_id', taskId).neq('status', 'DELETED').abortSignal(signal),
   ]);
 
   if (remindersRes.error) throw new Error(remindersRes.error.message);
@@ -56,7 +60,8 @@ async function fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
     .eq('task_id', taskId)
     .eq('upload_state', 'UPLOADED')
     .order('updated_at', { ascending: false })
-    .limit(1);
+    .limit(1)
+    .abortSignal(signal);
 
   if (proofError) throw new Error(proofError.message);
 
@@ -67,6 +72,7 @@ async function fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
       .from('recurrence_rules')
       .select('*')
       .eq('id', recurrenceRuleId)
+      .abortSignal(signal)
       .single();
 
     // Don't fail task detail if recurrence rule lookup is unavailable.
@@ -87,7 +93,7 @@ async function fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
     const bucket = proofRow.bucket || 'task-proofs';
     const { data: signedData, error: signedError } = await supabase.storage
       .from(bucket)
-      .createSignedUrl(proofRow.object_path, 3600);
+      .createSignedUrl(proofRow.object_path, SIGNED_URL_EXPIRY_SECONDS);
 
     const proofUrl = (!signedError && signedData?.signedUrl) ? signedData.signedUrl : null;
 
@@ -114,10 +120,14 @@ async function fetchTaskDetail(taskId: string): Promise<TaskDetailData> {
 }
 
 export function useTaskDetail(taskId: string | null | undefined) {
+  const normalizedTaskId = (taskId ?? '').trim();
+  const isValidUuid = UUID_REGEX.test(normalizedTaskId);
+  const queryTaskId = isValidUuid ? normalizedTaskId : null;
+
   const query = useQuery({
-    queryKey: queryKeys.taskDetail(taskId),
-    queryFn: () => fetchTaskDetail(taskId!),
-    enabled: Boolean(taskId),
+    queryKey: queryKeys.taskDetail(queryTaskId),
+    queryFn: ({ signal }) => fetchTaskDetail(queryTaskId!, signal),
+    enabled: Boolean(queryTaskId),
     staleTime: 0,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
@@ -131,23 +141,23 @@ export function useTaskDetail(taskId: string | null | undefined) {
   });
 
   const subscriptions = useMemo(
-    () => taskId
+    () => queryTaskId
       ? [
-          { table: 'tasks', filter: `id=eq.${taskId}` },
-          { table: 'task_reminders', filter: `parent_task_id=eq.${taskId}` },
-          { table: 'task_events', filter: `task_id=eq.${taskId}` },
-          { table: 'task_completion_proofs', filter: `task_id=eq.${taskId}` },
-          { table: 'pomo_sessions', filter: `task_id=eq.${taskId}` },
+          { table: 'tasks', filter: `id=eq.${queryTaskId}` },
+          { table: 'task_reminders', filter: `parent_task_id=eq.${queryTaskId}` },
+          { table: 'task_events', filter: `task_id=eq.${queryTaskId}` },
+          { table: 'task_completion_proofs', filter: `task_id=eq.${queryTaskId}` },
+          { table: 'pomo_sessions', filter: `task_id=eq.${queryTaskId}` },
         ]
       : [],
-    [taskId],
+    [queryTaskId],
   );
 
   useRealtimeInvalidation({
-    channelName: `task-detail:${taskId ?? 'unknown'}`,
-    enabled: Boolean(taskId),
+    channelName: `task-detail:${queryTaskId ?? 'unknown'}`,
+    enabled: Boolean(queryTaskId),
     subscriptions,
-    invalidateKeys: [queryKeys.taskDetail(taskId)],
+    invalidateKeys: [queryKeys.taskDetail(queryTaskId)],
   });
 
   return {

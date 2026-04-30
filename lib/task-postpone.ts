@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
+import { isValidTimeZone, getDatePartsInTimeZone } from '@/lib/utils/timezone';
 
 const INVALID_DEADLINE_ERROR = 'Deadline is invalid.';
 const PAST_DEADLINE_ERROR = 'Deadline must be in the future.';
@@ -24,37 +25,6 @@ function parseAndValidateFutureDeadline(rawDeadline: string): { deadline?: Date;
   }
 
   return { deadline: parsedDeadline };
-}
-
-function isValidTimeZone(timeZone: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function getDatePartsInTimeZone(date: Date, timeZone: string): { year: number; month: number; day: number } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-
-  const map: Record<string, string> = {};
-  for (const part of parts) {
-    if (part.type !== 'literal') {
-      map[part.type] = part.value;
-    }
-  }
-
-  return {
-    year: Number(map.year),
-    month: Number(map.month),
-    day: Number(map.day),
-  };
 }
 
 function shouldRestrictDailyPostponeToSameRuleDay(ruleConfig: unknown): boolean {
@@ -391,12 +361,22 @@ export async function postponeTask(
         } as any),
     ]);
 
-    if (reminderRealignment.error) {
-      return { success: false, error: reminderRealignment.error };
-    }
+    if (reminderRealignment.error || eventError) {
+      await supabase
+        .from('tasks')
+        .update({
+          status: (task as any).status,
+          deadline: currentDeadline.toISOString(),
+          postponed_at: null,
+          updated_at: nowIso,
+        } as any)
+        .eq('id', taskId)
+        .eq('user_id', userId);
 
-    if (eventError) {
-      return { success: false, error: eventError.message };
+      if (reminderRealignment.error) {
+        return { success: false, error: reminderRealignment.error };
+      }
+      return { success: false, error: eventError?.message ?? 'Failed to log postpone event' };
     }
 
     return { success: true };

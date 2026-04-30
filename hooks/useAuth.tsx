@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
@@ -30,6 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const queryClient = useQueryClient();
+  const mountedRef = useRef(true);
   useEffect(() => {
     let profileChannel: ReturnType<typeof supabase.channel> | null = null;
     let activeUserId: string | null = null;
@@ -45,17 +46,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      if (!mountedRef.current) return;
       setLoading(true);
       try {
         const nextProfile = await queryClient.fetchQuery({
           queryKey: queryKeys.currentProfile(userId),
           queryFn: () => fetchCurrentProfile(userId),
         });
-        if (activeUserId === userId) {
+        if (mountedRef.current && activeUserId === userId) {
           setProfile(nextProfile);
         }
       } finally {
-        if (activeUserId === userId) {
+        if (mountedRef.current && activeUserId === userId) {
           setLoading(false);
         }
       }
@@ -72,7 +74,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           (payload) => {
             const nextProfile = payload.new as Profile;
             queryClient.setQueryData(queryKeys.currentProfile(userId), nextProfile);
-            setProfile(nextProfile);
+            if (mountedRef.current) {
+              setProfile(nextProfile);
+            }
           },
         )
         .subscribe();
@@ -93,13 +97,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             void supabase.removeChannel(profileChannel);
             profileChannel = null;
           }
-          setProfile(null);
-          setLoading(false);
+          if (mountedRef.current) {
+            setProfile(null);
+            setLoading(false);
+          }
         }
       },
     );
 
     return () => {
+      mountedRef.current = false;
       subscription.unsubscribe();
       if (profileChannel) {
         void supabase.removeChannel(profileChannel);

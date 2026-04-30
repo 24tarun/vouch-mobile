@@ -7,6 +7,7 @@ const CLIENT_NAME = 'vouch-mobile';
 const CLIENT_INSTANCE_STORAGE_KEY = 'vouch_mobile_client_instance_key_v1';
 
 const cachedInstanceIdByUserId = new Map<string, string>();
+const inFlightByUserId = new Map<string, Promise<string | null>>();
 
 function getClientPlatform(): 'ios' | 'android' {
   return Platform.OS === 'ios' ? 'ios' : 'android';
@@ -28,12 +29,7 @@ async function getOrCreateLocalClientInstanceKey(): Promise<string> {
   return next;
 }
 
-export async function resolveUserClientInstanceId(userId: string): Promise<string | null> {
-  if (!userId) return null;
-
-  const cached = cachedInstanceIdByUserId.get(userId);
-  if (cached) return cached;
-
+async function doResolve(userId: string): Promise<string | null> {
   try {
     const platform = getClientPlatform();
     const instanceKey = await getOrCreateLocalClientInstanceKey();
@@ -96,5 +92,23 @@ export async function resolveUserClientInstanceId(userId: string): Promise<strin
     return created.id;
   } catch {
     return null;
+  }
+}
+
+export async function resolveUserClientInstanceId(userId: string): Promise<string | null> {
+  if (!userId) return null;
+
+  const cached = cachedInstanceIdByUserId.get(userId);
+  if (cached) return cached;
+
+  const inFlight = inFlightByUserId.get(userId);
+  if (inFlight) return inFlight;
+
+  const promise = doResolve(userId);
+  inFlightByUserId.set(userId, promise);
+  try {
+    return await promise;
+  } finally {
+    inFlightByUserId.delete(userId);
   }
 }

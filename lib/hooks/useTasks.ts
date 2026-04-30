@@ -6,18 +6,10 @@ import { TASK_ACTIVE_STATUSES, TASK_PAST_STATUSES } from '@/lib/constants/task-s
 import { useAuth } from '@/hooks/useAuth';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
+import { getFutureBoundaryMs } from '@/lib/utils/date-only';
 
 const PAST_LIMIT = 10;
 const DEFAULT_SORT_MODE = 'deadline_asc' as const;
-
-// Mirrors web's getFutureTaskBoundaryLocal: start of the day after tomorrow.
-function getFutureBoundaryMs(): number {
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const boundary = new Date(startOfToday);
-  boundary.setDate(boundary.getDate() + 2);
-  return boundary.getTime();
-}
 
 export type DashboardSortMode =
   | 'deadline_asc'
@@ -221,9 +213,11 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
   const refetch = useCallback(() => { void queryRefetchRef.current(); }, []);
 
   const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(loadingMore);
+  loadingMoreRef.current = loadingMore;
 
   const loadMorePastTasks = useCallback(async () => {
-    if (!user?.id || loadingMore) return;
+    if (!user?.id || loadingMoreRef.current) return;
     const offset = pastTasksLenRef.current;
     setLoadingMore(true);
     try {
@@ -259,7 +253,7 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, queryClient, sortMode, user?.id]);
+  }, [queryClient, sortMode, user?.id]);
 
   const subscriptions = useMemo(
     () => user?.id

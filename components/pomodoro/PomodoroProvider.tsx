@@ -1,9 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, AppState } from 'react-native';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import type { PomoSession } from '@/lib/types';
 import { createRealtimeRateLimiter } from '@/lib/query/realtimeRateLimiter';
+import { MAX_POMO_DURATION_MINUTES } from '@/lib/constants/timings';
 import { PomodoroTimer } from './PomodoroTimer';
 
 type PomoEndSource = 'manual_stop' | 'timer_completed' | 'system';
@@ -20,7 +21,6 @@ type PomodoroContextType = {
   stopSession: (source?: PomoEndSource) => Promise<void>;
 };
 
-const MAX_POMO_DURATION_MINUTES = 120;
 const PomodoroContext = createContext<PomodoroContextType | undefined>(undefined);
 
 function normalizePomoMinutes(durationMinutes: number) {
@@ -436,20 +436,20 @@ export function PomodoroProvider({ children }: { children: ReactNode }) {
     await refreshSession();
   }, [refreshSession, session]);
 
+  const contextValue = useMemo(() => ({
+    session,
+    taskTitle,
+    isLoading,
+    minimized,
+    setMinimized,
+    startSession,
+    pauseSession,
+    resumeSession,
+    stopSession,
+  }), [session, taskTitle, isLoading, minimized, startSession, pauseSession, resumeSession, stopSession]);
+
   return (
-    <PomodoroContext.Provider
-      value={{
-        session,
-        taskTitle,
-        isLoading,
-        minimized,
-        setMinimized,
-        startSession,
-        pauseSession,
-        resumeSession,
-        stopSession,
-      }}
-    >
+    <PomodoroContext.Provider value={contextValue}>
       {children}
       {session && !minimized ? (
         <PomodoroTimer

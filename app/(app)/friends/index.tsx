@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -115,6 +115,14 @@ const AVATAR_PALETTE = [
   '#DC2626', '#0891B2', '#7E22CE', '#065F46',
 ];
 
+const CAT_IMAGES = [
+  require('@/assets/friends-cats/cat-1.jpg'),
+  require('@/assets/friends-cats/cat-2.jpg'),
+  require('@/assets/friends-cats/cat-3.jpg'),
+  require('@/assets/friends-cats/cat-4.jpg'),
+  require('@/assets/friends-cats/cat-5.jpg'),
+] as const;
+
 function getAvatarColor(username: string): string {
   let h = 0;
   for (let i = 0; i < username.length; i++) {
@@ -133,9 +141,9 @@ function getInitials(username: string): string {
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
-function FriendAvatar({ username, size = 34 }: { username: string; size?: number }) {
+const FriendAvatar = memo(function FriendAvatar({ username, size = 34 }: { username: string; size?: number }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: getAvatarColor(username) }]}>
       <Text style={[styles.avatarText, { fontSize: Math.round(size * 0.38) }]}>
@@ -143,25 +151,14 @@ function FriendAvatar({ username, size = 34 }: { username: string; size?: number
       </Text>
     </View>
   );
-}
+});
 
-// ─── Geometric placeholder ────────────────────────────────────────────────────
+// ─── Cat placeholder ──────────────────────────────────────────────────────────
 
-function GeometricPlaceholder({ seed }: { seed: string }) {
-  const { colors } = useTheme();
-  const styles = makeStyles(colors);
-  const hue = (seed.split('').reduce((a, c) => a + c.charCodeAt(0), 0) * 137) % 360;
-  const bg = `hsl(${hue}, 22%, 12%)`;
-  const accent = `hsl(${(hue + 60) % 360}, 28%, 22%)`;
+function CatPlaceholder({ seed }: { seed: string }) {
+  const imageIndex = seed.split('').reduce((a, c) => a + c.charCodeAt(0), 0) % CAT_IMAGES.length;
   return (
-    <View style={[StyleSheet.absoluteFill, { backgroundColor: bg, overflow: 'hidden' }]}>
-      <View style={[styles.geoCircle, { width: 120, height: 120, borderRadius: 60, backgroundColor: accent, top: -30, right: -20 }]} />
-      <View style={[styles.geoCircle, { width: 80, height: 80, borderRadius: 40, backgroundColor: accent, bottom: -20, left: 20, opacity: 0.5 }]} />
-      <View style={[styles.geoLine, { backgroundColor: accent, transform: [{ rotate: '-35deg' }], top: '40%' }]} />
-      <View style={styles.geoIconWrap}>
-        <Feather name="image" size={22} color="rgba(255,255,255,0.10)" />
-      </View>
-    </View>
+    <Image source={CAT_IMAGES[imageIndex]} style={StyleSheet.absoluteFill} resizeMode="cover" fadeDuration={0} />
   );
 }
 
@@ -169,7 +166,7 @@ function GeometricPlaceholder({ seed }: { seed: string }) {
 
 function VideoProofPlayer({ signedUrl, overlayTimestampText }: { signedUrl: string; overlayTimestampText: string }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const player = useVideoPlayer(signedUrl, (p) => { p.loop = false; p.muted = false; });
   const [playing, setPlaying] = useState(false);
 
@@ -199,7 +196,7 @@ function VideoProofPlayer({ signedUrl, overlayTimestampText }: { signedUrl: stri
 
 function MediaBox({ proof, taskId, onExpand }: { proof: TaskProof | null; taskId: string; onExpand: () => void }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const filename = proof ? (proof.mediaKind === 'video' ? 'proof_video.mp4' : 'proof_photo.jpg') : null;
   const mediaKey = proof
     ? `${taskId}:${proof.mediaKind}:${proof.signedUrl}`
@@ -241,7 +238,7 @@ function MediaBox({ proof, taskId, onExpand }: { proof: TaskProof | null; taskId
           </TouchableOpacity>
         </>
       ) : (
-        <GeometricPlaceholder key={`${taskId}:placeholder`} seed={taskId} />
+        <CatPlaceholder key={`${taskId}:placeholder`} seed={taskId} />
       )}
     </View>
   );
@@ -267,7 +264,7 @@ function DeckActions({
   onNext: () => void;
 }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const busy = Boolean(inFlightAction);
   const dimmed = !isActionable;
   const trafficIconColor = '#0f172a';
@@ -354,7 +351,7 @@ function CardContent({
   onExpand: (proof: TaskProof) => void;
 }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const username = friend?.username ?? 'Unknown';
   return (
     <>
@@ -429,7 +426,7 @@ function FriendDeck({
   onExpand: (proof: TaskProof) => void;
 }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const swiperRef = useRef<SwiperCardRefType>(undefined);
   const pendingIntentRef = useRef<DeckIntent | null>(null);
   const pendingTaskIdRef = useRef<string | null>(null);
@@ -577,7 +574,7 @@ function FriendDeck({
 
 // ─── History row ──────────────────────────────────────────────────────────────
 
-function HistoryRow({
+const HistoryRow = memo(function HistoryRow({
   task,
   isRectifying,
   canRectify,
@@ -591,7 +588,7 @@ function HistoryRow({
   onRectify: () => void;
 }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const username = task.user?.username ?? 'Unknown';
   return (
     <TouchableOpacity style={styles.historyRow} activeOpacity={0.75} onPress={onPress} accessibilityRole="button">
@@ -621,9 +618,9 @@ function HistoryRow({
       )}
     </TouchableOpacity>
   );
-}
+});
 
-function ActiveRow({ task }: { task: VoucherTaskRow }) {
+const ActiveRow = memo(function ActiveRow({ task }: { task: VoucherTaskRow }) {
   const styles = makeStyles(useTheme().colors);
   const username = task.user?.username ?? 'Unknown';
   return (
@@ -640,13 +637,13 @@ function ActiveRow({ task }: { task: VoucherTaskRow }) {
       </View>
     </View>
   );
-}
+});
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function FriendsScreen() {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -1292,24 +1289,6 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     color: '#fff',
     fontWeight: typography.bold,
     letterSpacing: 0.5,
-  },
-
-  // Geometric placeholder
-  geoCircle: {
-    position: 'absolute',
-    opacity: 0.7,
-  },
-  geoLine: {
-    position: 'absolute',
-    left: -20,
-    right: -20,
-    height: 1,
-    opacity: 0.4,
-  },
-  geoIconWrap: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 
   // Video

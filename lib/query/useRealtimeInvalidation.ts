@@ -100,7 +100,11 @@ export function useRealtimeInvalidation({
           rateLimiter.trigger();
         },
       );
-      channel.subscribe();
+      channel.subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.warn(`[realtime] Channel ${channelBaseName}:${subscription.table} subscribe error`);
+        }
+      });
       return channel;
     });
 

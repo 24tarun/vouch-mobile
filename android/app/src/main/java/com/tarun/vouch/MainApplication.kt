@@ -1,4 +1,4 @@
-package com.vouch.mobile
+package com.tarun.vouch
 
 import android.app.Application
 import android.content.res.Configuration

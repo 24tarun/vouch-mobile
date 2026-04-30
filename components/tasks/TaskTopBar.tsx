@@ -1,4 +1,6 @@
 import { Text, View } from 'react-native';
+import { useMemo } from 'react';
+
 import type { TodayParts } from './types';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
@@ -19,7 +21,7 @@ export function TaskTopBar({
   showReputationBar,
 }: TaskTopBarProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   return (
     <>

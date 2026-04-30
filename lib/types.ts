@@ -302,7 +302,4 @@ export interface VoucherPendingTask extends TaskWithRelations {
   rectify_passes_used: number;
 }
 
-export interface ApiResponse<T> {
-  data: T | null;
-  error: string | null;
-}
+

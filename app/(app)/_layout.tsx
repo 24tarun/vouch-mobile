@@ -1,18 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Tabs, usePathname } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useEffect, useMemo, useState } from 'react';
+import { Tabs } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
-import {
-  getFriendsVouchRequestsSeenStorageKey,
-  getSettingsFriendRequestsSeenStorageKey,
-} from '@/lib/settings-badge';
 import { type Colors } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
-import { taskCreatorState } from '@/lib/taskCreatorState';
+import { TaskCreatorProvider, useTaskCreatorHandle } from '@/lib/taskCreatorState';
 import { createRealtimeRateLimiter } from '@/lib/query/realtimeRateLimiter';
 
 type FeatherName = React.ComponentProps<typeof Feather>['name'];
@@ -41,7 +36,7 @@ function TabIcon({
   badgeCount?: number;
 }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const tint = focused ? colors.tabActive : colors.tabInactive;
   const badgeText = badgeCount > 99 ? '99+' : badgeCount > 0 ? String(badgeCount) : null;
 
@@ -58,111 +53,38 @@ function TabIcon({
 }
 
 export default function AppLayout() {
+  return (
+    <TaskCreatorProvider>
+      <AppLayoutContent />
+    </TaskCreatorProvider>
+  );
+}
+
+function AppLayoutContent() {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
-  const pathname = usePathname();
   const { user } = useAuth();
+  const taskCreatorHandle = useTaskCreatorHandle();
   const userId = user?.id ?? null;
-  const [settingsBadgeSeenAt, setSettingsBadgeSeenAt] = useState<string | null>(null);
   const [settingsBadgeCount, setSettingsBadgeCount] = useState(0);
-  const [settingsBadgeReady, setSettingsBadgeReady] = useState(false);
-  const [friendsBadgeSeenAt, setFriendsBadgeSeenAt] = useState<string | null>(null);
   const [friendsBadgeCount, setFriendsBadgeCount] = useState(0);
-  const [friendsBadgeReady, setFriendsBadgeReady] = useState(false);
 
-  const markSettingsBadgeSeen = useCallback(
-    async (visitedAt: string = new Date().toISOString()) => {
-      if (!userId) return;
-      setSettingsBadgeSeenAt(visitedAt);
+  useEffect(() => {
+    if (!userId) {
       setSettingsBadgeCount(0);
-      await AsyncStorage.setItem(
-        getSettingsFriendRequestsSeenStorageKey(userId),
-        visitedAt,
-      );
-    },
-    [userId],
-  );
-
-  const markFriendsBadgeSeen = useCallback(
-    async (visitedAt: string = new Date().toISOString()) => {
-      if (!userId) return;
-      setFriendsBadgeSeenAt(visitedAt);
-      setFriendsBadgeCount(0);
-      await AsyncStorage.setItem(
-        getFriendsVouchRequestsSeenStorageKey(userId),
-        visitedAt,
-      );
-    },
-    [userId],
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadSeenAt() {
-      if (!userId) {
-        setSettingsBadgeSeenAt(null);
-        setSettingsBadgeCount(0);
-        setSettingsBadgeReady(true);
-        setFriendsBadgeSeenAt(null);
-        setFriendsBadgeCount(0);
-        setFriendsBadgeReady(true);
-        return;
-      }
-
-      setSettingsBadgeReady(false);
-      const storedSeenAt = await AsyncStorage.getItem(
-        getSettingsFriendRequestsSeenStorageKey(userId),
-      );
-      if (!cancelled) {
-        setSettingsBadgeSeenAt(storedSeenAt);
-        setSettingsBadgeReady(true);
-      }
-
-      setFriendsBadgeReady(false);
-      const storedFriendsSeenAt = await AsyncStorage.getItem(
-        getFriendsVouchRequestsSeenStorageKey(userId),
-      );
-      if (!cancelled) {
-        setFriendsBadgeSeenAt(storedFriendsSeenAt);
-        setFriendsBadgeReady(true);
-      }
+      return;
     }
-
-    void loadSeenAt();
-    return () => {
-      cancelled = true;
-    };
-  }, [userId]);
-
-  useEffect(() => {
-    if (!userId || !pathname.startsWith('/settings')) return;
-    void markSettingsBadgeSeen();
-  }, [markSettingsBadgeSeen, pathname, userId]);
-
-  useEffect(() => {
-    if (!userId || !pathname.startsWith('/friends')) return;
-    void markFriendsBadgeSeen();
-  }, [markFriendsBadgeSeen, pathname, userId]);
-
-  useEffect(() => {
-    if (!userId || !settingsBadgeReady) return;
 
     let cancelled = false;
 
     async function refreshSettingsBadgeCount() {
-      let query = supabase
+      const { count, error } = await supabase
         .from('friend_requests')
         .select('id', { count: 'exact', head: true })
         .eq('receiver_id', userId)
         .eq('status', 'PENDING');
 
-      if (settingsBadgeSeenAt) {
-        query = query.gt('created_at', settingsBadgeSeenAt);
-      }
-
-      const { count, error } = await query;
       if (cancelled || error) return;
       setSettingsBadgeCount(count ?? 0);
     }
@@ -196,26 +118,24 @@ export default function AppLayout() {
       rateLimiter.dispose();
       void supabase.removeChannel(channel);
     };
-  }, [settingsBadgeReady, settingsBadgeSeenAt, userId]);
+  }, [userId]);
 
   useEffect(() => {
-    if (!userId || !friendsBadgeReady) return;
+    if (!userId) {
+      setFriendsBadgeCount(0);
+      return;
+    }
 
     let cancelled = false;
 
     async function refreshFriendsBadgeCount() {
-      let query = supabase
+      const { count, error } = await supabase
         .from('tasks')
         .select('id', { count: 'exact', head: true })
         .eq('voucher_id', userId)
         .neq('user_id', userId)
         .in('status', ['AWAITING_VOUCHER', 'MARKED_COMPLETE']);
 
-      if (friendsBadgeSeenAt) {
-        query = query.gt('marked_completed_at', friendsBadgeSeenAt);
-      }
-
-      const { count, error } = await query;
       if (cancelled || error) return;
       setFriendsBadgeCount(count ?? 0);
     }
@@ -249,11 +169,11 @@ export default function AppLayout() {
       rateLimiter.dispose();
       void supabase.removeChannel(channel);
     };
-  }, [friendsBadgeReady, friendsBadgeSeenAt, userId]);
+  }, [userId]);
 
   return (
-    <Tabs
-      screenOptions={{
+      <Tabs
+        screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
         tabBarStyle: [
@@ -286,8 +206,8 @@ export default function AppLayout() {
           }}
           listeners={() => ({
             tabPress: (e) => {
-              if (taskCreatorState.isExpanded) {
-                taskCreatorState.collapse();
+              if (taskCreatorHandle.current.isExpanded) {
+                taskCreatorHandle.current.collapse();
                 // Only block navigation if already on the tasks tab (creator's home).
                 // For all other tabs, let the navigation proceed so the user lands there.
                 if (name === 'tasks/index') {

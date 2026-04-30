@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import { Platform, StyleSheet, Text, View, Modal, Pressable, TouchableOpacity } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import DateTimePicker from 'react-native-ui-datepicker';
@@ -39,7 +39,7 @@ export function PostponeDeadlineModal({
   onConfirm,
 }: PostponeDeadlineModalProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [androidDraftDate, setAndroidDraftDate] = useState<Date>(date);
 
   useEffect(() => {

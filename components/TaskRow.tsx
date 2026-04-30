@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useMemo, memo, useEffect, useRef, useState } from 'react';
 import { ActionSheetIOS, ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -11,6 +11,7 @@ import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
 import { ProofCaptureModal } from '@/components/tasks/ProofCaptureModal';
 import { supabase } from '@/lib/supabase';
 import { TASK_COMPLETED_LIKE_STATUSES } from '@/lib/constants/task-status';
+import { isOptimisticTaskId } from '@/lib/tasks/task-id';
 import type { TaskStatus } from '@/lib/types';
 
 interface Subtask {
@@ -61,7 +62,7 @@ function formatDeadline(isoString: string, isFuture: boolean = false): string {
   return `${time} ${day} ${month}`;
 }
 
-export function TaskRow({
+export const TaskRow = memo(function TaskRow({
   task,
   onComplete,
   onProofPicked,
@@ -73,7 +74,7 @@ export function TaskRow({
   proofActionInProgress = false,
 }: TaskRowProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const router = useRouter();
   const queryClient = useQueryClient();
   const {
@@ -300,6 +301,15 @@ export function TaskRow({
   const canPostpone = Boolean(onPostpone) && !task.postponed_at && !isPostponing;
   const isCurrentTaskPomo = activePomoSession?.task_id === task.id;
   const currentTaskPomoStatus = isCurrentTaskPomo ? activePomoSession?.status : null;
+  const canOpenDetail = !isOptimisticTaskId(task.id);
+
+  function openDetail() {
+    if (!canOpenDetail) {
+      Alert.alert('Please wait', 'Task is still being created.');
+      return;
+    }
+    router.push(`/tasks/${task.id}` as any);
+  }
 
   async function handlePickedResult(result: ImagePicker.ImagePickerResult) {
     if (result.canceled || result.assets.length === 0) return;
@@ -440,7 +450,7 @@ export function TaskRow({
       <TouchableOpacity
         style={styles.completedRow}
         activeOpacity={0.7}
-        onPress={() => router.push(`/tasks/${task.id}` as any)}
+        onPress={openDetail}
         accessibilityRole="button"
         accessibilityLabel={task.title}
       >
@@ -576,7 +586,7 @@ export function TaskRow({
               style={styles.actionBtn}
               activeOpacity={0.65}
               accessibilityLabel="Open detail"
-              onPress={() => router.push(`/tasks/${task.id}` as any)}
+              onPress={openDetail}
             >
               <Feather name="external-link" size={20} color={colors.textMuted} />
             </TouchableOpacity>
@@ -642,7 +652,7 @@ export function TaskRow({
       )}
     </View>
   );
-}
+});
 
 const makeStyles = (colors: Colors) => StyleSheet.create({
   container: {},

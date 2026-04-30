@@ -18,6 +18,7 @@ import {
   registerForPushNotificationsAsync,
   syncLocalReminderNotificationsAsync,
 } from '@/lib/notifications';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PomodoroProvider } from '@/components/pomodoro/PomodoroProvider';
 import { AppQueryProvider } from '@/lib/query/client';
 import { createRealtimeRateLimiter } from '@/lib/query/realtimeRateLimiter';
@@ -238,6 +239,7 @@ function AuthGuard() {
     let disposed = false;
     let syncInFlight = false;
     let syncQueued = false;
+    const notificationAbortController = new AbortController();
 
     const runReminderSync = async () => {
       if (disposed) return;
@@ -262,8 +264,8 @@ function AuthGuard() {
       callback: () => {
         void runReminderSync();
       },
-      maxRunsPerWindow: 60,
-      minIntervalMs: 1000,
+      maxRunsPerWindow: 6,
+      minIntervalMs: 3000,
     });
 
     const tasksChannel = supabase
@@ -271,33 +273,76 @@ function AuthGuard() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${userId}` },
-        () => {
-          reminderSyncLimiter.trigger();
+        (payload: any) => {
+          const { eventType, new: newRow, old: oldRow } = payload;
+
+          if (eventType === 'INSERT' || eventType === 'DELETE') {
+            reminderSyncLimiter.trigger();
+            return;
+          }
+
+          const statusChanged = newRow?.status !== oldRow?.status;
+          const deadlineChanged = newRow?.deadline !== oldRow?.deadline;
+          const postponedChanged = newRow?.postponed_at !== oldRow?.postponed_at;
+
+          if (statusChanged || deadlineChanged || postponedChanged) {
+            reminderSyncLimiter.trigger();
+          }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.warn(`[layout] tasks channel subscribe error for ${userId}`);
+        }
+      });
 
     const remindersChannel = supabase
       .channel(`local-reminder-sync:task-reminders:${userId}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'task_reminders', filter: `user_id=eq.${userId}` },
-        () => {
-          reminderSyncLimiter.trigger();
+        (payload: any) => {
+          const { eventType, new: newRow, old: oldRow } = payload;
+
+          if (eventType === 'INSERT' || eventType === 'DELETE') {
+            reminderSyncLimiter.trigger();
+            return;
+          }
+
+          const onlyNotifiedAtChanged =
+            newRow?.notified_at !== oldRow?.notified_at &&
+            newRow?.reminder_at === oldRow?.reminder_at &&
+            newRow?.source === oldRow?.source;
+
+          if (!onlyNotifiedAtChanged) {
+            reminderSyncLimiter.trigger();
+          }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.warn(`[layout] task-reminders channel subscribe error for ${userId}`);
+        }
+      });
 
     const profileChannel = supabase
       .channel(`local-reminder-sync:profile:${userId}`)
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
-        () => {
-          reminderSyncLimiter.trigger();
+        (payload: any) => {
+          const { new: newRow, old: oldRow } = payload;
+
+          if (newRow?.notification_sound_key !== oldRow?.notification_sound_key) {
+            reminderSyncLimiter.trigger();
+          }
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.warn(`[layout] profile channel subscribe error for ${userId}`);
+        }
+      });
 
     const appStateSubscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       if (nextState === 'active') {
@@ -305,7 +350,7 @@ function AuthGuard() {
       }
     });
 
-    void registerForPushNotificationsAsync(userId);
+    void registerForPushNotificationsAsync(userId, notificationAbortController.signal);
     void runReminderSync();
     void Notifications.getLastNotificationResponseAsync().then(routeFromNotificationResponse);
 
@@ -323,6 +368,7 @@ function AuthGuard() {
 
     return () => {
       disposed = true;
+      notificationAbortController.abort();
       reminderSyncLimiter.dispose();
       appStateSubscription.remove();
       void supabase.removeChannel(tasksChannel);
@@ -357,11 +403,13 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <AppQueryProvider>
           <ThemeProvider>
-            <AuthProvider>
-              <PomodoroProvider>
-                <ThemedRoot />
-              </PomodoroProvider>
-            </AuthProvider>
+            <ErrorBoundary>
+              <AuthProvider>
+                <PomodoroProvider>
+                  <ThemedRoot />
+                </PomodoroProvider>
+              </AuthProvider>
+            </ErrorBoundary>
           </ThemeProvider>
         </AppQueryProvider>
       </SafeAreaProvider>

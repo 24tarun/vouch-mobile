@@ -20,3 +20,11 @@ export function formatDateOnlyDisplay(dateOnly: string): string {
     timeZone: 'UTC',
   });
 }
+
+export function getFutureBoundaryMs(): number {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const boundary = new Date(startOfToday);
+  boundary.setDate(boundary.getDate() + 2);
+  return boundary.getTime();
+}

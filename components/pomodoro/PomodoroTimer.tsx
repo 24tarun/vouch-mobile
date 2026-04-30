@@ -57,7 +57,7 @@ function SevenSegmentDigit({
   large: boolean;
 }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const segments = DIGIT_SEGMENTS[digit] || DIGIT_SEGMENTS['0'];
   const width = large ? 64 : 38;
   const height = large ? 116 : 72;
@@ -82,7 +82,7 @@ function SevenSegmentDigit({
 
 function SevenSegmentColon({ large }: { large: boolean }) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const dotSize = large ? 10 : 6;
   const gap = large ? 21 : 15;
   return (
@@ -104,7 +104,7 @@ export function PomodoroTimer({
   onStop,
 }: PomodoroTimerProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const durationSec = session.duration_minutes * 60;
   const initialRemaining = Math.max(0, durationSec - session.elapsed_seconds);

@@ -7,35 +7,35 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		05F65946A07E4665B4F72714 /* notification_tone_01.wav in Resources */ = {isa = PBXBuildFile; fileRef = B9BA61EB97FA41A8A3F3552C /* notification_tone_01.wav */; };
+		1175B4DF8F90429EB889F004 /* notification_tone_03.wav in Resources */ = {isa = PBXBuildFile; fileRef = 8D7099F784D9456D860D36D1 /* notification_tone_03.wav */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
-		1F3D17A204D59FACFE6E909F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7AE8477B7C10D9FFB5022392 /* PrivacyInfo.xcprivacy */; };
-		2C994BAEDED54CCC894D9EDD /* notification_tone_02.wav in Resources */ = {isa = PBXBuildFile; fileRef = FD18547CB99B4A6C83D2EF10 /* notification_tone_02.wav */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
-		84CE6498773F106B398A7B72 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC55E48E473552EE1C309575 /* ExpoModulesProvider.swift */; };
+		557713AB876647D088FB5880 /* notification_tone_01.wav in Resources */ = {isa = PBXBuildFile; fileRef = 491AFC490AC74006B5A9C4A3 /* notification_tone_01.wav */; };
+		766745286546C14AF304A93D /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D4870E0D154CFFDC1DB2E28 /* ExpoModulesProvider.swift */; };
+		852EB0F8761212CF3BFBD0B8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 3D2361926C47AC94C2F69C5F /* PrivacyInfo.xcprivacy */; };
+		85E4D7E2CBE29CD7CBCAE5B0 /* libPods-Vouch.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 53DA1AD74AEE3F8E973FB261 /* libPods-Vouch.a */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
-		C66D70F0D1EE1CAE30283B4B /* libPods-Vouch.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 1A0E7A89052B23E4D6036394 /* libPods-Vouch.a */; };
+		CDA1D83FD292481A9A97D606 /* notification_tone_02.wav in Resources */ = {isa = PBXBuildFile; fileRef = 35083A6A38BF42B285902AA0 /* notification_tone_02.wav */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
-		FE70476ADA3245688E87B58D /* notification_tone_03.wav in Resources */ = {isa = PBXBuildFile; fileRef = 409436F4C4104CA1B58531C7 /* notification_tone_03.wav */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		13B07F961A680F5B00A75B9A /* Vouch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Vouch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = Vouch/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = Vouch/Info.plist; sourceTree = "<group>"; };
-		1A0E7A89052B23E4D6036394 /* libPods-Vouch.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Vouch.a"; sourceTree = BUILT_PRODUCTS_DIR; };
-		409436F4C4104CA1B58531C7 /* notification_tone_03.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = unknown; name = notification_tone_03.wav; path = Vouch/notification_tone_03.wav; sourceTree = "<group>"; };
-		7AE8477B7C10D9FFB5022392 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = Vouch/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		88D375A8C21B1D0E71FA0449 /* Pods-Vouch.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Vouch.debug.xcconfig"; path = "Target Support Files/Pods-Vouch/Pods-Vouch.debug.xcconfig"; sourceTree = "<group>"; };
+		35083A6A38BF42B285902AA0 /* notification_tone_02.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = unknown; name = notification_tone_02.wav; path = Vouch/notification_tone_02.wav; sourceTree = "<group>"; };
+		3D2361926C47AC94C2F69C5F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = Vouch/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		426F9CDA2D14FD5237FCF559 /* Pods-Vouch.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Vouch.release.xcconfig"; path = "Target Support Files/Pods-Vouch/Pods-Vouch.release.xcconfig"; sourceTree = "<group>"; };
+		491AFC490AC74006B5A9C4A3 /* notification_tone_01.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = unknown; name = notification_tone_01.wav; path = Vouch/notification_tone_01.wav; sourceTree = "<group>"; };
+		53DA1AD74AEE3F8E973FB261 /* libPods-Vouch.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Vouch.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		8D4870E0D154CFFDC1DB2E28 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-Vouch/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
+		8D7099F784D9456D860D36D1 /* notification_tone_03.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = unknown; name = notification_tone_03.wav; path = Vouch/notification_tone_03.wav; sourceTree = "<group>"; };
+		96210397744C6210B4F53EE0 /* Pods-Vouch.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Vouch.debug.xcconfig"; path = "Target Support Files/Pods-Vouch/Pods-Vouch.debug.xcconfig"; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = Vouch/SplashScreen.storyboard; sourceTree = "<group>"; };
-		B9BA61EB97FA41A8A3F3552C /* notification_tone_01.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = unknown; name = notification_tone_01.wav; path = Vouch/notification_tone_01.wav; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
-		DC55E48E473552EE1C309575 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-Vouch/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Vouch/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* Vouch-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "Vouch-Bridging-Header.h"; path = "Vouch/Vouch-Bridging-Header.h"; sourceTree = "<group>"; };
-		FD18547CB99B4A6C83D2EF10 /* notification_tone_02.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = unknown; name = notification_tone_02.wav; path = Vouch/notification_tone_02.wav; sourceTree = "<group>"; };
-		FDC16B1B29A466600ECF5165 /* Pods-Vouch.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Vouch.release.xcconfig"; path = "Target Support Files/Pods-Vouch/Pods-Vouch.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -43,13 +43,31 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C66D70F0D1EE1CAE30283B4B /* libPods-Vouch.a in Frameworks */,
+				85E4D7E2CBE29CD7CBCAE5B0 /* libPods-Vouch.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0378A76406D9E8B1014B54F5 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				96210397744C6210B4F53EE0 /* Pods-Vouch.debug.xcconfig */,
+				426F9CDA2D14FD5237FCF559 /* Pods-Vouch.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
+			sourceTree = "<group>";
+		};
+		0AF5FF529AFC404C17CE8217 /* ExpoModulesProviders */ = {
+			isa = PBXGroup;
+			children = (
+				363A9AC633834A1BEEABAA10 /* Vouch */,
+			);
+			name = ExpoModulesProviders;
+			sourceTree = "<group>";
+		};
 		13B07FAE1A68108700A75B9A /* Vouch */ = {
 			isa = PBXGroup;
 			children = (
@@ -59,10 +77,10 @@
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
-				B9BA61EB97FA41A8A3F3552C /* notification_tone_01.wav */,
-				FD18547CB99B4A6C83D2EF10 /* notification_tone_02.wav */,
-				409436F4C4104CA1B58531C7 /* notification_tone_03.wav */,
-				7AE8477B7C10D9FFB5022392 /* PrivacyInfo.xcprivacy */,
+				491AFC490AC74006B5A9C4A3 /* notification_tone_01.wav */,
+				35083A6A38BF42B285902AA0 /* notification_tone_02.wav */,
+				8D7099F784D9456D860D36D1 /* notification_tone_03.wav */,
+				3D2361926C47AC94C2F69C5F /* PrivacyInfo.xcprivacy */,
 			);
 			name = Vouch;
 			sourceTree = "<group>";
@@ -71,19 +89,17 @@
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
-				1A0E7A89052B23E4D6036394 /* libPods-Vouch.a */,
+				53DA1AD74AEE3F8E973FB261 /* libPods-Vouch.a */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		570E276CEC39145BADEC6FBB /* Pods */ = {
+		363A9AC633834A1BEEABAA10 /* Vouch */ = {
 			isa = PBXGroup;
 			children = (
-				88D375A8C21B1D0E71FA0449 /* Pods-Vouch.debug.xcconfig */,
-				FDC16B1B29A466600ECF5165 /* Pods-Vouch.release.xcconfig */,
+				8D4870E0D154CFFDC1DB2E28 /* ExpoModulesProvider.swift */,
 			);
-			name = Pods;
-			path = Pods;
+			name = Vouch;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -100,8 +116,8 @@
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
-				570E276CEC39145BADEC6FBB /* Pods */,
-				E1084643EB5F8FBD8D7703E5 /* ExpoModulesProviders */,
+				0378A76406D9E8B1014B54F5 /* Pods */,
+				0AF5FF529AFC404C17CE8217 /* ExpoModulesProviders */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -116,14 +132,6 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		9F583B5C6CA4896C80005CBE /* Vouch */ = {
-			isa = PBXGroup;
-			children = (
-				DC55E48E473552EE1C309575 /* ExpoModulesProvider.swift */,
-			);
-			name = Vouch;
-			sourceTree = "<group>";
-		};
 		BB2F792B24A3F905000567C9 /* Supporting */ = {
 			isa = PBXGroup;
 			children = (
@@ -131,14 +139,6 @@
 			);
 			name = Supporting;
 			path = Vouch/Supporting;
-			sourceTree = "<group>";
-		};
-		E1084643EB5F8FBD8D7703E5 /* ExpoModulesProviders */ = {
-			isa = PBXGroup;
-			children = (
-				9F583B5C6CA4896C80005CBE /* Vouch */,
-			);
-			name = ExpoModulesProviders;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -149,13 +149,13 @@
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "Vouch" */;
 			buildPhases = (
 				08A4A3CD28434E44B6B9DE2E /* [CP] Check Pods Manifest.lock */,
-				6BCDC33F024F2B589B275226 /* [Expo] Configure project */,
+				1CC80EEA41FAC5FB9CEBD924 /* [Expo] Configure project */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */,
-				DCBC6B8DCD0B7DD44A6A9132 /* [CP] Embed Pods Frameworks */,
+				921CC07900C7C45CEEC3FC79 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -205,10 +205,10 @@
 				BB2F792D24A3F905000567C9 /* Expo.plist in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
-				05F65946A07E4665B4F72714 /* notification_tone_01.wav in Resources */,
-				2C994BAEDED54CCC894D9EDD /* notification_tone_02.wav in Resources */,
-				FE70476ADA3245688E87B58D /* notification_tone_03.wav in Resources */,
-				1F3D17A204D59FACFE6E909F /* PrivacyInfo.xcprivacy in Resources */,
+				557713AB876647D088FB5880 /* notification_tone_01.wav in Resources */,
+				CDA1D83FD292481A9A97D606 /* notification_tone_02.wav in Resources */,
+				1175B4DF8F90429EB889F004 /* notification_tone_03.wav in Resources */,
+				852EB0F8761212CF3BFBD0B8 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -254,7 +254,7 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		6BCDC33F024F2B589B275226 /* [Expo] Configure project */ = {
+		1CC80EEA41FAC5FB9CEBD924 /* [Expo] Configure project */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -320,7 +320,7 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Vouch/Pods-Vouch-resources.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
-		DCBC6B8DCD0B7DD44A6A9132 /* [CP] Embed Pods Frameworks */ = {
+		921CC07900C7C45CEEC3FC79 /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -350,7 +350,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
-				84CE6498773F106B398A7B72 /* ExpoModulesProvider.swift in Sources */,
+				766745286546C14AF304A93D /* ExpoModulesProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -359,7 +359,7 @@
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 88D375A8C21B1D0E71FA0449 /* Pods-Vouch.debug.xcconfig */;
+			baseConfigurationReference = 96210397744C6210B4F53EE0 /* Pods-Vouch.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
@@ -395,7 +395,7 @@
 		};
 		13B07F951A680F5B00A75B9A /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = FDC16B1B29A466600ECF5165 /* Pods-Vouch.release.xcconfig */;
+			baseConfigurationReference = 426F9CDA2D14FD5237FCF559 /* Pods-Vouch.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;

@@ -9,6 +9,8 @@
  * - Subtasks: / delimiter
  */
 
+import { MAX_POMO_DURATION_MINUTES } from '@/lib/constants/timings';
+
 export interface ParsedClockToken {
   hours: number;
   minutes: number;
@@ -25,8 +27,6 @@ export type ParsedDateToken =
   | { kind: 'slash'; day: number; month: number; year: number | null; index: number };
 
 export type RepeatToken = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
-
-const MAX_POMO_DURATION_MINUTES = 120;
 
 const WEEKDAY_TOKEN_PATTERN =
   '\\b@?(mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\\b';

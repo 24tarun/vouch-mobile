@@ -30,10 +30,15 @@ async function fetchReputationScore(userId: string): Promise<ReputationScoreData
 
   if (ownedResult.error) throw new Error(ownedResult.error.message);
   if (vouchedResult.error) throw new Error(vouchedResult.error.message);
+  if (pomoResult.error) throw new Error(pomoResult.error.message);
 
   const pomoByTask = new Map<string, number>();
-  for (const row of (pomoResult.data ?? []) as { task_id: string; elapsed_seconds: number }[]) {
-    pomoByTask.set(row.task_id, (pomoByTask.get(row.task_id) ?? 0) + (row.elapsed_seconds ?? 0));
+  if (pomoResult.data === null) {
+    console.warn('[useReputationScore] pomo_sessions query returned null data without error');
+  } else {
+    for (const row of pomoResult.data as { task_id: string; elapsed_seconds: number }[]) {
+      pomoByTask.set(row.task_id, (pomoByTask.get(row.task_id) ?? 0) + (row.elapsed_seconds ?? 0));
+    }
   }
 
   const mapTask = (t: Record<string, unknown>): ReputationTaskInput => ({

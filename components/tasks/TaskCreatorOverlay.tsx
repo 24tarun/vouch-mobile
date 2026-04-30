@@ -210,7 +210,7 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
   setShowEventStartAndroidPicker,
 }: TaskCreatorOverlayProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const trafficIconColor = colors.bg;
   const [startTimePlacement, setStartTimePlacement] = useState<'timeBound' | 'event'>('timeBound');
   const [expandedControl, setExpandedControl] = useState<'timeBound' | 'eventSync' | null>(null);

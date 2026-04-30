@@ -26,11 +26,4 @@ expo-env.d.ts
 *.ipa
 build/
 ios/
-!ios/Podfile
-!ios/Podfile.lock
-!ios/Podfile.properties.json
-!ios/.xcode.env
-!ios/.gitignore
-!ios/Vouch.xcodeproj/
-!ios/Vouch.xcworkspace/
-!ios/Vouch/
+android/

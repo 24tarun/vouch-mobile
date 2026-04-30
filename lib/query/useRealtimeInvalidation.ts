@@ -100,9 +100,12 @@ export function useRealtimeInvalidation({
           rateLimiter.trigger();
         },
       );
-      channel.subscribe((status) => {
+      channel.subscribe((status, reason) => {
         if (status === 'CHANNEL_ERROR') {
-          console.warn(`[realtime] Channel ${channelBaseName}:${subscription.table} subscribe error`);
+          console.warn(
+            `[realtime] Channel ${channelBaseName}:${subscription.table} subscribe error:`,
+            reason instanceof Error ? reason.message : String(reason ?? 'unknown'),
+          );
         }
       });
       return channel;

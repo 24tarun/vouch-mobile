@@ -290,9 +290,9 @@ function AuthGuard() {
           }
         },
       )
-      .subscribe((status) => {
+      .subscribe((status, reason) => {
         if (status === 'CHANNEL_ERROR') {
-          console.warn(`[layout] tasks channel subscribe error for ${userId}`);
+          console.warn('[layout] tasks channel subscribe error:', reason instanceof Error ? reason.message : String(reason ?? 'unknown'));
         }
       });
 
@@ -319,9 +319,9 @@ function AuthGuard() {
           }
         },
       )
-      .subscribe((status) => {
+      .subscribe((status, reason) => {
         if (status === 'CHANNEL_ERROR') {
-          console.warn(`[layout] task-reminders channel subscribe error for ${userId}`);
+          console.warn('[layout] task-reminders channel subscribe error:', reason instanceof Error ? reason.message : String(reason ?? 'unknown'));
         }
       });
 
@@ -338,9 +338,9 @@ function AuthGuard() {
           }
         },
       )
-      .subscribe((status) => {
+      .subscribe((status, reason) => {
         if (status === 'CHANNEL_ERROR') {
-          console.warn(`[layout] profile channel subscribe error for ${userId}`);
+          console.warn('[layout] profile channel subscribe error:', reason instanceof Error ? reason.message : String(reason ?? 'unknown'));
         }
       });
 

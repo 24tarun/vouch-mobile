@@ -201,6 +201,16 @@ export interface TaskEvent {
   created_at: string;
 }
 
+export interface AiVouch {
+  id: string;
+  task_id: string;
+  attempt_number: number;
+  decision: 'approved' | 'denied';
+  reason: string | null;
+  approved_at: string | null;
+  created_at: string;
+}
+
 export interface LedgerEntry {
   id: string;
   user_id: string;
@@ -301,5 +311,4 @@ export interface VoucherPendingTask extends TaskWithRelations {
   proof_request_count: number;
   rectify_passes_used: number;
 }
-
 

@@ -271,6 +271,23 @@ export async function purgeTaskProofForFinalState(taskId: string): Promise<TaskP
   return { success: true };
 }
 
+export async function queueAiEvalForTask(taskId: string): Promise<{ success: true } | { success: false; error: string }> {
+  const { data, error } = await invokeTaskProofFunction<TaskProofSimpleResponse>({
+    action: 'queue-ai-eval',
+    taskId,
+  });
+
+  if (error) {
+    return { success: false, error: await invokeErrorMessage(error) };
+  }
+
+  if (!data?.success) {
+    return { success: false, error: data?.error || 'Could not queue AI evaluation.' };
+  }
+
+  return { success: true };
+}
+
 export async function removeCurrentTaskProofAsset(taskId: string): Promise<TaskProofRemoveResult> {
   const { data, error } = await invokeTaskProofFunction<TaskProofSimpleResponse>({
     action: 'remove-current',

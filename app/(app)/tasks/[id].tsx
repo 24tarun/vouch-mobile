@@ -28,17 +28,16 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import Toast from 'react-native-toast-message';
 import { DEFAULT_REMINDER_OFFSET_MS, normalizePomoDurationMinutes } from '@/lib/constants/timings';
 import { supabase } from '@/lib/supabase';
-import { purgeTaskProofForFinalState, removeTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
+import { purgeTaskProofForFinalState, queueAiEvalForTask, removeTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
 import { completeTask, stopTaskRepetitions, undoCompleteTask, deleteTask, postponeTaskDeadline, isTaskWithinDeleteWindow } from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
-import { StatusPill, STATUS_COLOR } from '@/components/StatusPill';
+import { StatusPill } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
 import type { RecurrenceRule, Task, TaskEvent, TaskReminder } from '@/lib/types';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { AI_PROFILE_ID, AI_PROFILE_USERNAME } from '@/lib/constants/ai-profile';
-import { TASK_AWAITING_STATUSES } from '@/lib/constants/task-status';
 import { useAuth } from '@/hooks/useAuth';
 import { useTaskDetail } from '@/lib/hooks/useTaskDetail';
 import { queryKeys } from '@/lib/query/keys';
@@ -46,37 +45,9 @@ import { isOptimisticTaskId } from '@/lib/tasks/task-id';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
 import { LegacyPostponeCalendarPicker } from '@/components/tasks/LegacyPostponeCalendarPicker';
 import { ProofCaptureModal } from '@/components/tasks/ProofCaptureModal';
+import { TaskTimeline } from '@/components/tasks/TaskTimeline';
 
-// ─── Event labels ─────────────────────────────────────────────────────────────
-
-const EVENT_LABEL: Record<string, string> = {
-  ACTIVE: 'Task created',
-  MARK_COMPLETE: 'Marked complete',
-  UNDO_COMPLETE: 'Completion undone',
-  PROOF_UPLOADED: 'Proof uploaded',
-  PROOF_UPLOAD_FAILED_REVERT: 'Proof upload failed',
-  PROOF_REMOVED: 'Proof removed',
-  PROOF_REQUESTED: 'Proof requested',
-  VOUCHER_ACCEPT: 'Voucher accepted',
-  VOUCHER_DENY: 'Voucher denied',
-  VOUCHER_DELETE: 'Voucher removed',
-  RECTIFY: 'Rectified',
-  OVERRIDE: 'Override applied',
-  DEADLINE_MISSED: 'Deadline missed',
-  VOUCHER_TIMEOUT: 'Voucher timed out',
-  POMO_COMPLETED: 'Pomodoro completed',
-  DEADLINE_WARNING_1H: '1h left',
-  DEADLINE_WARNING_5M: '5m left',
-  DEADLINE_WARNING_10M: '10m left',
-  GOOGLE_EVENT_CANCELLED: 'Google event cancelled',
-  POSTPONE: 'Postponed',
-  AI_APPROVE: 'AI approved',
-  AI_DENY: 'AI denied',
-  AI_DENIED_AUTO_HOP: 'AI denied — escalated',
-  ESCALATE: 'Escalated',
-  AI_ESCALATE_TO_HUMAN: 'Escalated to human voucher',
-  ACCEPT_DENIAL: 'Denial accepted',
-};
+const MAX_AI_RESUBMITS = 3;
 
 // ─── Button color tokens ──────────────────────────────────────────────────────
 
@@ -113,195 +84,11 @@ function formatFullDeadline(iso: string): string {
   return `${dayName} ${getOrdinal(d.getDate())} ${month} · ${time}`;
 }
 
-function formatTimelineTimestamp(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const date = d.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
-  const time = d.toLocaleTimeString('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  return `${date} ${time}`;
-}
-
-function formatPomoEventDuration(totalSeconds: number): string {
-  const safeSeconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
-  if (safeSeconds < 60) return `${safeSeconds}s`;
-  if (safeSeconds % 60 === 0) return `${safeSeconds / 60}m`;
-  const minutes = Math.floor(safeSeconds / 60);
-  const seconds = safeSeconds % 60;
-  return `${minutes}m ${seconds}s`;
-}
-
-function formatEnumLabel(value: string): string {
-  return value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-type TimelineEntry = {
-  id: string;
-  createdAt: string;
-  status?: string;
-  label?: string;
-  tone?: string;
-  preserveStatus?: boolean;
-  renderAsPill?: boolean;
-};
-
-function getTimelineTone(event: TaskEvent): 'SUCCESS' | 'DANGER' | 'WARNING' | 'INFO' | 'PROOF' | 'NEUTRAL' {
-  switch (event.event_type) {
-    case 'MARK_COMPLETE':
-    case 'VOUCHER_ACCEPT':
-    case 'AI_APPROVE':
-    case 'POMO_COMPLETED':
-      return 'SUCCESS';
-    case 'VOUCHER_DENY':
-    case 'AI_DENY':
-    case 'AI_DENIED_AUTO_HOP':
-    case 'DEADLINE_MISSED':
-    case 'PROOF_UPLOAD_FAILED_REVERT':
-    case 'ACCEPT_DENIAL':
-      return 'DANGER';
-    case 'DEADLINE_WARNING_1H':
-    case 'DEADLINE_WARNING_10M':
-    case 'DEADLINE_WARNING_5M':
-    case 'VOUCHER_TIMEOUT':
-    case 'PROOF_REQUESTED':
-      return 'WARNING';
-    case 'PROOF_UPLOADED':
-    case 'PROOF_REMOVED':
-      return 'PROOF';
-    case 'ACTIVE':
-    case 'UNDO_COMPLETE':
-    case 'RECTIFY':
-    case 'OVERRIDE':
-    case 'POSTPONE':
-    case 'ESCALATE':
-    case 'AI_ESCALATE_TO_HUMAN':
-    case 'GOOGLE_EVENT_CANCELLED':
-      return 'INFO';
-    default:
-      return 'NEUTRAL';
-  }
-}
-
-function makeTimelineEntry(event: TaskEvent, suffix: string, entry: Omit<TimelineEntry, 'id' | 'createdAt'>): TimelineEntry {
-  return {
-    id: `${event.id}:${suffix}`,
-    createdAt: event.created_at,
-    ...entry,
-  };
-}
-
-function getReminderTimelineLabel(eventType: string): string | null {
-  switch (eventType) {
-    case 'DEADLINE_WARNING_1H':
-      return '1hr Reminder Sent';
-    case 'DEADLINE_WARNING_10M':
-      return '10m Reminder Sent';
-    case 'DEADLINE_WARNING_5M':
-      return '5m Reminder Sent';
-    default:
-      return null;
-  }
-}
-
-function buildTimelineEntries(event: TaskEvent): TimelineEntry[] {
-  const statusTransition =
-    event.from_status !== event.to_status
-      ? [makeTimelineEntry(event, 'status', { status: event.to_status, preserveStatus: true })]
-      : [];
-  const reminderLabel = getReminderTimelineLabel(event.event_type);
-
-  if (event.event_type === 'ACTIVE') {
-    return [makeTimelineEntry(event, 'status', { status: 'ACTIVE', preserveStatus: true })];
-  }
-
-  if (reminderLabel) {
-    return [makeTimelineEntry(event, 'reminder', { label: reminderLabel, tone: 'WARNING' })];
-  }
-
-  switch (event.event_type) {
-    case 'MARK_COMPLETE':
-      return [
-        makeTimelineEntry(event, 'action', {
-          status: 'MARKED_COMPLETE',
-          label: 'Marked Complete',
-          preserveStatus: true,
-        }),
-        ...statusTransition,
-      ];
-    case 'UNDO_COMPLETE':
-      return [
-        makeTimelineEntry(event, 'action', {
-          label: 'Completion Undone',
-          tone: 'INFO',
-        }),
-        ...statusTransition,
-      ];
-    case 'VOUCHER_ACCEPT':
-      return statusTransition;
-    case 'VOUCHER_DENY':
-      return statusTransition;
-    case 'AI_APPROVE':
-      return [
-        makeTimelineEntry(event, 'action', { label: 'AI Approved', tone: 'SUCCESS' }),
-        ...statusTransition,
-      ];
-    case 'AI_DENY':
-    case 'AI_DENIED_AUTO_HOP':
-      return [
-        makeTimelineEntry(event, 'action', { label: 'AI Denied', tone: 'DANGER' }),
-        ...statusTransition,
-      ];
-    case 'PROOF_UPLOADED':
-      return [makeTimelineEntry(event, 'action', { label: 'Proof Uploaded', tone: 'PROOF' })];
-    case 'PROOF_UPLOAD_FAILED_REVERT':
-      return [makeTimelineEntry(event, 'action', { label: 'Proof Upload Failed', tone: 'DANGER' })];
-    case 'PROOF_REMOVED':
-      return [makeTimelineEntry(event, 'action', { label: 'Proof Removed', tone: 'PROOF' })];
-    case 'PROOF_REQUESTED':
-      return [makeTimelineEntry(event, 'action', { label: 'Proof Requested', tone: 'WARNING' })];
-    case 'POMO_COMPLETED': {
-      const elapsedSeconds = Number(event.metadata?.elapsed_seconds ?? 0);
-      const durationLabel = elapsedSeconds > 0 ? ` (${formatPomoEventDuration(elapsedSeconds)})` : '';
-      return [makeTimelineEntry(event, 'action', {
-        label: `Pomodoro Completed${durationLabel}`,
-        tone: 'INFO',
-        renderAsPill: false,
-      })];
-    }
-    case 'POSTPONE':
-    case 'RECTIFY':
-    case 'OVERRIDE':
-    case 'DEADLINE_MISSED':
-    case 'VOUCHER_TIMEOUT':
-    case 'ESCALATE':
-    case 'AI_ESCALATE_TO_HUMAN':
-    case 'ACCEPT_DENIAL':
-      if (statusTransition.length > 0) return statusTransition;
-      break;
-    default:
-      if (statusTransition.length > 0) return statusTransition;
-  }
-
-  return [
-    makeTimelineEntry(event, 'action', {
-      label: EVENT_LABEL[event.event_type] ?? formatEnumLabel(event.event_type),
-      tone: getTimelineTone(event),
-    }),
-  ];
-}
-
-function getTimelineEntryColor(entry: TimelineEntry, textMuted: string): string {
-  const styleKey = entry.tone
-    ?? (entry.preserveStatus ? entry.status : (entry.status === 'MARKED_COMPLETE' ? 'AWAITING_VOUCHER' : entry.status))
-    ?? 'NEUTRAL';
-  return STATUS_COLOR[styleKey] ?? textMuted;
+function getEventReason(event: TaskEvent): string | null {
+  const rawReason = event.metadata?.reason;
+  if (typeof rawReason !== 'string') return null;
+  const trimmed = rawReason.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function formatFocusedTime(totalSeconds: number): string {
@@ -565,11 +352,17 @@ export default function TaskDetailScreen() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [isPostponing, setIsPostponing] = useState(false);
+  const [isEscalating, setIsEscalating] = useState(false);
+  const [isAcceptingDenial, setIsAcceptingDenial] = useState(false);
+  const [isSubmittingAiReview, setIsSubmittingAiReview] = useState(false);
   const [postponePickerOpen, setPostponePickerOpen] = useState(false);
   const [postponePickerDate, setPostponePickerDate] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const [proofLightboxOpen, setProofLightboxOpen] = useState(false);
   const [proofCaptureOpen, setProofCaptureOpen] = useState(false);
+  const [escalationPickerOpen, setEscalationPickerOpen] = useState(false);
+  const [escalationFriendsLoading, setEscalationFriendsLoading] = useState(false);
+  const [escalationFriends, setEscalationFriends] = useState<Array<{ id: string; username: string; email: string }>>([]);
   const {
     session: activePomoSession,
     isLoading: pomoLoading,
@@ -631,6 +424,7 @@ export default function TaskDetailScreen() {
     if (!task || proofUploadLockRef.current) return;
 
     const isReplacingProof = Boolean(proof);
+    const shouldQueueAiAfterUpload = task.status === 'AWAITING_USER' && task.voucher_id === AI_PROFILE_ID;
     proofUploadLockRef.current = true;
     setProofUploading(true);
     try {
@@ -652,6 +446,16 @@ export default function TaskDetailScreen() {
           : previous.task,
       } : previous);
       await Promise.resolve(detail.refetch());
+      if (shouldQueueAiAfterUpload) {
+        Toast.show({
+          type: 'proofSuccess',
+          text1: 'Proof uploaded',
+          text2: 'Tap Submit to send this to AI review.',
+          position: 'bottom',
+          bottomOffset: 84,
+          visibilityTime: 2600,
+        });
+      }
       invalidateDerivedTaskViews();
       if (isReplacingProof) {
         showProofToast('Proof replaced successfully.', 'success');
@@ -741,6 +545,274 @@ export default function TaskDetailScreen() {
       { text: 'Remove proof', style: 'destructive', onPress: () => void removeCurrentProof() },
       { text: 'Cancel', style: 'cancel' },
     ], { cancelable: true });
+  }
+
+  async function loadEscalationFriends() {
+    if (!user?.id || escalationFriendsLoading) return;
+    setEscalationFriendsLoading(true);
+    try {
+      const { data, error } = await (supabase.from('friendships') as any)
+        .select('friend_id, friend:profiles!friendships_friend_id_fkey(id, username, email)')
+        .eq('user_id', user.id);
+
+      if (error) {
+        Alert.alert('Could not load friends', error.message);
+        return;
+      }
+
+      const next = ((data ?? []) as any[])
+        .map((row) => row.friend)
+        .filter((friend) => friend?.id && friend.id !== AI_PROFILE_ID && friend.id !== user.id)
+        .map((friend) => ({
+          id: String(friend.id),
+          username: String(friend.username ?? '').trim() || String(friend.email ?? 'Friend'),
+          email: String(friend.email ?? ''),
+        }));
+
+      setEscalationFriends(next);
+      setEscalationPickerOpen(true);
+    } finally {
+      setEscalationFriendsLoading(false);
+    }
+  }
+
+  function getVoucherResponseDeadlineIso(): string {
+    const deadline = new Date();
+    deadline.setDate(deadline.getDate() + 2);
+    deadline.setHours(23, 59, 59, 999);
+    return deadline.toISOString();
+  }
+
+  async function handleEscalateToFriend(friendId: string) {
+    if (!task || !user?.id || isEscalating) return;
+    setIsEscalating(true);
+    try {
+      if (task.user_id !== user.id) {
+        Alert.alert('Not authorised', 'You can only escalate your own task.');
+        return;
+      }
+      if (task.status !== 'AWAITING_USER') {
+        Alert.alert('Cannot escalate', `Task is currently ${task.status}.`);
+        return;
+      }
+      if (task.voucher_id !== AI_PROFILE_ID || task.ai_escalated_from) {
+        Alert.alert('Cannot escalate', 'This task is not eligible for AI escalation.');
+        return;
+      }
+      if (friendId === AI_PROFILE_ID || friendId === user.id) {
+        Alert.alert('Cannot escalate', 'Please choose a friend.');
+        return;
+      }
+      if (!hasUploadedProof) {
+        Alert.alert('Missing proof', 'Upload proof before escalating to a friend.');
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const actorUserClientInstanceId = await resolveUserClientInstanceId(user.id);
+
+      const { data: reassignedProofRows, error: reassignProofError } = await supabase
+        .from('task_completion_proofs')
+        .update({
+          voucher_id: friendId,
+          updated_at: nowIso,
+        } as any)
+        .eq('task_id', task.id)
+        .eq('owner_id', user.id)
+        .eq('upload_state', 'UPLOADED')
+        .not('object_path', 'is', null)
+        .select('id');
+
+      if (reassignProofError) {
+        Alert.alert('Escalation failed', `Could not attach proof for the selected friend: ${reassignProofError.message}`);
+        return;
+      }
+      if (!reassignedProofRows || reassignedProofRows.length === 0) {
+        Alert.alert('Escalation failed', 'No uploaded proof was found to send to your friend.');
+        return;
+      }
+
+      const { data: updatedRows, error: updateError } = await supabase
+        .from('tasks')
+        .update({
+          voucher_id: friendId,
+          ai_escalated_from: true,
+          status: 'AWAITING_VOUCHER',
+          voucher_response_deadline: getVoucherResponseDeadlineIso(),
+          updated_at: nowIso,
+        })
+        .eq('id', task.id)
+        .eq('user_id', user.id)
+        .eq('status', 'AWAITING_USER')
+        .select('id');
+
+      if (updateError) {
+        Alert.alert('Escalation failed', updateError.message);
+        return;
+      }
+      if (!updatedRows || updatedRows.length === 0) {
+        Alert.alert('Escalation failed', 'Task is no longer in AWAITING_USER.');
+        return;
+      }
+
+      const { error: eventError } = await supabase.from('task_events').insert([
+        {
+          task_id: task.id,
+          event_type: 'ESCALATE',
+          actor_id: user.id,
+          actor_user_client_instance_id: actorUserClientInstanceId,
+          from_status: 'AWAITING_USER',
+          to_status: 'ESCALATED',
+          metadata: { new_voucher_id: friendId },
+        },
+        {
+          task_id: task.id,
+          event_type: 'AI_ESCALATE_TO_HUMAN',
+          actor_id: user.id,
+          actor_user_client_instance_id: actorUserClientInstanceId,
+          from_status: 'ESCALATED',
+          to_status: 'AWAITING_VOUCHER',
+          metadata: { new_voucher_id: friendId },
+        },
+      ] as any);
+
+      if (eventError) {
+        Alert.alert('Escalated', `Task escalated, but event logging failed: ${eventError.message}`);
+      }
+
+      setEscalationPickerOpen(false);
+      await Promise.resolve(detail.refetch());
+      invalidateDerivedTaskViews();
+    } finally {
+      setIsEscalating(false);
+    }
+  }
+
+  async function handleAcceptDenial() {
+    if (!task || !user?.id || isAcceptingDenial) return;
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'Accept denial?',
+        'This finalizes the denial and applies failure cost.',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Accept', style: 'destructive', onPress: () => resolve(true) },
+        ],
+      );
+    });
+    if (!confirmed) return;
+
+    setIsAcceptingDenial(true);
+    try {
+      if (task.user_id !== user.id || task.status !== 'AWAITING_USER') {
+        Alert.alert('Cannot finalize', 'Task is no longer awaiting your decision.');
+        return;
+      }
+
+      const period = new Date().toISOString().slice(0, 7);
+      const nowIso = new Date().toISOString();
+      const actorUserClientInstanceId = await resolveUserClientInstanceId(user.id);
+
+      const { data: updatedRows, error: updateError } = await supabase
+        .from('tasks')
+        .update({ status: 'DENIED', updated_at: nowIso } as any)
+        .eq('id', task.id)
+        .eq('user_id', user.id)
+        .eq('status', 'AWAITING_USER')
+        .select('id');
+
+      if (updateError) {
+        Alert.alert('Could not finalize denial', updateError.message);
+        return;
+      }
+      if (!updatedRows || updatedRows.length === 0) {
+        Alert.alert('Could not finalize denial', 'Task status changed before confirmation.');
+        return;
+      }
+
+      const [ledgerRes, eventRes] = await Promise.all([
+        supabase.from('ledger_entries').insert({
+          user_id: user.id,
+          task_id: task.id,
+          period,
+          amount_cents: task.failure_cost_cents,
+          entry_type: 'failure',
+        } as any),
+        supabase.from('task_events').insert({
+          task_id: task.id,
+          event_type: 'ACCEPT_DENIAL',
+          actor_id: user.id,
+          actor_user_client_instance_id: actorUserClientInstanceId,
+          from_status: 'AWAITING_USER',
+          to_status: 'DENIED',
+        } as any),
+      ]);
+
+      if (ledgerRes.error || eventRes.error) {
+        const firstError = ledgerRes.error ?? eventRes.error;
+        Alert.alert('Denial finalized', `Task is denied, but follow-up logging failed: ${firstError?.message ?? 'Unknown error'}`);
+      }
+
+      await Promise.resolve(detail.refetch());
+      invalidateDerivedTaskViews();
+    } finally {
+      setIsAcceptingDenial(false);
+    }
+  }
+
+  async function handleSubmitAiReview() {
+    if (!task || !user?.id || isSubmittingAiReview) return;
+    if (task.user_id !== user.id || task.status !== 'AWAITING_USER' || task.voucher_id !== AI_PROFILE_ID) {
+      Alert.alert('Cannot submit', 'Task is no longer awaiting AI appeal submission.');
+      return;
+    }
+    if (!hasUploadedProof) {
+      Alert.alert('Missing proof', 'Upload proof before submitting to AI.');
+      return;
+    }
+
+    setIsSubmittingAiReview(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const { data: updatedRows, error: statusUpdateError } = await supabase
+        .from('tasks')
+        .update({
+          status: 'AWAITING_AI',
+          updated_at: nowIso,
+        } as any)
+        .eq('id', task.id)
+        .eq('user_id', user.id)
+        .eq('status', 'AWAITING_USER')
+        .eq('voucher_id', AI_PROFILE_ID)
+        .select('id');
+
+      if (statusUpdateError) {
+        Alert.alert('Could not submit', statusUpdateError.message);
+        return;
+      }
+      if (!updatedRows || updatedRows.length === 0) {
+        Alert.alert('Could not submit', 'Task changed before submission.');
+        return;
+      }
+
+      const queueResult = await queueAiEvalForTask(task.id);
+      if (!queueResult.success) {
+        Alert.alert('Submission failed', queueResult.error);
+        return;
+      }
+
+      await Promise.resolve(detail.refetch());
+      invalidateDerivedTaskViews();
+      Toast.show({
+        type: 'proofSuccess',
+        text1: 'Submitted to AI',
+        position: 'bottom',
+        bottomOffset: 84,
+        visibilityTime: 2200,
+      });
+    } finally {
+      setIsSubmittingAiReview(false);
+    }
   }
 
   // ── Override ───────────────────────────────────────────────────────────────
@@ -894,6 +966,8 @@ export default function TaskDetailScreen() {
                       status: 'ACTIVE',
                       marked_completed_at: null,
                       voucher_response_deadline: null,
+                      voucher_id: previous.task.ai_escalated_from ? AI_PROFILE_ID : previous.task.voucher_id,
+                      ai_escalated_from: previous.task.ai_escalated_from ? false : previous.task.ai_escalated_from,
                       updated_at: nowIso,
                     }
                   : previous.task,
@@ -1224,13 +1298,26 @@ export default function TaskDetailScreen() {
   // ── Allowed flags ──────────────────────────────────────────────────────────
   const s = task.status;
   const isActiveOrPostponed = s === 'ACTIVE' || s === 'POSTPONED';
-  const isAwaiting = TASK_AWAITING_STATUSES.has(s);
   const isMissedOrDenied = s === 'MISSED' || s === 'DENIED';
   const isOwnTask = task.user_id === user?.id;
+  const isAiVouched = task.voucher_id === AI_PROFILE_ID;
+  const isAwaitingUserAi = isOwnTask && isAiVouched && s === 'AWAITING_USER';
+  const aiResubmitCount = Number(task.resubmit_count ?? 0);
+  const canResubmitAi = isAwaitingUserAi && aiResubmitCount < MAX_AI_RESUBMITS && !proofUploading;
+  const canSubmitAiReview = isAwaitingUserAi && hasUploadedProof && !isSubmittingAiReview;
+  const canEscalateAiToFriend = isAwaitingUserAi && hasUploadedProof && !isEscalating;
+  const latestAiDenialReason = (() => {
+    const aiDenials = events.filter((event) => event.event_type === 'AI_DENY');
+    for (let i = aiDenials.length - 1; i >= 0; i -= 1) {
+      const reason = getEventReason(aiDenials[i]);
+      if (reason) return reason;
+    }
+    return null;
+  })();
 
   const canPomo          = isOwnTask && isActiveOrPostponed;
   const canComplete      = isOwnTask && isActiveOrPostponed && !isCompleting;
-  const canProof         = isOwnTask && (isActiveOrPostponed || isAwaiting);
+  const canProof         = isOwnTask && (isActiveOrPostponed || s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI' || s === 'MARKED_COMPLETE');
   const canStopRepeating = isOwnTask && isActiveOrPostponed && !!task.recurrence_rule_id;
   const canOverride      = isOwnTask && isMissedOrDenied && !isOverriding;
   const canUndoComplete  = isOwnTask && (s === 'MARKED_COMPLETE' || s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI') && !isUndoingComplete;
@@ -1388,6 +1475,68 @@ export default function TaskDetailScreen() {
 
         {/* ── Actions ───────────────────────────────────────────────────────── */}
         <View style={styles.actionsBlock}>
+          {isAwaitingUserAi && (
+            <View style={styles.awaitingUserCard}>
+              <Text style={styles.awaitingUserTitle}>AI denied</Text>
+              <Text style={styles.awaitingUserSubtitle}>
+                Attempt {Math.max(1, aiResubmitCount)} of {MAX_AI_RESUBMITS}
+              </Text>
+              {latestAiDenialReason ? <Text style={styles.awaitingUserReason}>{latestAiDenialReason}</Text> : null}
+              <View style={styles.awaitingUserActions}>
+                <ActionBtn
+                  allowed={canResubmitAi}
+                  token={BTN.proof}
+                  label={proofUploading ? 'Uploading…' : 'Upload New Proof'}
+                  icon="camera"
+                  onPress={() => setProofCaptureOpen(true)}
+                  onDeny={() => {
+                    if (aiResubmitCount >= MAX_AI_RESUBMITS) {
+                      Alert.alert('Resubmit limit reached', 'You have used all AI resubmits for this task.');
+                    }
+                  }}
+                  containerStyle={{ flex: 1 }}
+                />
+                <ActionBtn
+                  allowed={canEscalateAiToFriend}
+                  token={BTN.reminders}
+                  label={isEscalating ? 'Escalating…' : 'Escalate to Friend'}
+                  icon="users"
+                  onPress={() => { void loadEscalationFriends(); }}
+                  onDeny={() => {
+                    if (!hasUploadedProof) {
+                      Alert.alert('Missing proof', 'Upload proof first, then you can escalate to a friend.');
+                    }
+                  }}
+                  containerStyle={{ flex: 1 }}
+                />
+              </View>
+              <View style={styles.awaitingUserActions}>
+                <ActionBtn
+                  allowed={canSubmitAiReview}
+                  token={BTN.complete}
+                  label={isSubmittingAiReview ? 'Submitting…' : 'Submit'}
+                  icon="check"
+                  onPress={() => { void handleSubmitAiReview(); }}
+                  onDeny={() => {
+                    if (!hasUploadedProof) {
+                      Alert.alert('Missing proof', 'Upload proof first, then submit.');
+                    }
+                  }}
+                  containerStyle={{ flex: 1 }}
+                />
+                <ActionBtn
+                  allowed={!isAcceptingDenial}
+                  token={BTN.delete}
+                  label={isAcceptingDenial ? 'Finalizing…' : 'Accept Denial'}
+                  icon="x-circle"
+                  onPress={() => { void handleAcceptDenial(); }}
+                  onDeny={() => {}}
+                  containerStyle={{ flex: 1 }}
+                />
+              </View>
+            </View>
+          )}
+
           {/* Pomodoro + Proof row — only rendered when at least one is available */}
           {(canPomo || canProof) && (
             <View style={styles.pomoCameraRow}>
@@ -1797,113 +1946,7 @@ export default function TaskDetailScreen() {
         ) : null}
 
         {/* Event timeline */}
-        {(() => {
-          // Synthesize ACTIVE and MARK_COMPLETE entries from task fields when
-          // they are absent from task_events (e.g. older tasks or missing logs).
-          const hasActiveEvent = events.some((e) => e.event_type === 'ACTIVE');
-          const hasMarkCompleteEvent = events.some((e) => e.event_type === 'MARK_COMPLETE');
-
-          const synthetic: TaskEvent[] = [];
-
-          if (!hasActiveEvent) {
-            synthetic.push({
-              id: '__synthetic_active__',
-              task_id: task.id,
-              event_type: 'ACTIVE',
-              actor_id: null,
-              from_status: 'ACTIVE',
-              to_status: 'ACTIVE',
-              metadata: null,
-              created_at: task.created_at,
-            });
-          }
-
-          if (!hasMarkCompleteEvent && task.marked_completed_at) {
-            synthetic.push({
-              id: '__synthetic_mark_complete__',
-              task_id: task.id,
-              event_type: 'MARK_COMPLETE',
-              actor_id: null,
-              from_status: 'ACTIVE',
-              to_status: 'MARKED_COMPLETE',
-              metadata: null,
-              created_at: task.marked_completed_at,
-            });
-          }
-
-          const displayEvents = [...synthetic, ...events].sort(
-            (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-          );
-          const timelineEntries = displayEvents.flatMap(buildTimelineEntries);
-
-          if (timelineEntries.length === 0) return null;
-
-          return (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Timeline</Text>
-            <View style={styles.timeline}>
-              {timelineEntries.map((entry, idx) => {
-                const isRightSide = idx % 2 === 0;
-                const isLast = idx === timelineEntries.length - 1;
-                const entryColor = getTimelineEntryColor(entry, colors.textMuted);
-
-                const pill = entry.renderAsPill === false ? (
-                  <Text style={[styles.timelineEventLabel, { color: entryColor }]} numberOfLines={2}>
-                    {entry.label}
-                  </Text>
-                ) : (
-                  <StatusPill
-                    status={entry.status}
-                    label={entry.label}
-                    tone={entry.tone}
-                    preserveStatus={entry.preserveStatus}
-                  />
-                );
-
-                return (
-                  <View key={entry.id} style={styles.timelineRow}>
-                    {/* Left side */}
-                    <View style={styles.timelineSide}>
-                      {!isRightSide ? (
-                        <View style={styles.timelineEntryLeft}>
-                          <View style={styles.timelineStemRow}>
-                            <View style={styles.timelinePillWrapLeft}>{pill}</View>
-                            <View style={[styles.timelineConnectorFixed, { backgroundColor: entryColor + '66' }]} />
-                          </View>
-                          <Text style={styles.timelineTime}>
-                            {formatTimelineTimestamp(entry.createdAt)}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-
-                    {/* Center spine */}
-                    <View style={styles.timelineCenter}>
-                      <View style={[styles.timelineMarker, { backgroundColor: entryColor, borderColor: colors.bg }]} />
-                      {!isLast ? <View style={styles.timelineAxisSegment} /> : null}
-                    </View>
-
-                    {/* Right side */}
-                    <View style={styles.timelineSide}>
-                      {isRightSide ? (
-                        <View style={styles.timelineEntryRight}>
-                          <View style={styles.timelineStemRow}>
-                            <View style={[styles.timelineConnector, { backgroundColor: entryColor + '66' }]} />
-                            <View style={styles.timelinePillWrap}>{pill}</View>
-                          </View>
-                          <Text style={[styles.timelineTime, { textAlign: 'right' }]}>
-                            {formatTimelineTimestamp(entry.createdAt)}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          </View>
-          );
-        })()}
+        <TaskTimeline task={task} events={events} aiVouches={detail.data?.aiVouches ?? []} />
 
       </ScrollView>
 
@@ -1948,6 +1991,43 @@ export default function TaskDetailScreen() {
           onConfirm={confirmPostpone}
         />
       )}
+
+      <Modal
+        visible={escalationPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEscalationPickerOpen(false)}
+      >
+        <Pressable style={styles.escalationBackdrop} onPress={() => setEscalationPickerOpen(false)}>
+          <Pressable style={styles.escalationSheet} onPress={(event) => event.stopPropagation()}>
+            <Text style={styles.escalationTitle}>Escalate to Friend</Text>
+            {escalationFriendsLoading ? (
+              <ActivityIndicator color={colors.textMuted} />
+            ) : escalationFriends.length === 0 ? (
+              <Text style={styles.escalationEmpty}>No friends available.</Text>
+            ) : (
+              <ScrollView style={styles.escalationList} showsVerticalScrollIndicator={false}>
+                {escalationFriends.map((friend) => (
+                  <TouchableOpacity
+                    key={friend.id}
+                    style={styles.escalationRow}
+                    onPress={() => { void handleEscalateToFriend(friend.id); }}
+                    activeOpacity={0.8}
+                    disabled={isEscalating}
+                  >
+                    <Text style={styles.escalationName}>{friend.username}</Text>
+                    {friend.email ? <Text style={styles.escalationEmail}>{friend.email}</Text> : null}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity style={styles.escalationCancel} onPress={() => setEscalationPickerOpen(false)} activeOpacity={0.8}>
+              <Text style={styles.escalationCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
     </SafeAreaView>
   );
@@ -2132,6 +2212,34 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   equalWidthActionBtn: { flex: 1, minWidth: 0, paddingHorizontal: 0 },
   actionBtnIcon: { marginRight: spacing.sm },
   actionBtnLabel: { fontSize: typography.sm, fontWeight: typography.semibold },
+  awaitingUserCard: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: '#fb923c44',
+    backgroundColor: '#7c2d1218',
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  awaitingUserTitle: {
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
+    color: '#fdba74',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  awaitingUserSubtitle: {
+    fontSize: typography.sm,
+    color: '#fdba74',
+  },
+  awaitingUserReason: {
+    fontSize: typography.sm,
+    color: '#ffedd5',
+    lineHeight: 20,
+  },
+  awaitingUserActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
 
   toggleBtn: { height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: radius.lg, borderWidth: 1, paddingHorizontal: spacing.lg },
   togglePairRow: { flexDirection: 'row', gap: spacing.sm, width: '100%' },
@@ -2364,5 +2472,66 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontSize: typography.xs,
     color: colors.textMuted,
     lineHeight: 16,
+  },
+  timelineDetail: {
+    fontSize: typography.xs,
+    color: colors.textMuted,
+    lineHeight: 16,
+  },
+  escalationBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#00000088',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  escalationSheet: {
+    width: '100%',
+    maxHeight: '70%',
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surface2,
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  escalationTitle: {
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+    color: colors.text,
+  },
+  escalationList: {
+    maxHeight: 300,
+  },
+  escalationRow: {
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  escalationName: {
+    fontSize: typography.sm,
+    color: colors.text,
+    fontWeight: typography.medium,
+  },
+  escalationEmail: {
+    fontSize: typography.xs,
+    color: colors.textMuted,
+  },
+  escalationEmpty: {
+    fontSize: typography.sm,
+    color: colors.textMuted,
+  },
+  escalationCancel: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  escalationCancelText: {
+    fontSize: typography.sm,
+    color: colors.textMuted,
   },
 });

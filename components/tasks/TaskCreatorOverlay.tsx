@@ -774,7 +774,7 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                       accessibilityRole="button"
                       accessibilityLabel="Set deadline"
                     >
-                      <Feather name="calendar" size={16} color={trafficIconColor} />
+                      <Feather name="edit-3" size={16} color={trafficIconColor} />
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={[styles.deadlineQuickCreateBtn, isCreatingTask && styles.sheetCreateButtonDisabled]}
@@ -951,7 +951,7 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                         if (didSet) setShowCustomDeadlineAndroidModal(false);
                       }}
                     >
-                      <Feather name="calendar" size={16} color={trafficIconColor} />
+                      <Feather name="edit-3" size={16} color={trafficIconColor} />
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={[styles.deadlineQuickCreateBtn, isCreatingTask && styles.sheetCreateButtonDisabled]}

@@ -1,7 +1,7 @@
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { supabase } from '@/lib/supabase';
 import { postponeTask } from '@/lib/task-postpone';
-import { purgeTaskProofForFinalState, removeCurrentTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
+import { purgeTaskProofForFinalState, queueAiEvalForTask, removeCurrentTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
 import { syncGoogleCalendarTaskAfterDelete } from '@/lib/google-calendar-mobile-sync';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { AI_PROFILE_ID } from '@/lib/constants/ai-profile';
@@ -148,6 +148,13 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
   });
   if (eventError) console.warn('[task-actions] MARK_COMPLETE event insert failed:', eventError.message);
 
+  if (nextStatus === 'AWAITING_AI') {
+    const queueResult = await queueAiEvalForTask(taskId);
+    if (!queueResult.success) {
+      console.warn('[task-actions] AI eval queue failed:', queueResult.error);
+    }
+  }
+
   if (nextStatus === 'ACCEPTED' && (task as any).has_proof) {
     const purgeResult = await purgeTaskProofForFinalState(taskId);
     if (!purgeResult.success) {
@@ -164,6 +171,18 @@ export async function undoCompleteTask(taskId: string, fromStatus: string): Prom
 
   const now = new Date().toISOString();
   const actorUserClientInstanceId = await resolveUserClientInstanceId(userId);
+  const { data: taskSnapshot, error: taskSnapshotError } = await supabase
+    .from('tasks')
+    .select('id, voucher_id, ai_escalated_from')
+    .eq('id', taskId)
+    .eq('user_id', userId)
+    .single();
+
+  if (taskSnapshotError || !taskSnapshot) {
+    return { success: false, userId, error: taskSnapshotError?.message ?? 'Task not found.' };
+  }
+
+  const shouldRestoreAiVoucher = taskSnapshot.ai_escalated_from && taskSnapshot.voucher_id !== AI_PROFILE_ID;
 
   const { error } = await supabase
     .from('tasks')
@@ -171,6 +190,8 @@ export async function undoCompleteTask(taskId: string, fromStatus: string): Prom
       status: 'ACTIVE',
       marked_completed_at: null,
       voucher_response_deadline: null,
+      voucher_id: shouldRestoreAiVoucher ? AI_PROFILE_ID : taskSnapshot.voucher_id,
+      ai_escalated_from: shouldRestoreAiVoucher ? false : taskSnapshot.ai_escalated_from,
       updated_at: now,
     })
     .eq('id', taskId)
@@ -186,6 +207,12 @@ export async function undoCompleteTask(taskId: string, fromStatus: string): Prom
     actor_user_client_instance_id: actorUserClientInstanceId,
     from_status: fromStatus,
     to_status: 'ACTIVE',
+    metadata: shouldRestoreAiVoucher
+      ? {
+          restored_ai_voucher: true,
+          previous_human_voucher_id: taskSnapshot.voucher_id,
+        }
+      : null,
   });
   if (undoEventError) console.warn('[task-actions] UNDO_COMPLETE event insert failed:', undoEventError.message);
 

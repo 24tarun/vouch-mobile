@@ -1909,9 +1909,9 @@ export default function SettingsScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Select currency"
                 >
-                  <Text style={styles.inlineFieldLabel}>Currency</Text>
+                  <Text style={styles.inlineFieldLabel} numberOfLines={1}>Currency</Text>
                   <View style={styles.inlineFieldRight}>
-                    <Text style={styles.inlineFieldValue}>{currency}</Text>
+                    <Text style={[styles.inlineFieldValue, styles.inlineFieldValueCompact]}>{currency}</Text>
                     <Feather name="chevron-down" size={18} color={colors.textMuted} />
                   </View>
                 </TouchableOpacity>
@@ -1925,9 +1925,9 @@ export default function SettingsScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Select timezone"
                 >
-                  <Text style={styles.inlineFieldLabel}>Timezone</Text>
+                  <Text style={styles.inlineFieldLabel} numberOfLines={1}>Timezone</Text>
                   <View style={styles.inlineFieldRight}>
-                    <Text style={styles.inlineFieldValue}>{formatTimeZoneLabel(timeZone)}</Text>
+                    <Text style={[styles.inlineFieldValue, styles.inlineFieldValueCompact]}>{formatTimeZoneLabel(timeZone)}</Text>
                     <Feather name="chevron-down" size={18} color={colors.textMuted} />
                   </View>
                 </TouchableOpacity>

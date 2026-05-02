@@ -1,4 +1,4 @@
-export const AI_PROFILE_ID = '00000000-0000-0000-0000-000000000001';
+export const AI_PROFILE_ID = '11111111-1111-1111-1111-111111111111';
 export const AI_PROFILE_USERNAME = 'AI';
 export const AI_PROFILE_EMAIL = 'ai@vouch.internal';
 

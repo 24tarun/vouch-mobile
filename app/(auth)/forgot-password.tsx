@@ -34,7 +34,7 @@ export default function ForgotPasswordScreen() {
 
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(
       email.trim().toLowerCase(),
-      { redirectTo: 'vouch://reset-password' },
+      { redirectTo: 'https://tas.tarunh.com/auth/callback?next=%2Freset-password' },
     );
 
     setLoading(false);

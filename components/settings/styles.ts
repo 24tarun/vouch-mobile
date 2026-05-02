@@ -262,6 +262,9 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     minWidth: 0,
     flexShrink: 1,
   },
+  inlineFieldValueCompact: {
+    flex: 0,
+  },
   themeModeRow: {
     flexDirection: 'row',
     alignItems: 'center',

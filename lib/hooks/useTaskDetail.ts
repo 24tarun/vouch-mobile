@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import type { RecurrenceRule, Task, TaskEvent, TaskReminder } from '@/lib/types';
+import type { AiVouch, RecurrenceRule, Task, TaskEvent, TaskReminder } from '@/lib/types';
 import { SIGNED_URL_EXPIRY_SECONDS } from '@/lib/constants/timings';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
@@ -20,6 +20,7 @@ export interface TaskDetailData {
   voucherUsername: string | null;
   reminders: TaskReminder[];
   events: TaskEvent[];
+  aiVouches: AiVouch[];
   totalFocusedSeconds: number;
   proof: TaskProofData | null;
 }
@@ -31,7 +32,8 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
     .from('tasks')
     .select(`
       *,
-      voucher:profiles!tasks_voucher_id_fkey(username)
+      voucher:profiles!tasks_voucher_id_fkey(username),
+      ai_vouches(*)
     `)
     .eq('id', taskId)
     .abortSignal(signal)
@@ -114,6 +116,7 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
     voucherUsername: ((taskData as any)?.voucher?.username as string | null) ?? null,
     reminders: (remindersRes.data ?? []) as TaskReminder[],
     events: (eventsRes.data ?? []) as TaskEvent[],
+    aiVouches: (((taskData as any)?.ai_vouches ?? []) as AiVouch[]).sort((a, b) => a.attempt_number - b.attempt_number),
     totalFocusedSeconds,
     proof,
   };

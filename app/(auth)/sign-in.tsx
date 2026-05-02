@@ -23,10 +23,10 @@ async function resolveEmail(input: string): Promise<{ email: string; error: stri
   const { data, error } = await supabase
     .from('profiles')
     .select('email')
-    .eq('username', trimmed)
+    .ilike('username', trimmed)
     .maybeSingle();
-  if (error) return { email: '', error: 'Could not look up username.' };
-  if (!data?.email) return { email: '', error: 'No account found with that username.' };
+  if (error) return { email: '', error: 'Incorrect email/username or password.' };
+  if (!data?.email) return { email: '', error: 'Incorrect email/username or password.' };
   return { email: data.email, error: null };
 }
 

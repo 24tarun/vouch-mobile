@@ -81,6 +81,7 @@ export async function fetchRelationshipsData(userId: string): Promise<{
     supabase
       .from('friendships')
       .select(`
+        friend_id,
         friend:profiles!friendships_friend_id_fkey(
           id,
           username,
@@ -132,7 +133,13 @@ export async function fetchRelationshipsData(userId: string): Promise<{
   }
 
   const friends = ((friendsRes.data ?? []) as any[])
-    .map((row) => buildUserSummary(row.friend as { id?: string; username?: string | null; email?: string | null } | null))
+    .map((row) => {
+      const profile = row.friend as { id?: string; username?: string | null; email?: string | null } | null;
+      if (!profile && isAiProfileId(row.friend_id)) {
+        return buildUserSummary({ id: row.friend_id, username: AI_PROFILE_USERNAME, email: AI_PROFILE_EMAIL });
+      }
+      return buildUserSummary(profile);
+    })
     .filter((entry): entry is UserSummary => Boolean(entry))
     .sort((a, b) => a.username.localeCompare(b.username));
 

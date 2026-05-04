@@ -109,7 +109,7 @@ export function PostponeDeadlineModal({
               disableMonthPicker
               disableYearPicker
               timePicker
-              onChange={({ date: selected }) => {
+              onChange={({ date: selected }: { date?: Date | string | number | null }) => {
                 if (selected) onDateChange({} as DateTimePickerEvent, new Date(selected as string | number | Date));
               }}
               styles={pickerStyles as any}
@@ -124,7 +124,7 @@ export function PostponeDeadlineModal({
                 minDate={new Date()}
                 disableMonthPicker
                 disableYearPicker
-                onChange={({ date: selected }) => {
+                onChange={({ date: selected }: { date?: Date | string | number | null }) => {
                   if (selected) handleDateChange(new Date(selected as string | number | Date));
                 }}
                 styles={pickerStyles as any}

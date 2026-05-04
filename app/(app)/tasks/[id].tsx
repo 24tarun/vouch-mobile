@@ -1307,7 +1307,7 @@ export default function TaskDetailScreen() {
   const canSubmitAiReview = isAwaitingUserAi && hasUploadedProof && !isSubmittingAiReview;
   const canEscalateAiToFriend = isAwaitingUserAi && hasUploadedProof && !isEscalating;
   const latestAiDenialReason = (() => {
-    const aiDenials = events.filter((event) => event.event_type === 'AI_DENY');
+    const aiDenials = events.filter((event) => event.event_type === 'AI_DENIED');
     for (let i = aiDenials.length - 1; i >= 0; i -= 1) {
       const reason = getEventReason(aiDenials[i]);
       if (reason) return reason;

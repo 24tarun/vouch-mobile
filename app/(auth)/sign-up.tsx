@@ -27,6 +27,9 @@ export default function SignUpScreen() {
   const [globalError, setGlobalError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState(false);
+  const hasMinLength = password.length >= 8;
+  const hasNumber = /\d/.test(password);
+  const hasSpecialChar = /[^A-Za-z0-9]/.test(password);
 
   function deriveUsername(rawEmail: string): string {
     const prefix = rawEmail.trim().toLowerCase().split('@')[0] ?? '';
@@ -40,7 +43,9 @@ export default function SignUpScreen() {
     else if (!/\S+@\S+\.\S+/.test(email)) errors.email = 'Enter a valid email.';
 
     if (!password) errors.password = 'Password is required.';
-    else if (password.length < 6) errors.password = 'At least 6 characters.';
+    else if (!hasMinLength || !hasSpecialChar || !hasNumber) {
+      errors.password = 'Password must meet all requirements below.';
+    }
 
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
@@ -151,6 +156,17 @@ export default function SignUpScreen() {
           onSubmitEditing={handleSignUp}
           error={fieldErrors.password}
         />
+        <View style={styles.passwordRequirements}>
+          <Text style={[styles.passwordRequirement, { color: hasMinLength ? colors.success : colors.destructive }]}>
+            At least 8 characters
+          </Text>
+          <Text style={[styles.passwordRequirement, { color: hasSpecialChar ? colors.success : colors.destructive }]}>
+            At least 1 special character
+          </Text>
+          <Text style={[styles.passwordRequirement, { color: hasNumber ? colors.success : colors.destructive }]}>
+            At least 1 number
+          </Text>
+        </View>
 
         {globalError ? (
           <Text style={styles.errorBanner}>{globalError}</Text>
@@ -205,6 +221,14 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   signUpButton: {
     marginTop: spacing.xs,
+  },
+  passwordRequirements: {
+    gap: spacing.xs,
+    marginTop: -spacing.sm,
+  },
+  passwordRequirement: {
+    fontSize: typography.sm,
+    fontWeight: typography.medium,
   },
   legal: {
     marginTop: spacing.md,

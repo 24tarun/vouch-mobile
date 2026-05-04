@@ -20,14 +20,13 @@ const EVENT_LABEL: Record<string, string> = {
   OVERRIDE: 'Override applied',
   DEADLINE_MISSED: 'Deadline missed',
   VOUCHER_TIMEOUT: 'Voucher timed out',
-  POMO_COMPLETED: 'Pomodoro completed',
+  POMO_COMPLETED: 'Pomodoro',
   DEADLINE_WARNING_1H: '1h left',
   DEADLINE_WARNING_5M: '5m left',
   DEADLINE_WARNING_10M: '10m left',
   GOOGLE_EVENT_CANCELLED: 'Google event cancelled',
   POSTPONE: 'Postponed',
-  AI_APPROVE: 'AI accepted',
-  AI_DENY: 'AI denied',
+  AI_DENIED: 'AI denied',
   AI_DENIED_AUTO_HOP: 'Moved to awaiting user',
   ESCALATE: 'Escalated',
   AI_ESCALATE_TO_HUMAN: 'Escalated to human voucher',
@@ -89,7 +88,7 @@ function resolveAiDecisionDetail(
   const fromEvent = getEventReason(event);
   if (fromEvent) return fromEvent;
 
-  const targetDecision = event.event_type === 'AI_APPROVE' ? 'approved' : event.event_type === 'AI_DENY' ? 'denied' : null;
+  const targetDecision = event.event_type === 'AI_DENIED' ? 'denied' : null;
   if (!targetDecision) return null;
 
   const eventTimeMs = new Date(event.created_at).getTime();
@@ -128,12 +127,10 @@ function getEventSortPriority(event: TaskEvent): number {
       return 10;
     case 'PROOF_UPLOADED':
       return 20;
-    case 'AI_DENY':
+    case 'AI_DENIED':
       return 30;
     case 'AI_DENIED_AUTO_HOP':
       return 40;
-    case 'AI_APPROVE':
-      return 30;
     default:
       return 100;
   }
@@ -142,7 +139,10 @@ function getEventSortPriority(event: TaskEvent): number {
 function compareTimelineEvents(a: TaskEvent, b: TaskEvent): number {
   const aTime = new Date(a.created_at).getTime();
   const bTime = new Date(b.created_at).getTime();
-  if (aTime !== bTime) return aTime - bTime;
+  const aValid = Number.isFinite(aTime);
+  const bValid = Number.isFinite(bTime);
+  if (aValid && bValid && aTime !== bTime) return aTime - bTime;
+  if (aValid !== bValid) return aValid ? -1 : 1;
 
   const aPriority = getEventSortPriority(a);
   const bPriority = getEventSortPriority(b);
@@ -155,11 +155,10 @@ function getTimelineTone(event: TaskEvent): 'SUCCESS' | 'DANGER' | 'WARNING' | '
   switch (event.event_type) {
     case 'MARK_COMPLETE':
     case 'VOUCHER_ACCEPT':
-    case 'AI_APPROVE':
     case 'POMO_COMPLETED':
       return 'SUCCESS';
     case 'VOUCHER_DENY':
-    case 'AI_DENY':
+    case 'AI_DENIED':
     case 'AI_DENIED_AUTO_HOP':
     case 'DEADLINE_MISSED':
     case 'PROOF_UPLOAD_FAILED_REVERT':
@@ -226,14 +225,14 @@ function buildTimelineEntries(event: TaskEvent, aiVouches: AiVouch[], usedAiVouc
 
   switch (event.event_type) {
     case 'MARK_COMPLETE':
-      return [
-        makeTimelineEntry(event, 'action', {
-          status: 'MARKED_COMPLETE',
-          label: 'Marked Complete',
-          preserveStatus: true,
-        }),
-        ...statusTransition,
-      ];
+      return statusTransition.length > 0
+        ? statusTransition
+        : [
+            makeTimelineEntry(event, 'action', {
+              status: 'MARKED_COMPLETE',
+              preserveStatus: true,
+            }),
+          ];
     case 'UNDO_COMPLETE':
       return [
         makeTimelineEntry(event, 'action', {
@@ -246,13 +245,7 @@ function buildTimelineEntries(event: TaskEvent, aiVouches: AiVouch[], usedAiVouc
       return statusTransition;
     case 'VOUCHER_DENY':
       return statusTransition;
-    case 'AI_APPROVE':
-      return statusTransition.map((entry) => ({
-        ...entry,
-        label: 'AI Accepted',
-        detail: resolveAiDecisionDetail(event, aiVouches, usedAiVouchIds) ?? 'No reason provided by AI.',
-      }));
-    case 'AI_DENY':
+    case 'AI_DENIED':
       return [
         makeTimelineEntry(event, 'action', {
           label: 'AI Denied',
@@ -274,7 +267,7 @@ function buildTimelineEntries(event: TaskEvent, aiVouches: AiVouch[], usedAiVouc
       const elapsedSeconds = Number(event.metadata?.elapsed_seconds ?? 0);
       const durationLabel = elapsedSeconds > 0 ? ` (${formatPomoEventDuration(elapsedSeconds)})` : '';
       return [makeTimelineEntry(event, 'action', {
-        label: `Pomodoro Completed${durationLabel}`,
+        label: `Pomodoro${durationLabel}`,
         tone: 'INFO',
         renderAsPill: false,
       })];
@@ -384,8 +377,8 @@ export function TaskTimeline({ task, events, aiVouches = [] }: TaskTimelineProps
                 {!isRightSide ? (
                   <View style={styles.timelineEntryLeft}>
                     <View style={styles.timelineStemRow}>
-                      <View style={styles.timelinePillWrapLeft}>{pill}</View>
-                      <View style={[styles.timelineConnectorFixed, { backgroundColor: entryColor + '66' }]} />
+                      <View style={styles.timelinePillWrap}>{pill}</View>
+                      <View style={[styles.timelineConnector, { backgroundColor: entryColor + '66' }]} />
                     </View>
                     <Text style={styles.timelineTime}>
                       {formatTimelineTimestamp(entry.createdAt)}
@@ -441,8 +434,6 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   timelineEntryRight: { paddingBottom: spacing.md, gap: spacing.xs, alignItems: 'flex-end' },
   timelineStemRow: { flexDirection: 'row', alignItems: 'center', width: '100%' },
   timelineConnector: { flex: 1, height: 2, minWidth: 8 },
-  timelinePillWrapLeft: { flex: 1 },
-  timelineConnectorFixed: { width: 28, flexShrink: 0, height: 2 },
   timelinePillWrap: { flexShrink: 1 },
   timelineEventLabel: { fontSize: typography.sm, fontWeight: typography.semibold, lineHeight: 20 },
   timelineTime: { fontSize: typography.xs, color: colors.textMuted, lineHeight: 16 },

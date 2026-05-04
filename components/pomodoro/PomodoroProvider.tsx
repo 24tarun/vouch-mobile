@@ -211,7 +211,7 @@ export function PomodoroProvider({ children }: { children: ReactNode }) {
 
     if (session && (session.status === 'ACTIVE' || session.status === 'PAUSED')) {
       if (session.task_id !== taskId) {
-        Alert.alert('Pomodoro already running', 'One pomodoro session at a time. Stop the current session first.');
+        Alert.alert('Pomodoro already running for a different task', 'Please end the other Pomodoro to start a new one.');
       } else {
         setMinimized(false);
       }
@@ -249,7 +249,7 @@ export function PomodoroProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
 
       if (existing) {
-        Alert.alert('Pomodoro already running', 'One pomodoro session at a time. Stop the current session first.');
+        Alert.alert('Pomodoro already running for a different task', 'Please end the other Pomodoro to start a new one.');
         await refreshSession();
         return;
       }

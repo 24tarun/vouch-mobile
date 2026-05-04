@@ -817,7 +817,7 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                     minDate={new Date()}
                     disableMonthPicker
                     disableYearPicker
-                    onChange={({ date: selected }) => {
+                    onChange={({ date: selected }: { date?: Date | string | number | null }) => {
                       if (selected) {
                         const next = new Date(selected as string | number | Date);
                         next.setHours(customDeadlineDate.getHours(), customDeadlineDate.getMinutes(), 0, 0);

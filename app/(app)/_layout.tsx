@@ -21,7 +21,7 @@ interface TabConfig {
 const TABS: TabConfig[] = [
   { name: 'tasks/index',       icon: 'check-circle', title: 'Tasks'       },
   { name: 'friends/index',     icon: 'users',        title: 'Friends'     },
-  { name: 'commitments/index', icon: 'target',       title: 'Commitments' },
+  { name: 'commitments/index', icon: 'target',       title: 'Commits'     },
   { name: 'ledger/index',      icon: 'credit-card',  title: 'Ledger'      },
   { name: 'settings/index',    icon: 'settings',     title: 'Settings'    },
 ];
@@ -42,7 +42,7 @@ function TabIcon({
 
   return (
     <View style={styles.tabItem}>
-      <Feather name={icon} size={20} color={tint} />
+      <Feather name={icon} size={22} color={tint} />
       {badgeText ? (
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{badgeText}</Text>

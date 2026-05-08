@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import {
   ActivityIndicator,
+  InteractionManager,
   Keyboard,
   Modal,
   Platform,
@@ -107,6 +108,7 @@ interface TaskCreatorOverlayProps {
   recurrenceType: RecurrenceType;
   showCustomRecurrenceDays: boolean;
   onClearRecurrence: () => void;
+  onResetDeadlineAndRecurrence: () => void;
   onSelectRecurrenceType: (type: RecurrenceType) => void;
   onToggleCustomRecurrenceDays: () => void;
   recurrenceDays: number[];
@@ -190,6 +192,7 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
   recurrenceType,
   showCustomRecurrenceDays,
   onClearRecurrence,
+  onResetDeadlineAndRecurrence,
   onSelectRecurrenceType,
   onToggleCustomRecurrenceDays,
   recurrenceDays,
@@ -276,6 +279,20 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
       setContentVisible(false);
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (!visible || !contentVisible) return;
+
+    const interactionTask = InteractionManager.runAfterInteractions(() => {
+      titleInputRef.current?.focus();
+      // Retry once on the next frame in case the initial focus races layout.
+      requestAnimationFrame(() => titleInputRef.current?.focus());
+    });
+
+    return () => {
+      interactionTask.cancel();
+    };
+  }, [visible, contentVisible, titleInputRef]);
 
   useEffect(() => {
     latestCustomDeadlineDateRef.current = customDeadlineDate;
@@ -754,16 +771,16 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                   ) : null}
                   <View style={[styles.reminderPickerActions, styles.deadlineModalActions]}>
                     <TouchableOpacity
-                      style={styles.deadlineModalTrafficCancelBtn}
+                      style={[styles.deadlineModalActionButton, styles.deadlineModalActionResetButton]}
                       activeOpacity={0.8}
-                      onPress={() => setShowCustomDeadlineIosModal(false)}
+                      onPress={onResetDeadlineAndRecurrence}
                       accessibilityRole="button"
-                      accessibilityLabel="Cancel deadline picker"
+                      accessibilityLabel="Reset deadline and repetition"
                     >
-                      <Feather name="x" size={16} color={trafficIconColor} />
+                      <Text style={styles.deadlineModalActionResetText}>Reset</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={styles.deadlineModalSetBtn}
+                      style={[styles.deadlineModalActionButton, styles.deadlineModalActionApplyButton]}
                       activeOpacity={0.85}
                       onPress={() => {
                         const didSet = onConfirmCustomDeadline(resolveLatestCustomDeadlineDate());
@@ -772,27 +789,9 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                         }
                       }}
                       accessibilityRole="button"
-                      accessibilityLabel="Set deadline"
+                      accessibilityLabel="Apply deadline and repetition"
                     >
-                      <Feather name="edit-3" size={16} color={trafficIconColor} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.deadlineQuickCreateBtn, isCreatingTask && styles.sheetCreateButtonDisabled]}
-                      activeOpacity={0.85}
-                      disabled={isCreatingTask}
-                      onPress={() => {
-                        const didSet = onConfirmCustomDeadline(resolveLatestCustomDeadlineDate());
-                        if (!didSet) return;
-                        setShowCustomDeadlineIosModal(false);
-                        onCreate(resolveLatestCustomDeadlineDate());
-                      }}
-                      accessibilityRole="button"
-                      accessibilityLabel="Set deadline and create task"
-                    >
-                      {isCreatingTask
-                        ? <ActivityIndicator size="small" color={trafficIconColor} />
-                        : <Feather name="check" size={16} color={trafficIconColor} />
-                      }
+                      <Text style={styles.deadlineModalActionApplyText}>Apply</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -937,37 +936,25 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                   {/* Action buttons */}
                   <View style={[styles.reminderPickerActions, styles.deadlineModalActions]}>
                     <TouchableOpacity
-                      style={styles.deadlineModalTrafficCancelBtn}
+                      style={[styles.deadlineModalActionButton, styles.deadlineModalActionResetButton]}
                       activeOpacity={0.8}
-                      onPress={() => setShowCustomDeadlineAndroidModal(false)}
+                      onPress={onResetDeadlineAndRecurrence}
+                      accessibilityRole="button"
+                      accessibilityLabel="Reset deadline and repetition"
                     >
-                      <Feather name="x" size={16} color={trafficIconColor} />
+                      <Text style={styles.deadlineModalActionResetText}>Reset</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={styles.deadlineModalSetBtn}
+                      style={[styles.deadlineModalActionButton, styles.deadlineModalActionApplyButton]}
                       activeOpacity={0.85}
                       onPress={() => {
                         const didSet = onConfirmCustomDeadline(customDeadlineDate);
                         if (didSet) setShowCustomDeadlineAndroidModal(false);
                       }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Apply deadline and repetition"
                     >
-                      <Feather name="edit-3" size={16} color={trafficIconColor} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.deadlineQuickCreateBtn, isCreatingTask && styles.sheetCreateButtonDisabled]}
-                      activeOpacity={0.85}
-                      disabled={isCreatingTask}
-                      onPress={() => {
-                        const didSet = onConfirmCustomDeadline(customDeadlineDate);
-                        if (!didSet) return;
-                        setShowCustomDeadlineAndroidModal(false);
-                        onCreate(customDeadlineDate);
-                      }}
-                    >
-                      {isCreatingTask
-                        ? <ActivityIndicator size="small" color={trafficIconColor} />
-                        : <Feather name="check" size={16} color={trafficIconColor} />
-                      }
+                      <Text style={styles.deadlineModalActionApplyText}>Apply</Text>
                     </TouchableOpacity>
                   </View>
                 </View>

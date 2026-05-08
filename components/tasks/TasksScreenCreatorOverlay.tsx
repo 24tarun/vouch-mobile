@@ -585,6 +585,13 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     setRecurrenceDays([]);
   }
 
+  function resetDeadlineAndRecurrenceSelection() {
+    const nextDeadline = buildDefaultDeadlineDate();
+    setDeadlineDate(nextDeadline);
+    setCustomDeadlineDate(nextDeadline);
+    clearRecurrenceSelection();
+  }
+
   function toggleCustomRecurrenceDays() {
     setRecurrenceType('WEEKLY');
     setShowCustomRecurrenceDays((prev) => !prev);
@@ -1164,6 +1171,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
         recurrenceType={recurrenceType}
         showCustomRecurrenceDays={showCustomRecurrenceDays}
         onClearRecurrence={clearRecurrenceSelection}
+        onResetDeadlineAndRecurrence={resetDeadlineAndRecurrenceSelection}
         onSelectRecurrenceType={selectRecurrenceType}
         onToggleCustomRecurrenceDays={toggleCustomRecurrenceDays}
         recurrenceDays={recurrenceDays}

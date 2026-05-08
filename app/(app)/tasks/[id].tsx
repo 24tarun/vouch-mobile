@@ -1839,7 +1839,9 @@ export default function TaskDetailScreen() {
                             accessibilityLabel="Delete subtask"
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             style={styles.subtaskDeleteCircle}
-                          />
+                          >
+                            <Feather name="trash-2" size={14} color={colors.destructive} />
+                          </TouchableOpacity>
                         </View>
                       ))
                     )}
@@ -2279,7 +2281,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   subtaskCircleCompleted: { borderColor: colors.success, backgroundColor: colors.successMuted },
   subtaskItemTitle: { flex: 1, fontSize: typography.sm, color: colors.text, lineHeight: 20 },
   subtaskItemTitleCompleted: { textDecorationLine: 'line-through', color: colors.textMuted },
-  subtaskDeleteCircle: { width: 18, height: 18, borderRadius: 9, backgroundColor: colors.destructive, borderWidth: 1, borderColor: '#00000024', flexShrink: 0, marginTop: 2 },
+  subtaskDeleteCircle: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 },
   subtaskConfirmCircle: { width: 18, height: 18, borderRadius: 9, backgroundColor: colors.success, borderWidth: 1, borderColor: '#00000024', flexShrink: 0 },
   subtaskAddRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm, gap: spacing.sm },
   subtaskInput: { flex: 1, fontSize: typography.sm, color: colors.text, paddingVertical: 0 },

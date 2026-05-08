@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { File, Paths } from 'expo-file-system';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
@@ -336,6 +336,7 @@ function SettingsRow({
 export default function SettingsScreen() {
   const { colors, theme, setTheme } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
   const { user, profile } = useAuth();
   const queryClient = useQueryClient();
   const relationshipsQuery = useRelationships(user?.id);
@@ -2203,7 +2204,7 @@ export default function SettingsScreen() {
       >
         <View style={styles.modalBackdrop}>
           <Pressable style={styles.backdropTapTarget} onPress={() => setActivePicker(null)} />
-          <View style={styles.pickerSheet}>
+          <View style={[styles.pickerSheet, insets.bottom > 0 && { paddingBottom: 16 + insets.bottom }]}>
             <View style={styles.pickerHeader}>
               <Text style={styles.pickerTitle}>{pickerTitle}</Text>
               <TouchableOpacity onPress={() => setActivePicker(null)} activeOpacity={0.75}>

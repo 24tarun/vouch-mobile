@@ -529,7 +529,7 @@ export const TaskRow = memo(function TaskRow({
         <View style={styles.expandedPanel}>
           <View style={styles.actions}>
             <TouchableOpacity
-              style={styles.actionBtn}
+              style={[styles.actionBtn, styles.leadingActionBtnAligned]}
               activeOpacity={0.65}
               accessibilityLabel={task.has_proof ? 'Replace proof' : 'Attach proof'}
               onPress={openProofSourcePicker}
@@ -583,7 +583,7 @@ export const TaskRow = memo(function TaskRow({
               )}
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.actionBtn}
+              style={[styles.actionBtn, styles.trailingActionBtnAligned]}
               activeOpacity={0.65}
               accessibilityLabel="Open detail"
               onPress={openDetail}
@@ -614,7 +614,9 @@ export const TaskRow = memo(function TaskRow({
                   activeOpacity={0.7}
                   accessibilityLabel="Delete subtask"
                   style={styles.subtaskDeleteCircle}
-                />
+                >
+                  <Feather name="trash-2" size={14} color={colors.destructive} />
+                </TouchableOpacity>
               </View>
             ))}
 
@@ -781,6 +783,12 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  leadingActionBtnAligned: {
+    marginLeft: -6,
+  },
+  trailingActionBtnAligned: {
+    marginRight: -6,
+  },
   actionBtnActive: {
     borderRadius: radius.full,
     backgroundColor: '#22D3EE14',
@@ -791,15 +799,8 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   subtaskDeleteCircle: {
     width: 18,
     height: 18,
-    borderRadius: 9,
-    backgroundColor: colors.destructive,
-    borderWidth: 1,
-    borderColor: '#00000024',
-    shadowColor: colors.destructive,
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   subtaskConfirmCircle: {
     width: 18,
@@ -839,6 +840,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+    marginLeft: 2,
   },
   subtaskCircleCompleted: {
     borderColor: colors.success,

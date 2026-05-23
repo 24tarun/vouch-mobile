@@ -20,11 +20,7 @@
     },
     "production": {
       "extends": "base",
-      "autoIncrement": true,
-      "env": {
-        "EXPO_NO_DOCTOR": "1",
-        "NODE_ENV": "production"
-      }
+      "autoIncrement": true
     }
   },
   "submit": {

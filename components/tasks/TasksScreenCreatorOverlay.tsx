@@ -37,6 +37,7 @@ import type { FriendOption } from '@/lib/hooks/useFriends';
 import type { TaskRowData } from '@/components/TaskRow';
 import type { Currency } from '@/lib/types';
 import { AI_PROFILE_ID, normalizeAiUsername } from '@/lib/constants/ai-profile';
+import { useAiVoucherLimit } from '@/lib/hooks/useAiVoucherLimit';
 
 interface CreatorAnchor {
   x: number;
@@ -238,6 +239,8 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   const [voucherPickerOpen, setVoucherPickerOpen] = useState(false);
   const [voucherAnchor, setVoucherAnchor] = useState<{ pageX: number; pageY: number; width: number; buttonHeight: number } | null>(null);
   const [voucherDropdownHeight, setVoucherDropdownHeight] = useState(300);
+
+  const aiVoucherLimitReached = useAiVoucherLimit(currentUserId ?? null);
 
   const currencySymbol = friendProfile?.currency === 'EUR' ? '\u20AC'
     : friendProfile?.currency === 'INR' ? '\u20B9'
@@ -1205,6 +1208,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
         friendsLoading={friendsLoading}
         friendsError={friendsError}
         filteredFriends={filteredFriends}
+        aiLimitReached={aiVoucherLimitReached}
       />
     </>
   );

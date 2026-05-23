@@ -15,6 +15,31 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     paddingVertical: spacing.lg,
     paddingBottom: spacing.xxl,
   },
+  manageFriendsHeader: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: spacing.xs,
+  },
+  manageFriendsBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    alignSelf: 'flex-start',
+  },
+  manageFriendsBackText: {
+    color: colors.textMuted,
+    fontSize: typography.sm,
+    fontWeight: typography.medium,
+  },
+  manageFriendsTitle: {
+    color: colors.text,
+    fontSize: typography.xl,
+    fontWeight: typography.bold,
+    letterSpacing: -0.5,
+  },
 
   // Account card
   accountContent: {
@@ -92,8 +117,8 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   rowTinted: {
     borderWidth: 1,
-    borderColor: '#7F1D1D66',
-    backgroundColor: '#450A0A26',
+    borderColor: colors.destructive + '66',
+    backgroundColor: colors.destructiveMuted + '26',
     borderRadius: radius.md,
     marginTop: spacing.sm,
     paddingHorizontal: spacing.md,
@@ -114,6 +139,22 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     color: colors.text,
     fontWeight: typography.normal,
     flexShrink: 1,
+  },
+  manageFriendsRow: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface2,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  manageFriendsRowText: {
+    fontSize: typography.base,
+    color: colors.text,
+    fontWeight: typography.medium,
   },
   settingsBlock: {
     gap: spacing.sm,
@@ -479,7 +520,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     justifyContent: 'center',
   },
   friendButtonDestructive: {
-    borderColor: '#7F1D1D',
+    borderColor: colors.destructive,
     backgroundColor: colors.destructiveMuted,
   },
   friendButtonDisabled: {
@@ -491,7 +532,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontWeight: typography.semibold,
   },
   friendButtonTextDestructive: {
-    color: '#FCA5A5',
+    color: colors.destructive,
   },
   friendStateLabel: {
     fontSize: typography.sm,

@@ -142,8 +142,8 @@ function getInitials(username: string): string {
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
 const FriendAvatar = memo(function FriendAvatar({ username, size = 34 }: { username: string; size?: number }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   return (
     <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: getAvatarColor(username) }]}>
       <Text style={[styles.avatarText, { fontSize: Math.round(size * 0.38) }]}>
@@ -165,8 +165,8 @@ function CatPlaceholder({ seed }: { seed: string }) {
 // ─── Video player ─────────────────────────────────────────────────────────────
 
 function VideoProofPlayer({ signedUrl, overlayTimestampText }: { signedUrl: string; overlayTimestampText: string }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const player = useVideoPlayer(signedUrl, (p) => { p.loop = false; p.muted = false; });
   const [playing, setPlaying] = useState(false);
 
@@ -195,8 +195,8 @@ function VideoProofPlayer({ signedUrl, overlayTimestampText }: { signedUrl: stri
 // ─── Media box ────────────────────────────────────────────────────────────────
 
 function MediaBox({ proof, taskId, onExpand }: { proof: TaskProof | null; taskId: string; onExpand: () => void }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const filename = proof ? (proof.mediaKind === 'video' ? 'proof_video.mp4' : 'proof_photo.jpg') : null;
   const mediaKey = proof
     ? `${taskId}:${proof.mediaKind}:${proof.signedUrl}`
@@ -263,8 +263,8 @@ function DeckActions({
   onProof: () => void;
   onNext: () => void;
 }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const busy = Boolean(inFlightAction);
   const dimmed = !isActionable;
   const trafficIconColor = '#0f172a';
@@ -350,8 +350,8 @@ function CardContent({
   onCycle: () => void;
   onExpand: (proof: TaskProof) => void;
 }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const username = friend?.username ?? 'Unknown';
   return (
     <>
@@ -425,8 +425,8 @@ function FriendDeck({
   onProof: (t: VoucherTaskRow) => void;
   onExpand: (proof: TaskProof) => void;
 }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const swiperRef = useRef<SwiperCardRefType>(undefined);
   const pendingIntentRef = useRef<DeckIntent | null>(null);
   const pendingTaskIdRef = useRef<string | null>(null);
@@ -587,8 +587,8 @@ const HistoryRow = memo(function HistoryRow({
   onPress: () => void;
   onRectify: () => void;
 }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const username = task.user?.username ?? 'Unknown';
   return (
     <TouchableOpacity style={styles.historyRow} activeOpacity={0.75} onPress={onPress} accessibilityRole="button">
@@ -621,7 +621,8 @@ const HistoryRow = memo(function HistoryRow({
 });
 
 const ActiveRow = memo(function ActiveRow({ task }: { task: VoucherTaskRow }) {
-  const styles = makeStyles(useTheme().colors);
+  const { colors: c, isDark: dk } = useTheme();
+  const styles = makeStyles(c, dk);
   const username = task.user?.username ?? 'Unknown';
   return (
     <View style={styles.activeRow}>
@@ -642,8 +643,8 @@ const ActiveRow = memo(function ActiveRow({ task }: { task: VoucherTaskRow }) {
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function FriendsScreen() {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -1204,7 +1205,7 @@ const CARD_RADIUS = 16;
 const MEDIA_MIN_HEIGHT = 176;
 const MEDIA_MAX_HEIGHT = 248;
 
-const makeStyles = (colors: Colors) => StyleSheet.create({
+const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.bg,

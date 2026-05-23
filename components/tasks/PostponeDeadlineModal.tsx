@@ -38,8 +38,8 @@ export function PostponeDeadlineModal({
   onDateChange,
   onConfirm,
 }: PostponeDeadlineModalProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const [androidDraftDate, setAndroidDraftDate] = useState<Date>(date);
 
   useEffect(() => {

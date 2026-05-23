@@ -19,6 +19,7 @@ import { File, Paths } from 'expo-file-system';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import {
@@ -39,8 +40,6 @@ import {
 import { getFailureCostBounds } from '@/lib/domain/failure-cost';
 import { ACTIVE_VOUCHER_TASK_STATUSES } from '@/lib/constants/task-status';
 import { normalizePomoDurationMinutes } from '@/lib/constants/timings';
-import { FriendsSection } from '@/components/settings/FriendsSection';
-import { BlockedUsersSection } from '@/components/settings/BlockedUsersSection';
 import { CalendarSyncSection } from '@/components/settings/CalendarSyncSection';
 import { useRelationships, type RelationshipsData } from '@/lib/hooks/useRelationships';
 import { useBlockedUsers } from '@/lib/hooks/useBlockedUsers';
@@ -90,6 +89,7 @@ const POMO_MAX_MINUTES = 120;
 const EVENT_DURATION_MIN_MINUTES = 0;
 const EVENT_DURATION_MAX_MINUTES = 1000;
 const EVENT_DURATION_FALLBACK_MINUTES = 60;
+const SHOW_CALENDAR_SYNC = false;
 const ACCOUNT_DELETE_FALLBACK_URL = `${WEBSITE_URL}/settings`;
 const ACCOUNT_DELETE_API_URL = `${WEBSITE_URL}/api/account/delete`;
 const CURRENCY_OPTIONS: PickerOption[] = [
@@ -334,7 +334,8 @@ function SettingsRow({
 }
 
 export default function SettingsScreen() {
-  const { colors, theme, setTheme } = useTheme();
+  const router = useRouter();
+  const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { user, profile } = useAuth();
@@ -1821,262 +1822,51 @@ export default function SettingsScreen() {
         />
 
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Appearance</Text>
           <View style={styles.card}>
-            <View style={styles.themeModeRow}>
-              {[
-                { key: 'system', label: 'System' },
-                { key: 'dark', label: 'Dark' },
-                { key: 'light', label: 'Light' },
-              ].map((mode) => {
-                const selected = theme === mode.key;
-                return (
-                  <TouchableOpacity
-                    key={mode.key}
-                    style={[styles.themeModeButton, selected && styles.themeModeButtonActive]}
-                    activeOpacity={0.85}
-                    onPress={() => setTheme(mode.key as 'system' | 'dark' | 'light')}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Set theme to ${mode.label}`}
-                    accessibilityState={{ selected }}
-                  >
-                    <Text style={[styles.themeModeButtonText, selected && styles.themeModeButtonTextActive]}>
-                      {mode.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        </View>
-
-        <FriendsSection
-          friendSearchQuery={friendSearchQuery}
-          setFriendSearchQuery={setFriendSearchQuery}
-          friendSearchLoading={friendSearchLoading}
-          friendSearchError={friendSearchError}
-          friendSearchResults={friendSearchResults}
-          relationshipsError={relationshipsError}
-          relationshipsLoading={relationshipsLoading}
-          incomingRequests={incomingRequests}
-          outgoingRequests={outgoingRequests}
-          friends={friends}
-          relationshipInFlight={relationshipInFlight}
-          onSendFriendRequest={handleSendFriendRequest}
-          onBlockRelationshipUser={handleBlockRelationshipUser}
-          onAcceptFriendRequest={handleAcceptFriendRequest}
-          onRejectFriendRequest={handleRejectFriendRequest}
-          onWithdrawFriendRequest={handleWithdrawFriendRequest}
-          onRemoveFriend={handleRemoveFriend}
-        />
-
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Defaults</Text>
-          <View style={styles.card}>
-            <View style={styles.defaultsContent}>
-              <View style={styles.defaultsField}>
-                <View style={styles.inlineField}>
-                  <Text style={styles.inlineFieldLabel}>Email</Text>
-                  <Text style={styles.inlineFieldValue} numberOfLines={1}>{profile?.email ?? ''}</Text>
-                </View>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <View style={styles.inlineField}>
-                  <Text style={styles.inlineFieldLabel}>Username</Text>
-                  <TextInput
-                    style={styles.inlineFieldInput}
-                    placeholder="username"
-                    placeholderTextColor={colors.textSubtle}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    value={usernameDraft}
-                    onChangeText={(value) => {
-                      setUsernameDraft(value);
-                      setUsernameError(null);
-                    }}
-                  />
-                </View>
-              </View>
-
-              {savingUsername ? <Text style={styles.savingText}>Saving username...</Text> : null}
-              {usernameError ? <Text style={styles.errorText}>{usernameError}</Text> : null}
-
-              <View style={styles.defaultsField}>
-                <TouchableOpacity
-                  style={styles.inlineFieldButton}
-                  onPress={() => setActivePicker('currency')}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Select currency"
-                >
-                  <Text style={styles.inlineFieldLabel} numberOfLines={1}>Currency</Text>
-                  <View style={styles.inlineFieldRight}>
-                    <Text style={[styles.inlineFieldValue, styles.inlineFieldValueCompact]}>{currency}</Text>
-                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <TouchableOpacity
-                  style={styles.inlineFieldButton}
-                  onPress={() => setActivePicker('timezone')}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Select timezone"
-                >
-                  <Text style={styles.inlineFieldLabel} numberOfLines={1}>Timezone</Text>
-                  <View style={styles.inlineFieldRight}>
-                    <Text style={[styles.inlineFieldValue, styles.inlineFieldValueCompact]}>{formatTimeZoneLabel(timeZone)}</Text>
-                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <View style={styles.inlineField}>
-                  <Text style={styles.inlineFieldLabel}>Default pomo duration (mins)</Text>
-                  <TextInput
-                    style={styles.inlineFieldInput}
-                    placeholder={`${POMO_MIN_MINUTES}`}
-                    placeholderTextColor={colors.textSubtle}
-                    keyboardType="number-pad"
-                    value={defaultPomoInput}
-                    onChangeText={(value) => {
-                      setDefaultPomoInput(value);
-                      setDefaultsError(null);
-                    }}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <View style={styles.inlineField}>
-                  <Text style={styles.inlineFieldLabel}>Default time-bound duration (mins)</Text>
-                  <TextInput
-                    style={styles.inlineFieldInput}
-                    placeholder={`${EVENT_DURATION_FALLBACK_MINUTES}`}
-                    placeholderTextColor={colors.textSubtle}
-                    keyboardType="number-pad"
-                    value={defaultEventDurationInput}
-                    onChangeText={(value) => {
-                      setDefaultEventDurationInput(value);
-                      setDefaultsError(null);
-                    }}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <View style={styles.inlineField}>
-                  <Text style={styles.inlineFieldLabel}>{`Default failure cost (${currencySymbol})`}</Text>
-                  <TextInput
-                    style={styles.inlineFieldInput}
-                    placeholder={`${failureCostBounds.minMajor}`}
-                    placeholderTextColor={colors.textSubtle}
-                    keyboardType={currency === 'INR' ? 'number-pad' : 'decimal-pad'}
-                    value={defaultFailureCostInput}
-                    onChangeText={(value) => {
-                      setDefaultFailureCostInput(value);
-                      setDefaultsError(null);
-                    }}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <TouchableOpacity
-                  style={styles.inlineFieldButton}
-                  onPress={() => setActivePicker('voucher')}
-                  activeOpacity={0.8}
-                  disabled={voucherLoading}
-                  accessibilityRole="button"
-                  accessibilityLabel="Select default voucher"
-                >
-                  <Text style={styles.inlineFieldLabel}>Default voucher</Text>
-                  <View style={styles.inlineFieldRight}>
-                    <Text style={styles.inlineFieldValue}>
-                      {voucherLoading ? 'Loading vouchers...' : defaultVoucherLabel}
-                    </Text>
-                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <TouchableOpacity
-                  style={styles.inlineFieldButton}
-                  onPress={() => setActivePicker('notificationSound')}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Select notification sound"
-                >
-                  <Text style={styles.inlineFieldLabel}>Notification sound</Text>
-                  <View style={styles.inlineFieldRight}>
-                    <Text style={styles.inlineFieldValue}>{notificationSoundLabel}</Text>
-                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}>
-                  <Text style={styles.toggleTitle}>1 hour reminder</Text>
-                </View>
-                <Switch
-                  value={oneHourReminderEnabled}
-                  onValueChange={setOneHourReminderEnabled}
-                  trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                  thumbColor={colors.text}
-                />
-              </View>
-
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}>
-                  <Text style={styles.toggleTitle}>10 minute reminder</Text>
-                </View>
-                <Switch
-                  value={tenMinuteReminderEnabled}
-                  onValueChange={setTenMinuteReminderEnabled}
-                  trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                  thumbColor={colors.text}
-                />
-              </View>
-
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}>
-                  <Text style={styles.toggleTitle}>Require proof for all new tasks</Text>
-                </View>
-                <Switch
-                  value={defaultRequiresProofForAllTasks}
-                  onValueChange={setDefaultRequiresProofForAllTasks}
-                  trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                  thumbColor={colors.text}
-                />
-              </View>
-
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}>
-                  <Text style={styles.toggleTitle}>Allow vouchers to view my active tasks</Text>
-                </View>
-                <Switch
-                  value={voucherCanViewActiveTasks}
-                  onValueChange={setVoucherCanViewActiveTasks}
-                  trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                  thumbColor={colors.text}
-                />
-              </View>
-
-              {savingDefaults || savingVoucherVisibility ? <Text style={styles.savingText}>Saving...</Text> : null}
-              {defaultsError ? <Text style={styles.errorText}>{defaultsError}</Text> : null}
-              {voucherVisibilityError ? <Text style={styles.errorText}>{voucherVisibilityError}</Text> : null}
-            </View>
+            <TouchableOpacity
+              style={styles.manageFriendsRow}
+              onPress={() => router.push('/settings/theme')}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Open themes"
+            >
+              <Text style={styles.manageFriendsRowText}>Themes</Text>
+              <Feather name="chevron-right" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
           </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Charity Choice</Text>
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={styles.manageFriendsRow}
+              onPress={() => router.push('/settings/manage-friends')}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Manage friends"
+            >
+              <Text style={styles.manageFriendsRowText}>Manage Friends</Text>
+              <Feather name="chevron-right" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={styles.manageFriendsRow}
+              onPress={() => router.push('/settings/defaults')}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Open defaults"
+            >
+              <Text style={styles.manageFriendsRowText}>Defaults</Text>
+              <Feather name="chevron-right" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.section}>
           <View style={styles.card}>
             <View style={styles.defaultsContent}>
               <View style={styles.toggleRow}>
@@ -2126,7 +1916,6 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>AI-Features</Text>
           <View style={styles.card}>
             <View style={styles.defaultsContent}>
               <View style={styles.toggleRow}>
@@ -2147,18 +1936,12 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        <BlockedUsersSection
-          blockedUsersLoading={blockedUsersLoading}
-          blockedUsersError={blockedUsersError}
-          blockedUsers={blockedUsers}
-          unblockingUserId={unblockingUserId}
-          onUnblockUser={handleUnblockUser}
-        />
-
-        <CalendarSyncSection
-          onSavingStateChange={setCalendarSaving}
-          onSaveSuccess={() => setSaveSuccessTick((current) => current + 1)}
-        />
+        {SHOW_CALENDAR_SYNC ? (
+          <CalendarSyncSection
+            onSavingStateChange={setCalendarSaving}
+            onSaveSuccess={() => setSaveSuccessTick((current) => current + 1)}
+          />
+        ) : null}
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Account</Text>

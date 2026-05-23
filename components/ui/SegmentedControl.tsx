@@ -151,10 +151,10 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     letterSpacing: 0.15,
   },
   segLabelSignalActive: {
-    color: '#FFFFFF',
+    color: colors.text,
   },
   segLabelSignalInactive: {
-    color: 'rgba(255,255,255,0.72)',
+    color: colors.textMuted,
   },
   segLabelActive: {
     color: colors.text,
@@ -176,7 +176,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   segSignalCount: {
     fontSize: 9,
     fontWeight: typography.bold,
-    color: '#FFFFFF',
+    color: '#fff',
     lineHeight: 10,
     includeFontPadding: false,
   },

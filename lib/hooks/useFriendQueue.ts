@@ -124,7 +124,7 @@ async function fetchProofsForTasks(
   return result;
 }
 
-async function fetchFriendQueue(userId: string, signal?: AbortSignal): Promise<VoucherTaskRow[]> {
+export async function fetchFriendQueue(userId: string, signal?: AbortSignal): Promise<VoucherTaskRow[]> {
   const { data, error } = await supabase
     .from('tasks')
     .select(`

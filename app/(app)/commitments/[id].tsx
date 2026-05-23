@@ -29,8 +29,8 @@ import {
 } from '@/components/commitments/shared';
 
 export default function CommitmentDetailScreen() {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -330,7 +330,7 @@ export default function CommitmentDetailScreen() {
   );
 }
 
-const makeStyles = (colors: Colors) => StyleSheet.create({
+const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   header: {
@@ -399,7 +399,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     marginBottom: spacing.sm,
   },
   metricValueRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, flexWrap: 'wrap' },
-  metricPrimary: { fontSize: typography.xl, fontWeight: typography.normal, color: '#00ffd5' },
+  metricPrimary: { fontSize: typography.xl, fontWeight: typography.normal, color: isDark ? '#00ffd5' : '#0d9488' },
   metricSecondary: { fontSize: typography.lg, fontWeight: typography.normal, color: colors.destructive },
   metricSlash: {
     fontSize: typography.xxl,

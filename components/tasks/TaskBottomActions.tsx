@@ -27,7 +27,7 @@ export function TaskBottomActions({
   bottomOffset,
 }: TaskBottomActionsProps) {
   const { colors, isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const trafficIconColor = isDark ? '#0b1329' : '#0f172a';
   const actionDisabled = overlayOpen;
 

@@ -208,7 +208,7 @@ export interface AiVouch {
   decision: 'approved' | 'denied';
   reason: string | null;
   approved_at: string | null;
-  created_at: string;
+  vouched_at: string;
 }
 
 export interface LedgerEntry {

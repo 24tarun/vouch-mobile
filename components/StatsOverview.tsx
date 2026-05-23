@@ -58,48 +58,48 @@ export function StatsOverview({
   loading = false,
   error = null,
 }: StatsOverviewProps) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
   const stats = useMemo(
     () => [
       {
         label: 'Total Tasks',
         value: loading ? '—' : String(totalTasks ?? 0),
-        valueColor: '#60A5FA',
+        valueColor: isDark ? '#60A5FA' : '#2563EB',
         glowColor: 'rgba(96,165,250,0.45)',
       },
       {
         label: 'Accepted',
         value: loading ? '—' : String(accepted ?? 0),
-        valueColor: '#BEF264',
+        valueColor: isDark ? '#BEF264' : '#65A30D',
         glowColor: 'rgba(190,242,100,0.45)',
       },
       {
         label: 'Denied',
         value: loading ? '—' : String(denied ?? 0),
-        valueColor: '#F87171',
+        valueColor: isDark ? '#F87171' : '#DC2626',
         glowColor: 'rgba(248,113,113,0.45)',
       },
       {
         label: 'Missed',
         value: loading ? '—' : String(missed ?? 0),
-        valueColor: '#FB7185',
+        valueColor: isDark ? '#FB7185' : '#E11D48',
         glowColor: 'rgba(251,113,133,0.45)',
       },
       {
         label: 'Total Vouched',
         value: loading ? '—' : String(totalVouched ?? 0),
-        valueColor: '#C084FC',
+        valueColor: isDark ? '#C084FC' : '#7C3AED',
         glowColor: 'rgba(192,132,252,0.45)',
       },
       {
         label: 'Time Focused',
         value: loading ? '—' : formatFocusedTime(focusedSeconds),
-        valueColor: '#22D3EE',
+        valueColor: isDark ? '#22D3EE' : '#0891B2',
         glowColor: 'rgba(34,211,238,0.45)',
       },
     ],
-    [loading, totalTasks, accepted, denied, missed, totalVouched, focusedSeconds],
+    [loading, totalTasks, accepted, denied, missed, totalVouched, focusedSeconds, isDark],
   );
 
   return (

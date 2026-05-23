@@ -107,8 +107,10 @@ export default function TasksScreen() {
 
   const bottomDockOffset = spacing.xl + spacing.sm + spacing.xs;
   const bottomDockReservedInset = bottomDockOffset + bottomActionsHeight + spacing.sm;
-  const creatorTargetTop = Math.max(insets.top + spacing.md, Math.round(screenHeight * 0.17));
-  const creatorTargetHeight = Math.max(200, screenHeight - creatorTargetTop);
+  const creatorTargetTop = 0;
+  const creatorTargetHeight = screenHeight;
+  const searchTargetTop = insets.top;
+  const searchTargetHeight = screenHeight - insets.top;
   const sortMenuWidth = Math.min(screenWidth - spacing.lg * 2, 320);
 
   const displayName = (authProfile?.username ?? 'there').trim() || 'there';
@@ -555,8 +557,8 @@ export default function TasksScreen() {
         anchor={creatorAnchor}
         expandProgress={expandProgress}
         screenWidth={screenWidth}
-        targetTop={creatorTargetTop}
-        targetHeight={creatorTargetHeight}
+        targetTop={searchTargetTop}
+        targetHeight={searchTargetHeight}
         onClose={closeOverlay}
       />
       <TasksScreenSortMenu

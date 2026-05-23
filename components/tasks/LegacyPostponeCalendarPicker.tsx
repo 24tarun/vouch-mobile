@@ -26,8 +26,8 @@ export function LegacyPostponeCalendarPicker({
   onAndroidTimeChange,
   onConfirm,
 }: LegacyPostponeCalendarPickerProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   return (
     <Modal
       visible={task !== null}

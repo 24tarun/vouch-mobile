@@ -67,8 +67,8 @@ export function TaskContent({
   onSubtaskComposerFocus,
   proofUploadTaskId = null,
 }: TaskContentProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const router = useRouter();
   const baseInset = bottomInsetOffset + 24;
   const computedBottomInset = keyboardBottomInset > 0

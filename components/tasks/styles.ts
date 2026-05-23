@@ -1,7 +1,7 @@
 import { StyleSheet } from 'react-native';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 
-const makeStyles = (colors: Colors) => StyleSheet.create({
+const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.bg,
@@ -130,8 +130,8 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     backgroundColor: 'transparent',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 0,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 14,
   },
   creatorTitleFieldFocused: {
     borderBottomColor: colors.accentCyan,
@@ -139,9 +139,9 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   creatorTitleInput: {
     color: colors.text,
-    fontSize: 19,
-    fontWeight: typography.medium,
-    lineHeight: 22,
+    fontSize: 22,
+    fontWeight: typography.semibold,
+    lineHeight: 26,
     paddingVertical: 0,
     paddingHorizontal: 0,
     flex: 1,
@@ -177,8 +177,9 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   searchSheetInput: {
     flex: 1,
     color: colors.text,
-    fontSize: typography.sm,
+    fontSize: typography.base,
     paddingVertical: 0,
+    paddingLeft: 2,
   },
   searchSheetClose: {
     width: 32,
@@ -229,13 +230,13 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   sortDropdown: {
     position: 'absolute',
-    backgroundColor: '#0b1a38',
+    backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: '#20345d',
+    borderColor: colors.borderStrong,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOpacity: 0.35,
+    shadowOpacity: isDark ? 0.35 : 0.15,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
     elevation: 14,
@@ -252,7 +253,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   sortDropdownText: {
     flex: 1,
     fontSize: typography.base,
-    color: '#d7dce8',
+    color: colors.text,
   },
   sheetCreateButton: {
     minWidth: 100,
@@ -275,7 +276,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingTop: spacing.md,
     gap: spacing.md,
-    paddingBottom: 132,
+    paddingBottom: spacing.lg,
   },
   creatorSubtasksCard: {
     borderWidth: 0,
@@ -289,11 +290,9 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     minHeight: 38,
-    paddingHorizontal: spacing.xs,
+    paddingHorizontal: spacing.sm,
     paddingVertical: 6,
     gap: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
   },
   creatorSubtaskLeadingSlot: {
     width: 20,
@@ -329,16 +328,13 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     alignItems: 'center',
     minHeight: 40,
     paddingVertical: 0,
-    paddingHorizontal: spacing.xs,
+    paddingHorizontal: spacing.sm,
     borderRadius: 0,
     borderWidth: 0,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderStrong,
     backgroundColor: 'transparent',
     gap: spacing.sm,
   },
   creatorSubtaskComposerRowFocused: {
-    borderBottomColor: colors.accentCyan,
     backgroundColor: 'transparent',
   },
   creatorSubtaskInput: {
@@ -385,10 +381,6 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.sm,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface2,
     paddingHorizontal: spacing.md,
   },
   deadlinePickerTrigger: {
@@ -585,9 +577,9 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   reminderCard: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.10)' : 'rgba(0, 0, 0, 0.08)',
     borderRadius: radius.lg,
-    backgroundColor: colors.surface2,
+    backgroundColor: isDark ? 'rgba(30, 41, 59, 0.65)' : 'rgba(255, 255, 255, 0.85)',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     gap: spacing.sm,
@@ -763,11 +755,11 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     paddingHorizontal: 0,
   },
   optionIconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     borderWidth: 1,
-    borderColor: 'transparent',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)',
     backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
@@ -799,13 +791,22 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     elevation: 2,
   },
+  optionIconButtonCalendarActive: {
+    borderColor: '#00000024',
+    backgroundColor: '#5856D6',
+    shadowColor: '#5856D6',
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 2,
+  },
   optionIconButtonDisabled: {
     opacity: 0.55,
   },
   optionCostButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     borderWidth: 1,
     borderColor: '#00000024',
     backgroundColor: colors.warning,
@@ -1327,6 +1328,163 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontSize: typography.sm,
     fontWeight: typography.semibold,
     color: colors.bg,
+  },
+
+  // ── Glass card system ──
+  glassCard: {
+    borderRadius: radius.lg,
+    backgroundColor: isDark ? 'rgba(30, 41, 59, 0.65)' : 'rgba(255, 255, 255, 0.85)',
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.10)' : 'rgba(0, 0, 0, 0.08)',
+    overflow: 'hidden',
+  },
+  glassCardSeparator: {
+    height: 0.5,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+    marginLeft: 46,
+  },
+  glassCardSeparatorFull: {
+    height: 0.5,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+  },
+
+  // ── Inline action rail ──
+  actionRailInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.xs,
+    marginTop: 12,
+    marginHorizontal: 14,
+  },
+
+  // ── Toggle dot indicator ──
+  toggleDotIndicator: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1.5,
+  },
+
+  // ── Expanded panels ──
+  expandedPanel: {
+    borderRadius: radius.lg,
+    borderWidth: 0.5,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+    padding: spacing.sm,
+    marginTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  expandedPanelHeader: {
+    minHeight: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  expandedPanelTitle: {
+    fontSize: typography.sm,
+    color: colors.textMuted,
+    fontWeight: typography.semibold,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  expandedPanelCyanBg: {
+    backgroundColor: 'rgba(0, 217, 255, 0.08)',
+  },
+  expandedPanelPurpleBg: {
+    backgroundColor: 'rgba(88, 86, 214, 0.08)',
+  },
+  expandedPanelYellow: {
+    borderRadius: radius.lg,
+    borderWidth: 0.5,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+    backgroundColor: 'rgba(251, 191, 36, 0.08)',
+    padding: spacing.sm,
+    marginTop: spacing.sm,
+    gap: spacing.sm,
+  },
+
+  // ── Cost panel ──
+  costPanelInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  costPanelCurrency: {
+    fontSize: typography.lg,
+    color: '#FBBF24',
+    fontWeight: typography.semibold,
+  },
+  costPanelInput: {
+    flex: 1,
+    height: 40,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(251, 191, 36, 0.3)',
+    backgroundColor: 'rgba(251, 191, 36, 0.06)',
+    paddingHorizontal: spacing.sm,
+    fontSize: typography.base,
+    color: colors.text,
+    fontWeight: typography.semibold,
+  },
+  costQuickSelectRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  costQuickButton: {
+    flex: 1,
+    height: 36,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)',
+    backgroundColor: 'rgba(251, 191, 36, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  costQuickButtonText: {
+    fontSize: typography.sm,
+    color: '#FBBF24',
+    fontWeight: typography.semibold,
+  },
+
+  // ── Schedule card vertical layout ──
+  deadlineRowInCard: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  voucherRowInCard: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  voucherRowInCardText: {
+    flex: 1,
+    fontSize: typography.base,
+    color: colors.text,
+    fontWeight: typography.medium,
+  },
+  voucherRowInCardTextEmpty: {
+    color: colors.textSubtle,
+  },
+  recurrenceInlineChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    backgroundColor: '#C084FC26',
+  },
+  recurrenceInlineChipText: {
+    fontSize: typography.xs,
+    color: '#C084FC',
+    fontWeight: typography.semibold,
   },
 });
 

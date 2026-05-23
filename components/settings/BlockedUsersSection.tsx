@@ -29,6 +29,9 @@ export function BlockedUsersSection({
         <View style={styles.defaultsContent}>
           {blockedUsersLoading ? <Text style={styles.savingText}>Loading blocked users...</Text> : null}
           {blockedUsersError ? <Text style={styles.errorText}>{blockedUsersError}</Text> : null}
+          {!blockedUsersLoading && !blockedUsersError && blockedUsers.length === 0 ? (
+            <Text style={styles.savingText}>No blocked users.</Text>
+          ) : null}
 
           {blockedUsers.map((blockedUser) => (
             <View key={blockedUser.id} style={styles.blockedUserRow}>

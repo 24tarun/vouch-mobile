@@ -7,7 +7,7 @@ import type { BlockedUserOption } from '@/lib/settings/relationships';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
 
-async function fetchBlockedUsers(userId: string): Promise<BlockedUserOption[]> {
+export async function fetchBlockedUsers(userId: string): Promise<BlockedUserOption[]> {
   const { data, error } = await supabase
     .from('user_blocks')
     .select(`

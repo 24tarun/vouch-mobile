@@ -16,7 +16,7 @@ export interface RelationshipsData {
   outgoingRequests: OutgoingFriendRequest[];
 }
 
-async function fetchRelationships(userId: string): Promise<RelationshipsData> {
+export async function fetchRelationships(userId: string): Promise<RelationshipsData> {
   const result = await fetchRelationshipsData(userId);
   if (result.error) {
     throw new Error(result.error);

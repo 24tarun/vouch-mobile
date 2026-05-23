@@ -109,7 +109,7 @@ function emptyCurrentMonth(periodId: string): LedgerMonth {
   };
 }
 
-async function fetchLedger(userId: string): Promise<LedgerData> {
+export async function fetchLedger(userId: string): Promise<LedgerData> {
   const currentPeriodId = formatMonthId(monthStart(new Date()));
   const currentStart = monthStart(new Date());
   const nextStart = addMonths(currentStart, 1);

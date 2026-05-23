@@ -49,8 +49,8 @@ export const TaskSearchOverlay = memo(function TaskSearchOverlay({
   onResultPress,
   onClose,
 }: TaskSearchOverlayProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const trimmedQuery = searchQuery.trim();
   const [contentVisible, setContentVisible] = useState(false);
 
@@ -98,8 +98,8 @@ export const TaskSearchOverlay = memo(function TaskSearchOverlay({
             <TextInput
               ref={searchInputRef}
               style={styles.searchSheetInput}
-              placeholder="Search tasks"
-              placeholderTextColor={colors.textMuted}
+              placeholder="Search tasks..."
+              placeholderTextColor={colors.textSubtle}
               value={searchQuery}
               onChangeText={setSearchQuery}
               autoCapitalize="none"
@@ -108,13 +108,13 @@ export const TaskSearchOverlay = memo(function TaskSearchOverlay({
             />
           </View>
           <TouchableOpacity
-            style={styles.searchSheetClose}
+            style={[styles.searchSheetClose, { backgroundColor: colors.destructive, borderColor: '#00000024' }]}
             onPress={onClose}
             activeOpacity={0.8}
             accessibilityRole="button"
             accessibilityLabel="Close search"
           >
-            <Feather name="x" size={17} color={colors.textMuted} />
+            <Feather name="x" size={17} color={colors.bg} />
           </TouchableOpacity>
         </View>
         <ScrollView

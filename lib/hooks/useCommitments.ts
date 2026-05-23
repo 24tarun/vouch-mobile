@@ -166,7 +166,7 @@ function getDayStatuses(
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
-async function fetchCommitments(userId: string): Promise<CommitmentListItem[]> {
+export async function fetchCommitments(userId: string): Promise<CommitmentListItem[]> {
   const { data: commitmentsData, error: commitmentsError } = await supabase
     .from('commitments')
     .select('*')

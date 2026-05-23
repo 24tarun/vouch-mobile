@@ -1,5 +1,6 @@
 import { Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useMemo } from 'react';
+import { AI_PROFILE_ID } from '@/lib/constants/ai-profile';
 
 import { Feather } from '@expo/vector-icons';
 import type { FriendOption } from '@/lib/hooks/useFriends';
@@ -27,6 +28,7 @@ interface VoucherPickerModalProps {
   friendsLoading: boolean;
   friendsError: string | null;
   filteredFriends: FriendOption[];
+  aiLimitReached?: boolean;
 }
 
 export function VoucherPickerModal({
@@ -43,9 +45,10 @@ export function VoucherPickerModal({
   friendsLoading,
   friendsError,
   filteredFriends,
+  aiLimitReached = false,
 }: VoucherPickerModalProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   return (
     <Modal
       visible={visible && anchor != null}
@@ -125,15 +128,18 @@ export function VoucherPickerModal({
                   {voucherSearch ? 'No matches.' : 'No friends yet.'}
                 </Text>
               ) : (
-                filteredFriends.map((friend) => (
+                filteredFriends.map((friend) => {
+                  const isAiDisabled = friend.id === AI_PROFILE_ID && aiLimitReached;
+                  return (
                   <TouchableOpacity
                     key={friend.id}
-                    style={[styles.voucherRow, voucherValue === friend.id && styles.voucherRowSelected]}
+                    style={[styles.voucherRow, voucherValue === friend.id && styles.voucherRowSelected, isAiDisabled && { opacity: 0.4 }]}
                     onPress={() => {
+                      if (isAiDisabled) return;
                       setVoucherValue(friend.id);
                       closeVoucherPicker();
                     }}
-                    activeOpacity={0.75}
+                    activeOpacity={isAiDisabled ? 1 : 0.75}
                   >
                     <View style={styles.avatar}>
                       <Text style={styles.avatarText}>{friend.initial}</Text>
@@ -143,7 +149,8 @@ export function VoucherPickerModal({
                       <Feather name="check" size={16} color={colors.text} />
                     )}
                   </TouchableOpacity>
-                ))
+                  );
+                })
               )}
             </ScrollView>
           </View>

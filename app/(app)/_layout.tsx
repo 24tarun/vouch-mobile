@@ -3,12 +3,20 @@ import { Tabs } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
 import { type Colors } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import { TaskCreatorProvider, useTaskCreatorHandle } from '@/lib/taskCreatorState';
 import { createRealtimeRateLimiter } from '@/lib/query/realtimeRateLimiter';
+import { queryKeys } from '@/lib/query/keys';
+import { fetchCommitments } from '@/lib/hooks/useCommitments';
+import { fetchLedger } from '@/lib/hooks/useLedger';
+import { fetchFriendQueue } from '@/lib/hooks/useFriendQueue';
+import { fetchRelationships } from '@/lib/hooks/useRelationships';
+import { fetchBlockedUsers } from '@/lib/hooks/useBlockedUsers';
+import { fetchSettingsStats } from '@/lib/stats/calculate-stats';
 
 type FeatherName = React.ComponentProps<typeof Feather>['name'];
 
@@ -23,7 +31,7 @@ const TABS: TabConfig[] = [
   { name: 'friends/index',     icon: 'users',        title: 'Friends'     },
   { name: 'commitments/index', icon: 'target',       title: 'Commits'     },
   { name: 'ledger/index',      icon: 'credit-card',  title: 'Ledger'      },
-  { name: 'settings/index',    icon: 'settings',     title: 'Settings'    },
+  { name: 'settings',          icon: 'settings',     title: 'Settings'    },
 ];
 
 function TabIcon({
@@ -66,9 +74,44 @@ function AppLayoutContent() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const taskCreatorHandle = useTaskCreatorHandle();
+  const queryClient = useQueryClient();
   const userId = user?.id ?? null;
   const [settingsBadgeCount, setSettingsBadgeCount] = useState(0);
   const [friendsBadgeCount, setFriendsBadgeCount] = useState(0);
+
+  // Prefetch all tab data on app load so navigation is instant
+  useEffect(() => {
+    if (!userId) return;
+
+    queryClient.prefetchQuery({
+      queryKey: queryKeys.commitments(userId),
+      queryFn: () => fetchCommitments(userId),
+    });
+    queryClient.prefetchQuery({
+      queryKey: queryKeys.ledger(userId),
+      queryFn: () => fetchLedger(userId),
+    });
+    queryClient.prefetchQuery({
+      queryKey: queryKeys.friendQueue(userId),
+      queryFn: () => fetchFriendQueue(userId),
+    });
+    queryClient.prefetchQuery({
+      queryKey: queryKeys.relationships(userId),
+      queryFn: () => fetchRelationships(userId),
+    });
+    queryClient.prefetchQuery({
+      queryKey: queryKeys.blockedUsers(userId),
+      queryFn: () => fetchBlockedUsers(userId),
+    });
+    queryClient.prefetchQuery({
+      queryKey: queryKeys.settingsStats(userId),
+      queryFn: async () => {
+        const result = await fetchSettingsStats(userId);
+        if (result.error) throw new Error(result.error);
+        return result.data;
+      },
+    });
+  }, [userId]);
 
   useEffect(() => {
     if (!userId) {
@@ -195,7 +238,7 @@ function AppLayoutContent() {
                 icon={icon}
                 focused={focused}
                 badgeCount={
-                  name === 'settings/index'
+                  name === 'settings'
                     ? settingsBadgeCount
                     : name === 'friends/index'
                       ? friendsBadgeCount

@@ -26,6 +26,7 @@ const EVENT_LABEL: Record<string, string> = {
   DEADLINE_WARNING_10M: '10m left',
   GOOGLE_EVENT_CANCELLED: 'Google event cancelled',
   POSTPONE: 'Postponed',
+  AI_APPROVE: 'AI accepted',
   AI_DENIED: 'AI denied',
   AI_DENIED_AUTO_HOP: 'Moved to awaiting user',
   ESCALATE: 'Escalated',
@@ -88,7 +89,9 @@ function resolveAiDecisionDetail(
   const fromEvent = getEventReason(event);
   if (fromEvent) return fromEvent;
 
-  const targetDecision = event.event_type === 'AI_DENIED' ? 'denied' : null;
+  const targetDecision =
+    event.event_type === 'AI_DENIED' ? 'denied' :
+    (event.event_type === 'VOUCHER_ACCEPT' || event.event_type === 'AI_APPROVE') ? 'approved' : null;
   if (!targetDecision) return null;
 
   const eventTimeMs = new Date(event.created_at).getTime();
@@ -99,14 +102,14 @@ function resolveAiDecisionDetail(
     .filter((attempt) => !usedAiVouchIds.has(attempt.id))
     .sort((a, b) => {
       if (a.attempt_number !== b.attempt_number) return a.attempt_number - b.attempt_number;
-      const aTime = new Date(a.created_at).getTime();
-      const bTime = new Date(b.created_at).getTime();
+      const aTime = new Date(a.vouched_at).getTime();
+      const bTime = new Date(b.vouched_at).getTime();
       if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) return aTime - bTime;
       return a.id.localeCompare(b.id);
     });
 
   const beforeOrNearEvent = candidates.filter((attempt) => {
-    const createdMs = new Date(attempt.created_at).getTime();
+    const createdMs = new Date(attempt.vouched_at).getTime();
     return Number.isFinite(createdMs) && createdMs <= eventTimeMs + 300_000;
   });
   const match = (beforeOrNearEvent.at(-1) ?? candidates.at(0)) ?? null;
@@ -155,6 +158,7 @@ function getTimelineTone(event: TaskEvent): 'SUCCESS' | 'DANGER' | 'WARNING' | '
   switch (event.event_type) {
     case 'MARK_COMPLETE':
     case 'VOUCHER_ACCEPT':
+    case 'AI_APPROVE':
     case 'POMO_COMPLETED':
       return 'SUCCESS';
     case 'VOUCHER_DENY':
@@ -243,6 +247,16 @@ function buildTimelineEntries(event: TaskEvent, aiVouches: AiVouch[], usedAiVouc
       ];
     case 'VOUCHER_ACCEPT':
       return statusTransition;
+    case 'AI_APPROVE': {
+      const acceptDetail = resolveAiDecisionDetail(event, aiVouches, usedAiVouchIds) ?? undefined;
+      return [
+        makeTimelineEntry(event, 'action', {
+          label: 'AI Accepted',
+          tone: 'SUCCESS',
+          detail: acceptDetail,
+        }),
+      ];
+    }
     case 'VOUCHER_DENY':
       return statusTransition;
     case 'AI_DENIED':

@@ -47,8 +47,8 @@ export function TaskSortMenu({
   onChangeSortMode,
   onClose,
 }: TaskSortMenuProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const [menuHeight, setMenuHeight] = useState(0);
   if (!open || !anchor) {
     return null;

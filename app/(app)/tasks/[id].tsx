@@ -172,8 +172,8 @@ function VideoProofPreview({
     p.loop = false;
     p.muted = false;
   });
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
@@ -221,8 +221,8 @@ function VideoProofPreview({
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function TaskDetailScreen() {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const { id, back } = useLocalSearchParams<{ id: string; back?: string }>();
   const routeTaskId = typeof id === 'string' ? id : '';
   const optimisticTask = isOptimisticTaskId(routeTaskId);
@@ -2093,8 +2093,8 @@ function ActionBtn({ allowed, token, label, icon, onPress, onDeny, containerStyl
   onDeny: () => void;
   containerStyle?: object | object[];
 }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   return (
     <ShakeBtn
       allowed={allowed}
@@ -2123,8 +2123,8 @@ function InfoRow({
   value: string;
   iconSet?: 'feather' | 'ionicons';
 }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   return (
     <View style={styles.infoRow}>
       {iconSet === 'ionicons' ? (
@@ -2139,14 +2139,14 @@ function InfoRow({
 }
 
 function Divider() {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   return <View style={styles.infoDivider} />;
 }
 
 function FlagPill({ icon, label, active }: { icon: string; label: string; active: boolean }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   return (
     <View style={[styles.flagPill, active && styles.flagPillActive]}>
       <Feather name={icon as any} size={12} color={active ? colors.success : colors.textMuted} />
@@ -2157,7 +2157,7 @@ function FlagPill({ icon, label, active }: { icon: string; label: string; active
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const makeStyles = (colors: Colors) => StyleSheet.create({
+const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   scroll: { flex: 1 },
   content: { padding: spacing.lg, gap: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xxl },
@@ -2217,25 +2217,25 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   awaitingUserCard: {
     borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: '#fb923c44',
-    backgroundColor: '#7c2d1218',
+    borderColor: isDark ? '#fb923c44' : '#ea580c44',
+    backgroundColor: isDark ? '#7c2d1218' : '#fff7ed',
     padding: spacing.md,
     gap: spacing.sm,
   },
   awaitingUserTitle: {
     fontSize: typography.sm,
     fontWeight: typography.semibold,
-    color: '#fdba74',
+    color: isDark ? '#fdba74' : '#c2410c',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
   awaitingUserSubtitle: {
     fontSize: typography.sm,
-    color: '#fdba74',
+    color: isDark ? '#fdba74' : '#c2410c',
   },
   awaitingUserReason: {
     fontSize: typography.sm,
-    color: '#ffedd5',
+    color: isDark ? '#ffedd5' : '#431407',
     lineHeight: 20,
   },
   awaitingUserActions: {
@@ -2353,7 +2353,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: '#101822',
+    backgroundColor: isDark ? '#101822' : colors.surface2,
     alignSelf: 'center',
   },
   proofPreviewImage: {

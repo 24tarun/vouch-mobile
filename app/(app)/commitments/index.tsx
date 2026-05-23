@@ -70,8 +70,8 @@ function CommitmentCard({
   item: CommitmentListItem;
   currency: Currency;
 }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const router = useRouter();
   const daysAccomplished = item.day_statuses.filter((entry) => entry.status === 'passed').length;
   const earnedLabel = formatCents(item.earned_so_far_cents, currency);
@@ -135,7 +135,7 @@ function CreateModal({
   onClose: () => void;
 }) {
   const { colors, isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const queryClient = useQueryClient();
   const trafficIconColor = isDark ? '#0b1329' : '#0f172a';
   const [name, setName] = useState('');
@@ -472,8 +472,8 @@ function CreateModal({
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
 function EmptyState({ onNew: _onNew }: { onNew: () => void }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   return (
     <View style={styles.emptyWrap}>
       <Text style={styles.emptyMessage}>{"Create a Commitment and stick to it,\nif you can 😉😉"}</Text>
@@ -485,7 +485,7 @@ function EmptyState({ onNew: _onNew }: { onNew: () => void }) {
 
 export default function CommitmentsPage() {
   const { colors, isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const trafficIconColor = isDark ? '#0b1329' : '#0f172a';
   const { commitments, currency, loading, error, refetch } = useCommitments();
   const [refreshing, setRefreshing] = useState(false);
@@ -569,7 +569,7 @@ export default function CommitmentsPage() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const makeStyles = (colors: Colors) => StyleSheet.create({
+const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
 
   // Page header accessory
@@ -691,7 +691,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   commitmentMetricValuePrimary: {
     fontSize: typography.xl,
     fontWeight: typography.normal,
-    color: '#00ffd5',
+    color: isDark ? '#00ffd5' : '#0d9488',
   },
   commitmentMetricValueSecondary: {
     fontSize: typography.lg,

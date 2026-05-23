@@ -29,7 +29,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon-foreground.png",
-        "backgroundColor": "#0F0F0F"
+        "backgroundColor": "#5B21B6"
       },
       "package": "com.tarun.vouch",
       "googleServicesFile": "./google-services.json",

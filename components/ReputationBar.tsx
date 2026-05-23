@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Animated, Platform, StyleSheet, Text, View } from 'react-native';
 import type { ReputationScoreData } from '@/lib/reputation/types';
+import { useTheme } from '@/lib/ThemeContext';
 
 const ORANGE = 'rgb(249,115,22)';
 const ORANGE_GLOW = 'rgba(249,115,22,0.5)';
@@ -12,6 +13,14 @@ interface ReputationBarProps {
 }
 
 export function ReputationBar({ data }: ReputationBarProps) {
+  const { colors, isDark } = useTheme();
+  const dynamicStyles = useMemo(() => ({
+    score: { color: isDark ? '#ffffff' : '#1C1C1E' },
+    track: {
+      backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+      borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+    },
+  }), [isDark]);
   const fillAnim = useRef(new Animated.Value(0)).current;
   const targetFill = (data.score / 1000) * 100;
 
@@ -31,7 +40,7 @@ export function ReputationBar({ data }: ReputationBarProps) {
     <View style={styles.container}>
       {/* Labels row */}
       <View style={styles.labelRow}>
-        <Text style={styles.score}>{data.score}</Text>
+        <Text style={[styles.score, dynamicStyles.score]}>{data.score}</Text>
         {data.velocityDelta !== null && (
           <Text style={[styles.velocity, { color: velocityColor }]}>
             {velocityArrow} {Math.abs(data.velocityDelta)} this week
@@ -40,7 +49,7 @@ export function ReputationBar({ data }: ReputationBarProps) {
       </View>
 
       {/* Track */}
-      <View style={styles.track}>
+      <View style={[styles.track, dynamicStyles.track]}>
         {/* Fill */}
         <Animated.View
           style={[

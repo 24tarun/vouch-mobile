@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as AlarmKit from 'alarm-kit';
 import { supabase } from './supabase';
 import {
   type NotificationSoundKey,
@@ -13,8 +14,10 @@ import {
 
 const NOTIFICATION_TTL_MS = 30 * 60 * 1000;
 const LOCAL_REMINDER_NOTIFICATION_MAP_KEY = 'vouch_local_reminder_notification_ids_v1';
+const LOCAL_REMINDER_ALARMKIT_MAP_KEY = 'vouch_local_reminder_alarmkit_ids_v1';
 const LOCAL_REMINDER_SOUND_KEY = 'vouch_local_reminder_sound_key_v1';
 const ACTIVE_TASK_STATUSES = new Set(['ACTIVE', 'POSTPONED']);
+const DEFAULT_DEADLINE_10M_REMINDER_SOURCE = 'DEFAULT_DEADLINE_10M';
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -151,10 +154,31 @@ async function readLocalReminderNotificationMapAsync(): Promise<Record<string, s
   }
 }
 
+async function readLocalReminderAlarmKitMapAsync(): Promise<Record<string, string>> {
+  try {
+    const raw = await AsyncStorage.getItem(LOCAL_REMINDER_ALARMKIT_MAP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const entries: [string, string][] = Object.entries(parsed as Record<string, unknown>)
+      .filter(([, value]) => typeof value === 'string' && value.length > 0)
+      .map(([key, value]) => [key, value as string]);
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
+}
+
 async function writeLocalReminderNotificationMapAsync(
   next: Record<string, string>,
 ): Promise<void> {
   await AsyncStorage.setItem(LOCAL_REMINDER_NOTIFICATION_MAP_KEY, JSON.stringify(next));
+}
+
+async function writeLocalReminderAlarmKitMapAsync(
+  next: Record<string, string>,
+): Promise<void> {
+  await AsyncStorage.setItem(LOCAL_REMINDER_ALARMKIT_MAP_KEY, JSON.stringify(next));
 }
 
 async function readLocalReminderSoundKeyAsync(): Promise<NotificationSoundKey | null> {
@@ -193,6 +217,7 @@ function createReminderContent(input: {
 export async function clearLocalReminderNotificationsAsync(): Promise<void> {
   try {
     const map = await readLocalReminderNotificationMapAsync();
+    const alarmKitMap = await readLocalReminderAlarmKitMapAsync();
     for (const notificationId of Object.values(map)) {
       try {
         await Notifications.cancelScheduledNotificationAsync(notificationId);
@@ -200,7 +225,15 @@ export async function clearLocalReminderNotificationsAsync(): Promise<void> {
         // Notification may already be delivered or canceled.
       }
     }
+    for (const nativeAlarmId of Object.values(alarmKitMap)) {
+      try {
+        await AlarmKit.cancelTenMinuteAlarmAsync({ nativeAlarmId });
+      } catch {
+        // Alarm may already be delivered, canceled, or unavailable on this OS.
+      }
+    }
     await AsyncStorage.removeItem(LOCAL_REMINDER_NOTIFICATION_MAP_KEY);
+    await AsyncStorage.removeItem(LOCAL_REMINDER_ALARMKIT_MAP_KEY);
     await AsyncStorage.removeItem(LOCAL_REMINDER_SOUND_KEY);
   } catch (err) {
     console.warn('[notifications] failed to clear local reminders:', err);
@@ -218,13 +251,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
 
     await ensureAndroidNotificationChannelsAsync();
 
-    if (!(await hasGrantedNotificationPermissionAsync())) {
-      return;
-    }
-
-    const notificationSoundKey = await getNotificationSoundKeyForUserAsync(userId);
     const nowIso = new Date().toISOString();
-    const lastScheduledSoundKey = await readLocalReminderSoundKeyAsync();
 
     const { data: reminders, error: remindersError } = await supabase
       .from('task_reminders')
@@ -254,10 +281,14 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
         fetchedReminders: reminderRows.length,
         pendingReminders: 0,
         activeTasks: 0,
-        scheduled: 0,
-        canceled: 0,
+        scheduledExpo: 0,
+        scheduledAlarmKit: 0,
+        canceledExpo: 0,
+        canceledAlarmKit: 0,
         skippedPast: 0,
-        reused: 0,
+        skippedAlarmKit: 0,
+        reusedExpo: 0,
+        reusedAlarmKit: 0,
       });
       return;
     }
@@ -286,41 +317,127 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       return Number.isFinite(reminderAt) && reminderAt > nowMs && tasksById.has(row.parent_task_id);
     });
 
-    const desiredReminderIds = new Set(validReminders.map((row) => row.id));
-    let canceledCount = 0;
-    let scheduledCount = 0;
-    let reusedCount = 0;
+    const shouldUseIOSAlarmKit = (source: string | null) =>
+      Platform.OS === 'ios' && source === DEFAULT_DEADLINE_10M_REMINDER_SOURCE;
+
+    const hasIOSAlarmKitCandidate = validReminders.some((row) => shouldUseIOSAlarmKit(row.source));
+    const alarmKitAvailable = hasIOSAlarmKitCandidate
+      ? await AlarmKit.isAlarmKitAvailableAsync().catch((err) => {
+          console.warn('[notifications] failed to check AlarmKit availability:', err);
+          return false;
+        })
+      : false;
+    let alarmKitAuthorizationStatus: AlarmKit.AlarmKitAuthorizationStatus = 'unavailable';
+
+    if (alarmKitAvailable) {
+      alarmKitAuthorizationStatus = await AlarmKit.getAlarmAuthorizationStatusAsync().catch((err) => {
+        console.warn('[notifications] failed to read AlarmKit authorization:', err);
+        return 'unavailable' as const;
+      });
+
+      if (alarmKitAuthorizationStatus === 'not_determined') {
+        alarmKitAuthorizationStatus = await AlarmKit.requestAlarmAuthorizationAsync().catch((err) => {
+          console.warn('[notifications] failed to request AlarmKit authorization:', err);
+          return 'denied' as const;
+        });
+      }
+
+      if (alarmKitAuthorizationStatus !== 'authorized') {
+        console.warn('[notifications] skipping iOS 26 serious reminders because AlarmKit is not authorized:', {
+          userId,
+          authorizationStatus: alarmKitAuthorizationStatus,
+        });
+      }
+    }
+
+    const canScheduleAlarmKit = alarmKitAvailable && alarmKitAuthorizationStatus === 'authorized';
+    const candidateExpoReminderRows = validReminders.filter((row) => {
+      if (!shouldUseIOSAlarmKit(row.source)) return true;
+      return !alarmKitAvailable;
+    });
+    const alarmKitReminderRows = validReminders.filter((row) =>
+      shouldUseIOSAlarmKit(row.source) && canScheduleAlarmKit
+    );
+    const skippedAlarmKitCount = validReminders.filter((row) =>
+      shouldUseIOSAlarmKit(row.source) && alarmKitAvailable && !canScheduleAlarmKit
+    ).length;
+
+    const canScheduleExpoNotifications = candidateExpoReminderRows.length === 0
+      || await hasGrantedNotificationPermissionAsync();
+    const expoReminderRows = canScheduleExpoNotifications ? candidateExpoReminderRows : [];
+
+    if (candidateExpoReminderRows.length > 0 && !canScheduleExpoNotifications) {
+      console.warn('[notifications] skipping Expo local reminders because notification permission is not granted:', {
+        userId,
+        expoReminders: candidateExpoReminderRows.length,
+      });
+    }
+
+    const notificationSoundKey = expoReminderRows.length > 0
+      ? await getNotificationSoundKeyForUserAsync(userId)
+      : 'default';
+    const lastScheduledSoundKey = await readLocalReminderSoundKeyAsync();
+
+    const desiredExpoReminderIds = new Set(expoReminderRows.map((row) => row.id));
+    const desiredAlarmKitReminderIds = new Set(alarmKitReminderRows.map((row) => row.id));
+    let canceledExpoCount = 0;
+    let canceledAlarmKitCount = 0;
+    let scheduledExpoCount = 0;
+    let scheduledAlarmKitCount = 0;
+    let reusedExpoCount = 0;
+    let reusedAlarmKitCount = 0;
     let skippedPastCount = 0;
-    let persistedMap = await readLocalReminderNotificationMapAsync();
-    if (lastScheduledSoundKey !== null && lastScheduledSoundKey !== notificationSoundKey) {
-      for (const notificationId of Object.values(persistedMap)) {
+    let persistedExpoMap = await readLocalReminderNotificationMapAsync();
+    const persistedAlarmKitMap = await readLocalReminderAlarmKitMapAsync();
+
+    if (
+      expoReminderRows.length > 0
+      && lastScheduledSoundKey !== null
+      && lastScheduledSoundKey !== notificationSoundKey
+    ) {
+      for (const notificationId of Object.values(persistedExpoMap)) {
         try {
           await Notifications.cancelScheduledNotificationAsync(notificationId);
-          canceledCount += 1;
+          canceledExpoCount += 1;
         } catch {
           // Notification may already be delivered or canceled.
         }
       }
-      persistedMap = {};
+      persistedExpoMap = {};
     }
-    const nextMap: Record<string, string> = {};
+    const nextExpoMap: Record<string, string> = {};
+    const nextAlarmKitMap: Record<string, string> = {};
 
-    for (const [reminderId, notificationId] of Object.entries(persistedMap)) {
-      if (desiredReminderIds.has(reminderId)) {
-        nextMap[reminderId] = notificationId;
-        reusedCount += 1;
+    for (const [reminderId, notificationId] of Object.entries(persistedExpoMap)) {
+      if (desiredExpoReminderIds.has(reminderId)) {
+        nextExpoMap[reminderId] = notificationId;
+        reusedExpoCount += 1;
       } else {
         try {
           await Notifications.cancelScheduledNotificationAsync(notificationId);
-          canceledCount += 1;
+          canceledExpoCount += 1;
         } catch {
           // Notification may already be delivered or canceled.
         }
       }
     }
 
-    for (const reminder of validReminders) {
-      if (nextMap[reminder.id]) continue;
+    for (const [reminderId, nativeAlarmId] of Object.entries(persistedAlarmKitMap)) {
+      if (desiredAlarmKitReminderIds.has(reminderId)) {
+        nextAlarmKitMap[reminderId] = nativeAlarmId;
+        reusedAlarmKitCount += 1;
+      } else {
+        try {
+          await AlarmKit.cancelTenMinuteAlarmAsync({ nativeAlarmId });
+          canceledAlarmKitCount += 1;
+        } catch {
+          // Alarm may already be delivered, canceled, or unavailable on this OS.
+        }
+      }
+    }
+
+    for (const reminder of expoReminderRows) {
+      if (nextExpoMap[reminder.id]) continue;
 
       const task = tasksById.get(reminder.parent_task_id);
       if (!task) continue;
@@ -358,22 +475,61 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
         },
       });
 
-      nextMap[reminder.id] = notificationId;
-      scheduledCount += 1;
+      nextExpoMap[reminder.id] = notificationId;
+      scheduledExpoCount += 1;
     }
 
-    await writeLocalReminderNotificationMapAsync(nextMap);
-    await writeLocalReminderSoundKeyAsync(notificationSoundKey);
+    for (const reminder of alarmKitReminderRows) {
+      if (nextAlarmKitMap[reminder.id]) continue;
+
+      const task = tasksById.get(reminder.parent_task_id);
+      if (!task) continue;
+
+      const reminderAtMs = new Date(reminder.reminder_at).getTime();
+      if (!Number.isFinite(reminderAtMs) || reminderAtMs <= nowMs) {
+        skippedPastCount += 1;
+        continue;
+      }
+
+      try {
+        const result = await AlarmKit.scheduleTenMinuteAlarmAsync({
+          reminderId: reminder.id,
+          taskId: reminder.parent_task_id,
+          taskTitle: task.title,
+          fireAtISO: reminder.reminder_at,
+        });
+        nextAlarmKitMap[reminder.id] = result.nativeAlarmId;
+        scheduledAlarmKitCount += 1;
+      } catch (err) {
+        console.warn('[notifications] failed to schedule AlarmKit reminder; skipping serious alarm:', {
+          reminderId: reminder.id,
+          taskId: reminder.parent_task_id,
+          error: err,
+        });
+      }
+    }
+
+    await writeLocalReminderNotificationMapAsync(nextExpoMap);
+    await writeLocalReminderAlarmKitMapAsync(nextAlarmKitMap);
+    if (expoReminderRows.length > 0) {
+      await writeLocalReminderSoundKeyAsync(notificationSoundKey);
+    }
     console.log('[notifications] local reminder sync summary', {
       userId,
       fetchedReminders: reminderRows.length,
       pendingReminders: pendingReminderRows.length,
       activeTasks: tasksById.size,
       validFutureReminders: validReminders.length,
-      reused: reusedCount,
-      scheduled: scheduledCount,
-      canceled: canceledCount,
+      reusedExpo: reusedExpoCount,
+      reusedAlarmKit: reusedAlarmKitCount,
+      scheduledExpo: scheduledExpoCount,
+      scheduledAlarmKit: scheduledAlarmKitCount,
+      canceledExpo: canceledExpoCount,
+      canceledAlarmKit: canceledAlarmKitCount,
       skippedPast: skippedPastCount,
+      skippedAlarmKit: skippedAlarmKitCount,
+      alarmKitAvailable,
+      alarmKitAuthorizationStatus,
     });
   } catch (err) {
     console.warn('[notifications] local reminder sync failed:', err);

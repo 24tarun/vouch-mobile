@@ -27,3 +27,6 @@ expo-env.d.ts
 build/
 ios/
 android/
+
+!modules/alarm-kit/ios/
+!modules/alarm-kit/ios/**

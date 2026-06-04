@@ -7,6 +7,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Linking from 'expo-linking';
+import * as AlarmKit from 'alarm-kit';
 import { Feather } from '@expo/vector-icons';
 import Toast, { type ToastConfig, type ToastConfigParams } from 'react-native-toast-message';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
@@ -162,6 +164,7 @@ function AuthGuard() {
   const notificationListener = useRef<Notifications.Subscription | null>(null);
   const responseListener = useRef<Notifications.Subscription | null>(null);
   const lastHandledNotificationId = useRef<string | null>(null);
+  const lastHandledAlarmKitActionId = useRef<string | null>(null);
   const [routeReady, setRouteReady] = useState(false);
   const [splashHidden, setSplashHidden] = useState(false);
 
@@ -179,6 +182,47 @@ function AuthGuard() {
     lastHandledNotificationId.current = notificationId;
     router.push(`/(app)/tasks/${taskId}`);
   }, [router]);
+
+  const routeFromAlarmKitOpenTask = useCallback((
+    payload: AlarmKit.OpenTaskAlarmAction | null | undefined,
+  ) => {
+    const taskId = typeof payload?.taskId === 'string' ? payload.taskId.trim() : '';
+    if (!taskId) return;
+
+    const actionId =
+      (typeof payload?.nativeAlarmId === 'string' && payload.nativeAlarmId.trim())
+      || (typeof payload?.reminderId === 'string' && payload.reminderId.trim())
+      || taskId;
+
+    if (lastHandledAlarmKitActionId.current === actionId) {
+      return;
+    }
+
+    lastHandledAlarmKitActionId.current = actionId;
+    router.push(`/(app)/tasks/${taskId}`);
+  }, [router]);
+
+  const routeFromAlarmKitURL = useCallback((url: string | null | undefined) => {
+    if (typeof url !== 'string' || !url.startsWith('vouch:')) return;
+
+    const parsed = Linking.parse(url);
+    const path = typeof parsed.path === 'string' ? parsed.path : '';
+    const match = path.match(/^tasks\/([^/?#]+)/);
+    if (!match?.[1]) return;
+
+    const alarmId = typeof parsed.queryParams?.alarmId === 'string'
+      ? parsed.queryParams.alarmId
+      : null;
+    const reminderId = typeof parsed.queryParams?.alarmReminderId === 'string'
+      ? parsed.queryParams.alarmReminderId
+      : null;
+
+    routeFromAlarmKitOpenTask({
+      taskId: decodeURIComponent(match[1]),
+      reminderId: reminderId ?? '',
+      nativeAlarmId: alarmId ?? '',
+    });
+  }, [routeFromAlarmKitOpenTask]);
 
   useEffect(() => {
     let cancelled = false;
@@ -353,6 +397,18 @@ function AuthGuard() {
     void registerForPushNotificationsAsync(userId, notificationAbortController.signal);
     void runReminderSync();
     void Notifications.getLastNotificationResponseAsync().then(routeFromNotificationResponse);
+    void AlarmKit.consumePendingOpenTaskActionsAsync()
+      .then((actions) => {
+        actions.forEach(routeFromAlarmKitOpenTask);
+      })
+      .catch((err) => {
+        console.warn('[layout] failed to consume pending AlarmKit actions:', err);
+      });
+    void Linking.getInitialURL()
+      .then(routeFromAlarmKitURL)
+      .catch((err) => {
+        console.warn('[layout] failed to read initial URL:', err);
+      });
 
     // Notification received while app is open — no special action needed since
     // the app already reflects live state.
@@ -365,6 +421,10 @@ function AuthGuard() {
     responseListener.current = Notifications.addNotificationResponseReceivedListener(
       routeFromNotificationResponse,
     );
+    const alarmKitOpenTaskSubscription = AlarmKit.addOpenTaskListener(routeFromAlarmKitOpenTask);
+    const alarmKitURLSubscription = Linking.addEventListener('url', ({ url }) => {
+      routeFromAlarmKitURL(url);
+    });
 
     return () => {
       disposed = true;
@@ -376,8 +436,10 @@ function AuthGuard() {
       void supabase.removeChannel(profileChannel);
       notificationListener.current?.remove();
       responseListener.current?.remove();
+      alarmKitOpenTaskSubscription.remove();
+      alarmKitURLSubscription.remove();
     };
-  }, [routeFromNotificationResponse, session?.user?.id]);
+  }, [routeFromAlarmKitOpenTask, routeFromAlarmKitURL, routeFromNotificationResponse, session?.user?.id]);
 
   // Always keep <Slot /> mounted so child navigators ((app), (auth)) are never
   // torn down mid-navigation. The native splash screen covers the initial load.

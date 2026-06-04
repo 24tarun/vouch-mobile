@@ -28,9 +28,11 @@ describe('TaskCreatorOverlay keyboard focus behavior', () => {
 
   it('focuses title input after opening interactions complete', async () => {
     const callbacks: Array<() => void> = [];
-    jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation((cb: () => void) => {
-      callbacks.push(cb);
-      return { cancel: jest.fn() } as any;
+    jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation((task?: Parameters<typeof InteractionManager.runAfterInteractions>[0]) => {
+      if (typeof task === 'function') {
+        callbacks.push(task);
+      }
+      return { then: jest.fn(), done: jest.fn(), cancel: jest.fn() } as ReturnType<typeof InteractionManager.runAfterInteractions>;
     });
 
     const titleInputRef = { current: null } as React.RefObject<any>;

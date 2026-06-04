@@ -1046,7 +1046,6 @@ export default function FriendsScreen() {
             { key: 'history', label: 'History', showBadge: false, color: colors.success },
           ]}
           activeKey={activeTab}
-          variant="signal"
           onChange={(key) => {
             const tab = key as TabView;
             setActiveTab(tab);
@@ -1216,7 +1215,7 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
     borderBottomWidth: 1,
@@ -1232,7 +1231,7 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   // Body
   body: { flex: 1 },
   listContent: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
     paddingTop: spacing.md,
     paddingBottom: spacing.xxl + spacing.lg,
   },
@@ -1243,7 +1242,7 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md,
   },
   helperText: {
     color: colors.textMuted,
@@ -1358,7 +1357,7 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
 
   // Deck layout
   deckList: {
-    gap: spacing.xl,
+    gap: spacing.lg,
   },
   deckOuter: {
     position: 'relative',

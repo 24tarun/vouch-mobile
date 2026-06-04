@@ -19,6 +19,7 @@ Pod::Spec.new do |s|
   s.source_files = '**/*.{h,m,mm,swift}'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
-    'SWIFT_COMPILATION_MODE' => 'wholemodule'
+    'SWIFT_COMPILATION_MODE' => 'wholemodule',
+    'SWIFT_EMIT_APP_INTENTS_METADATA' => 'YES'
   }
 end

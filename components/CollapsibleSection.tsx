@@ -11,6 +11,7 @@ interface CollapsibleSectionProps {
   title: string;
   tasks: TaskRowData[];
   defaultOpen?: boolean;
+  headerAlign?: 'left' | 'center';
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
@@ -28,6 +29,7 @@ export function CollapsibleSection({
   title,
   tasks,
   defaultOpen = false,
+  headerAlign = 'left',
   hasMore = false,
   loadingMore = false,
   onLoadMore,
@@ -48,7 +50,7 @@ export function CollapsibleSection({
   return (
     <View style={styles.container}>
       <TouchableOpacity
-        style={styles.header}
+        style={[styles.header, headerAlign === 'center' && styles.headerCentered]}
         onPress={() => setIsOpen((prev) => !prev)}
         activeOpacity={0.7}
         accessibilityRole="button"
@@ -56,12 +58,12 @@ export function CollapsibleSection({
         accessibilityLabel={`${title}, ${tasks.length} tasks`}
         accessibilityHint={isOpen ? 'Collapses this section' : 'Expands this section'}
       >
+        <Text style={[styles.label, { color: colors.textMuted }]}>{title}</Text>
         <Feather
           name={isOpen ? 'chevron-down' : 'chevron-right'}
           size={16}
           color={colors.textMuted}
         />
-        <Text style={[styles.label, { color: colors.textMuted }]}>{title}</Text>
       </TouchableOpacity>
 
       {isOpen && (
@@ -113,6 +115,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
+  },
+  headerCentered: {
+    justifyContent: 'center',
   },
   label: {
     fontSize: typography.sm,

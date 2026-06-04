@@ -2,14 +2,11 @@ const { IOSConfig, withInfoPlist, withXcodeProject } = require('@expo/config-plu
 const fs = require('fs');
 const path = require('path');
 
-const ALARM_KIT_USAGE_DESCRIPTION =
-  'Allow Vouch to schedule serious deadline alarms for tasks that are almost due.';
 const APP_INTENTS_PACKAGE_FILE = 'VouchAlarmKitAppIntentsPackage.swift';
 
 function withAlarmKitInfoPlist(config) {
   return withInfoPlist(config, (nextConfig) => {
-    nextConfig.modResults.NSAlarmKitUsageDescription =
-      nextConfig.modResults.NSAlarmKitUsageDescription || ALARM_KIT_USAGE_DESCRIPTION;
+    delete nextConfig.modResults.NSAlarmKitUsageDescription;
     return nextConfig;
   });
 }
@@ -35,6 +32,15 @@ function withAlarmKitAppIntentsPackage(config) {
         groupName: projectName,
         project,
       });
+    }
+
+    // Enable AppIntents metadata extraction from dependent static libraries
+    const buildConfigs = project.pbxXCBuildConfigurationSection();
+    for (const key in buildConfigs) {
+      const config = buildConfigs[key];
+      if (config.buildSettings && config.buildSettings.PRODUCT_NAME === projectName) {
+        config.buildSettings.GENERATE_APPINTENTS_METADATA_FOR_DEPENDENCIES = 'YES';
+      }
     }
 
     return nextConfig;

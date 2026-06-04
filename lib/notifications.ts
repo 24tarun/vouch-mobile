@@ -278,8 +278,8 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       await clearLocalReminderNotificationsAsync();
       console.log('[notifications] local reminder sync summary', {
         userId,
-        fetchedReminders: reminderRows.length,
-        pendingReminders: 0,
+        fetchedFutureReminderRows: reminderRows.length,
+        fetchedUnsentFutureReminderRows: 0,
         activeTasks: 0,
         scheduledExpo: 0,
         scheduledAlarmKit: 0,
@@ -516,8 +516,8 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     }
     console.log('[notifications] local reminder sync summary', {
       userId,
-      fetchedReminders: reminderRows.length,
-      pendingReminders: pendingReminderRows.length,
+      fetchedFutureReminderRows: reminderRows.length,
+      fetchedUnsentFutureReminderRows: pendingReminderRows.length,
       activeTasks: tasksById.size,
       validFutureReminders: validReminders.length,
       reusedExpo: reusedExpoCount,

@@ -28,6 +28,7 @@ interface TabConfig {
 
 const TABS: TabConfig[] = [
   { name: 'tasks/index',       icon: 'check-circle', title: 'Tasks'       },
+  { name: 'history/index',     icon: 'clock',        title: 'History'     },
   { name: 'friends/index',     icon: 'users',        title: 'Friends'     },
   { name: 'commitments/index', icon: 'target',       title: 'Commits'     },
   { name: 'ledger/index',      icon: 'credit-card',  title: 'Ledger'      },
@@ -43,8 +44,8 @@ function TabIcon({
   focused: boolean;
   badgeCount?: number;
 }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const tint = focused ? colors.tabActive : colors.tabInactive;
   const badgeText = badgeCount > 99 ? '99+' : badgeCount > 0 ? String(badgeCount) : null;
 
@@ -69,8 +70,8 @@ export default function AppLayout() {
 }
 
 function AppLayoutContent() {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const taskCreatorHandle = useTaskCreatorHandle();
@@ -270,13 +271,16 @@ function AppLayoutContent() {
   );
 }
 
-const makeStyles = (colors: Colors) => StyleSheet.create({
+const makeStyles = (colors: Colors, isDark: boolean) => StyleSheet.create({
   tabBar: {
     backgroundColor: colors.tabBar,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     elevation: 0,
-    shadowOpacity: 0,
+    shadowColor: '#0F172A',
+    shadowOpacity: isDark ? 0 : 0.06,
+    shadowRadius: isDark ? 0 : 10,
+    shadowOffset: { width: 0, height: isDark ? 0 : -2 },
   },
   tabBarBg: {
     flex: 1,

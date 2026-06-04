@@ -39,29 +39,29 @@ export const darkColors = {
 
 export const lightColors = {
   // Backgrounds
-  bg: '#F2F2F7',
+  bg: '#F7F8FC',
   surface: '#FFFFFF',
-  surface2: '#E5E5EA',
+  surface2: '#EEF2F7',
 
   // Borders
-  border: '#D1D1D6',
-  borderStrong: '#AEAEB2',
+  border: '#D8DEE8',
+  borderStrong: '#C3CBD8',
 
   // Text
   text: '#1C1C1E',
-  textMuted: '#636366',
-  textSubtle: '#AEAEB2',
+  textMuted: '#5B6472',
+  textSubtle: '#8C95A3',
 
   // Interactive
   primary: '#1C1C1E',
   primaryFg: '#FFFFFF',
-  accentCyan: '#00B8D9',
+  accentCyan: '#0EA5C6',
 
   // Inputs
   inputBg: '#FFFFFF',
-  inputBorder: '#D1D1D6',
-  inputBorderFocus: '#636366',
-  inputPlaceholder: '#AEAEB2',
+  inputBorder: '#D8DEE8',
+  inputBorderFocus: '#5B6472',
+  inputPlaceholder: '#8C95A3',
 
   // Semantic
   destructive: '#DC2626',
@@ -71,9 +71,9 @@ export const lightColors = {
   warning: '#D97706',
 
   // Tab bar
-  tabBar: '#F2F2F7',
+  tabBar: '#FFFFFF',
   tabActive: '#1C1C1E',
-  tabInactive: '#AEAEB2',
+  tabInactive: '#98A2B3',
 } as const;
 
 export type Colors = { [K in keyof typeof darkColors]: string };
@@ -112,3 +112,7 @@ export const typography = {
   semibold: '600' as const,
   bold: '700' as const,
 } as const;
+
+export function highlightedRowBackground(colors: Colors, isDark: boolean): string {
+  return isDark ? `${colors.surface}CC` : colors.surface;
+}

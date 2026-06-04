@@ -14,7 +14,7 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   },
   reputationBarWrap: {
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.sm,
+    paddingBottom: spacing.lg,
   },
   taskGreeting: {
     width: 'auto',
@@ -44,9 +44,9 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     fontWeight: typography.bold,
     color: colors.accentCyan,
     letterSpacing: -0.5,
-    textShadowColor: 'rgba(190,242,100,0.4)',
+    textShadowColor: isDark ? 'rgba(190,242,100,0.4)' : 'transparent',
     textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 8,
+    textShadowRadius: isDark ? 8 : 0,
   },
   taskDateOrdinal: {
     fontSize: 11,
@@ -83,7 +83,7 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
     borderWidth: 1,
-    borderColor: '#00000024',
+    borderColor: isDark ? '#00000024' : '#FFFFFFB8',
   },
   bottomActionButtonRed: {
     backgroundColor: colors.destructive,
@@ -104,10 +104,10 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   bottomActionButtonGreen: {
     backgroundColor: colors.success,
     shadowColor: colors.success,
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 2,
+    shadowOpacity: isDark ? 0.25 : 0.18,
+    shadowRadius: isDark ? 4 : 10,
+    shadowOffset: { width: 0, height: isDark ? 0 : 6 },
+    elevation: isDark ? 2 : 3,
   },
   creatorOverlayBackdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -120,6 +120,14 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     borderWidth: 1,
     backgroundColor: colors.surface,
     overflow: 'hidden',
+  },
+  creatorHidden: {
+    opacity: 0,
+    pointerEvents: 'none' as const,
+    position: 'absolute' as const,
+    width: 0,
+    height: 0,
+    overflow: 'hidden' as const,
   },
   creatorTitleField: {
     minHeight: 44,

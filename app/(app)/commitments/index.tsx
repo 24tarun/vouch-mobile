@@ -471,11 +471,21 @@ function CreateModal({
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
-function EmptyState({ onNew: _onNew }: { onNew: () => void }) {
+function EmptyState({ onNew }: { onNew: () => void }) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
+  const trafficIconColor = isDark ? '#0b1329' : '#0f172a';
   return (
     <View style={styles.emptyWrap}>
+      <TouchableOpacity
+        style={styles.emptyCreateBtn}
+        onPress={onNew}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel="Create a commitment"
+      >
+        <Feather name="plus" size={32} color={trafficIconColor} />
+      </TouchableOpacity>
       <Text style={styles.emptyMessage}>{"Create a Commitment and stick to it,\nif you can 😉😉"}</Text>
     </View>
   );
@@ -787,6 +797,22 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
 
   // Empty state
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: spacing.xl },
+  emptyCreateBtn: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#00000024',
+    shadowColor: colors.success,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+    marginBottom: spacing.lg,
+  },
   emptyMessage: { fontSize: typography.md, color: colors.textMuted, textAlign: 'center', lineHeight: 24 },
 
   // Picker modal

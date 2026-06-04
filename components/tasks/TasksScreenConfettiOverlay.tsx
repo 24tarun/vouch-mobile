@@ -41,7 +41,7 @@ export const TasksScreenConfettiOverlay = memo(function TasksScreenConfettiOverl
           source={require('../../assets/animations/confetti.json')}
           autoPlay
           loop={false}
-          speed={1.05}
+          speed={2.1}
           resizeMode="cover"
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
           onAnimationFinish={() => setConfettiBursts((prev) => prev.filter((id) => id !== burstId))}

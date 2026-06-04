@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { type Colors, spacing, typography } from '@/lib/theme';
+import { highlightedRowBackground, type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { PageHeader } from '@/components/PageHeader';
@@ -441,7 +441,7 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.sm,
     paddingTop: spacing.lg,
     paddingBottom: spacing.xxl,
   },
@@ -528,16 +528,19 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     paddingBottom: spacing.sm,
   },
   entryRow: {
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.sm,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
     gap: spacing.sm,
+    backgroundColor: highlightedRowBackground(colors, isDark),
+    borderRadius: radius.md,
   },
   entryMain: {
     flex: 1,
     minWidth: 0,
-    gap: spacing.xs,
+    gap: 2,
   },
   entryTitle: {
     fontSize: 18,

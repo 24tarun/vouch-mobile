@@ -1,10 +1,19 @@
-import { useMemo, memo, useEffect, useRef, useState } from 'react';
-import { ActionSheetIOS, ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useMemo, memo, useEffect, useRef, useState } from 'react';
+import { ActionSheetIOS, ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useQueryClient } from '@tanstack/react-query';
-import { type Colors, radius, spacing, typography } from '@/lib/theme';
+import { highlightedRowBackground, type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import { StatusPill } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
@@ -73,8 +82,8 @@ export const TaskRow = memo(function TaskRow({
   onSubtaskComposerFocus,
   proofActionInProgress = false,
 }: TaskRowProps) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const router = useRouter();
   const queryClient = useQueryClient();
   const {
@@ -87,9 +96,74 @@ export const TaskRow = memo(function TaskRow({
     ? TASK_COMPLETED_LIKE_STATUSES.has(task.status as TaskStatus)
     : (task.completed ?? false);
   const isRepeatingTask = Boolean(task.recurrence_rule_id);
-
-  // Active rows are tappable to expand the action tray
+  const canOpenDetail = !isOptimisticTaskId(task.id);
+  const { width: screenWidth } = useWindowDimensions();
   const [expanded, setExpanded] = useState(false);
+
+  // ── Swipe gesture ──────────────────────────────────────────────────────────
+  const translateX = useSharedValue(0);
+  const SWIPE_THRESHOLD = screenWidth * 0.35;
+
+  const triggerComplete = useCallback(() => {
+    if (task.requires_proof && !task.has_proof) {
+      // Shrug — shake and spring back
+      translateX.value = withSequence(
+        withTiming(-12, { duration: 60 }),
+        withTiming(12, { duration: 60 }),
+        withTiming(-8, { duration: 50 }),
+        withTiming(8, { duration: 50 }),
+        withTiming(0, { duration: 50 }),
+      );
+      return;
+    }
+    // Flick off-screen right, then trigger complete
+    translateX.value = withTiming(screenWidth, { duration: 200 });
+    onComplete?.(task.id);
+  }, [task.requires_proof, task.has_proof, task.id, onComplete, translateX, screenWidth]);
+
+  const triggerOpenDetail = useCallback(() => {
+    if (!canOpenDetail) return;
+    // Flick off-screen left, then navigate
+    translateX.value = withTiming(-screenWidth, { duration: 200 });
+    // Small delay so user sees the flick
+    setTimeout(() => {
+      router.push(`/tasks/${task.id}` as any);
+      // Reset position for when user navigates back
+      translateX.value = 0;
+    }, 150);
+  }, [canOpenDetail, translateX, screenWidth, router, task.id]);
+
+  const panGesture = useMemo(() => {
+    const gesture = Gesture.Pan()
+      .activeOffsetX([-15, 15])
+      .failOffsetY([-10, 10])
+      .onUpdate((e) => {
+        translateX.value = e.translationX;
+      })
+      .onEnd((e) => {
+        if (e.translationX > SWIPE_THRESHOLD) {
+          runOnJS(triggerComplete)();
+        } else if (e.translationX < -SWIPE_THRESHOLD) {
+          runOnJS(triggerOpenDetail)();
+        } else {
+          translateX.value = withTiming(0, { duration: 150 });
+        }
+      });
+    if (expanded) gesture.enabled(false);
+    return gesture;
+  }, [SWIPE_THRESHOLD, triggerComplete, triggerOpenDetail, translateX, expanded]);
+
+  const swipeAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  const swipeBgStyle = useAnimatedStyle(() => {
+    const tx = translateX.value;
+    return {
+      backgroundColor: tx > 0 ? colors.success : tx < 0 ? colors.warning : 'transparent',
+    };
+  });
+
   const [isPostponing, setIsPostponing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [proofCaptureOpen, setProofCaptureOpen] = useState(false);
@@ -301,7 +375,6 @@ export const TaskRow = memo(function TaskRow({
   const canPostpone = Boolean(onPostpone) && !task.postponed_at && !isPostponing;
   const isCurrentTaskPomo = activePomoSession?.task_id === task.id;
   const currentTaskPomoStatus = isCurrentTaskPomo ? activePomoSession?.status : null;
-  const canOpenDetail = !isOptimisticTaskId(task.id);
 
   function openDetail() {
     if (!canOpenDetail) {
@@ -454,9 +527,6 @@ export const TaskRow = memo(function TaskRow({
         accessibilityRole="button"
         accessibilityLabel={task.title}
       >
-        <View style={styles.circleCompleted}>
-          <Feather name="check" size={13} color={colors.textMuted} />
-        </View>
         <View style={styles.completedMain}>
           <View style={styles.completedTitleRow}>
             <Text style={styles.completedTitle} numberOfLines={1}>{task.title}</Text>
@@ -475,8 +545,11 @@ export const TaskRow = memo(function TaskRow({
 
   // ── Active row ─────────────────────────────────────────────────────────────
   return (
-    <View style={[styles.container, expanded && styles.containerExpanded]}>
-      <ProofCaptureModal
+    <View style={[styles.swipeWrapper, expanded && styles.containerExpanded]}>
+      <Animated.View style={[StyleSheet.absoluteFill, styles.swipeBg, swipeBgStyle]} />
+      <GestureDetector gesture={panGesture}>
+      <Animated.View style={[styles.container, swipeAnimatedStyle]}>
+        <ProofCaptureModal
         visible={proofCaptureOpen}
         onClose={() => setProofCaptureOpen(false)}
         onAssetPicked={async (asset) => {
@@ -489,23 +562,6 @@ export const TaskRow = memo(function TaskRow({
         accessibilityRole="button"
         accessibilityLabel={`${task.title}, ${expanded ? 'collapse' : 'expand'}`}
       >
-        {/* Circle — tapping only toggles completion */}
-        <Pressable
-          onPress={(e) => {
-            e.stopPropagation();
-            if (task.requires_proof && !task.has_proof) {
-              openProofSourcePicker();
-            } else {
-              onComplete?.(task.id);
-            }
-          }}
-          style={({ pressed }) => [styles.circle, pressed && styles.circlePressed]}
-          accessibilityRole="checkbox"
-          accessibilityState={{ checked: false }}
-          accessibilityLabel={`Mark "${task.title}" complete`}
-          hitSlop={{ top: 11, bottom: 11, left: 11, right: 11 }}
-        />
-
         {/* Title + subtask count */}
         <View style={styles.titleRow}>
           <Text style={styles.title} numberOfLines={1}>
@@ -530,6 +586,20 @@ export const TaskRow = memo(function TaskRow({
           <View style={styles.actions}>
             <TouchableOpacity
               style={[styles.actionBtn, styles.leadingActionBtnAligned]}
+              activeOpacity={0.65}
+              accessibilityLabel="Complete task"
+              onPress={() => {
+                if (task.requires_proof && !task.has_proof) {
+                  openProofSourcePicker();
+                } else {
+                  onComplete?.(task.id);
+                }
+              }}
+            >
+              <Feather name="circle" size={20} color={colors.success} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionBtn}
               activeOpacity={0.65}
               accessibilityLabel={task.has_proof ? 'Replace proof' : 'Attach proof'}
               onPress={openProofSourcePicker}
@@ -645,28 +715,55 @@ export const TaskRow = memo(function TaskRow({
                   onPress={() => { void handleAddSubtask(); }}
                   activeOpacity={0.7}
                   accessibilityLabel="Confirm subtask"
-                  style={styles.subtaskConfirmCircle}
-                />
+                  style={styles.subtaskConfirmButton}
+                >
+                  <Feather name="plus" size={16} color={colors.textMuted} />
+                </TouchableOpacity>
               )}
             </View>
           </View>
         </View>
       )}
+      </Animated.View>
+      </GestureDetector>
     </View>
   );
 });
 
-const makeStyles = (colors: Colors) => StyleSheet.create({
-  container: {},
-  containerExpanded: {
-    backgroundColor: colors.surface,
+const makeStyles = (colors: Colors, isDark: boolean) => StyleSheet.create({
+  swipeWrapper: {
+    marginHorizontal: spacing.sm,
+    marginBottom: spacing.xs,
+    borderRadius: radius.md,
+    overflow: 'hidden',
   },
+  swipeBg: {
+    borderRadius: radius.md,
+  },
+  container: {
+    borderRadius: radius.md,
+    backgroundColor: highlightedRowBackground(colors, isDark),
+    borderWidth: isDark ? 0 : 1,
+    borderColor: isDark ? 'transparent' : colors.border,
+    shadowColor: '#0F172A',
+    shadowOpacity: isDark ? 0 : 0.06,
+    shadowRadius: isDark ? 0 : 10,
+    shadowOffset: { width: 0, height: isDark ? 0 : 4 },
+    elevation: isDark ? 0 : 1,
+  },
+  containerExpanded: {},
   completedRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: 13,
     gap: spacing.sm,
+    marginHorizontal: spacing.sm,
+    marginBottom: spacing.xs,
+    borderRadius: radius.md,
+    backgroundColor: highlightedRowBackground(colors, isDark),
+    borderWidth: isDark ? 0 : 1,
+    borderColor: isDark ? 'transparent' : colors.border,
   },
   completedMain: {
     flex: 1,
@@ -699,30 +796,6 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   rowPressed: {
     opacity: 0.7,
-  },
-  circle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 1.5,
-    borderColor: colors.textMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  circleCompleted: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 1.5,
-    borderColor: colors.textMuted,
-    backgroundColor: colors.surface2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  circlePressed: {
-    opacity: 0.6,
   },
   titleRow: {
     flex: 1,
@@ -769,6 +842,8 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   expandedPanel: {
     paddingBottom: spacing.md,
+    borderTopWidth: isDark ? 0 : 1,
+    borderTopColor: isDark ? 'transparent' : colors.border,
   },
   actions: {
     flexDirection: 'row',
@@ -802,18 +877,10 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  subtaskConfirmCircle: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: colors.success,
-    borderWidth: 1,
-    borderColor: '#00000024',
-    shadowColor: colors.success,
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 1,
+  subtaskConfirmButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 2,
   },
   actionBtnTimerLabel: {
     fontSize: typography.xs,

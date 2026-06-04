@@ -25,7 +25,7 @@ export default function SettingsThemeScreen() {
           <Feather name="chevron-left" size={20} color={colors.text} />
           <Text style={styles.manageFriendsBackText}>Settings</Text>
         </TouchableOpacity>
-        <Text style={styles.manageFriendsTitle}>Themes</Text>
+        <Text style={styles.manageFriendsTitle}>Appearance</Text>
       </View>
 
       <ScrollView
@@ -34,6 +34,7 @@ export default function SettingsThemeScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Appearance</Text>
           <View style={styles.card}>
             <View style={styles.themeModeRow}>
               {[

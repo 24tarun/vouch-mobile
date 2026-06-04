@@ -4,7 +4,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { spacing, typography } from '@/lib/theme';
+import { radius, spacing, typography, type Colors } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 
 function formatFocusedTime(totalSeconds: number): string {
@@ -22,6 +22,9 @@ interface QuickStatItemProps {
 }
 
 function QuickStatItem({ label, value, valueColor, glowColor, labelColor }: QuickStatItemProps) {
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
+
   return (
     <View style={styles.item}>
       <Text style={[styles.itemLabel, { color: labelColor }]}>{label}</Text>
@@ -59,6 +62,7 @@ export function StatsOverview({
   error = null,
 }: StatsOverviewProps) {
   const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
 
   const stats = useMemo(
     () => [
@@ -121,34 +125,41 @@ export function StatsOverview({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Colors, isDark: boolean) => StyleSheet.create({
   container: {
-    gap: spacing.xs,
+    gap: 4,
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    rowGap: spacing.xl,
-    columnGap: spacing.md,
-    paddingHorizontal: 2,
+    rowGap: 6,
+    justifyContent: 'space-between',
   },
   item: {
-    width: '30%',
-    gap: spacing.xs,
+    width: '49%',
+    minHeight: 66,
+    gap: 4,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255,255,255,0.10)' : colors.borderStrong,
+    backgroundColor: isDark ? 'rgba(15, 23, 42, 0.82)' : colors.surface,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    justifyContent: 'space-between',
   },
   itemLabel: {
-    fontSize: 10,
+    fontSize: 9,
     textTransform: 'uppercase',
     letterSpacing: 0.9,
     fontWeight: typography.bold,
-    lineHeight: 14,
+    lineHeight: 12,
   },
   itemValue: {
-    fontSize: typography.xl,
-    fontWeight: typography.normal,
-    lineHeight: 28,
+    fontSize: 18,
+    fontWeight: typography.semibold,
+    lineHeight: 20,
     textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 7,
+    textShadowRadius: 8,
   },
   errorText: {
     fontSize: 12,

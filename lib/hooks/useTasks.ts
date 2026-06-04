@@ -8,7 +8,7 @@ import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
 import { getFutureBoundaryMs } from '@/lib/utils/date-only';
 
-const PAST_LIMIT = 10;
+const PAST_LIMIT = 5;
 const DEFAULT_SORT_MODE = 'deadline_asc' as const;
 
 export type DashboardSortMode =

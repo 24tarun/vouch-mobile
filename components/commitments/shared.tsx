@@ -515,7 +515,6 @@ export function TaskPickerModal({
               <Feather name="x" size={20} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
-          <Text style={styles.pickerSubtitle}>Choose a task or recurring series</Text>
           <View style={styles.searchWrap}>
             <Feather name="search" size={15} color={colors.textMuted} />
             <TextInput
@@ -537,12 +536,17 @@ export function TaskPickerModal({
               renderItem={({ item }) => (
                 <TouchableOpacity style={styles.pickerRow} onPress={() => linkItem(item)} disabled={!!linking}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.pickerRowTitle} numberOfLines={1}>{item.title}</Text>
-                    <Text style={styles.pickerRowSub}>
-                      {item.type === 'task'
-                        ? `Task due ${item.deadline ? parseDateOnly(item.deadline.slice(0, 10)).toLocaleDateString('en-GB') : ''}`
-                        : 'Recurring series'}
-                    </Text>
+                    <View style={styles.pickerRowTitleWrap}>
+                      <Text style={styles.pickerRowTitle} numberOfLines={1}>{item.title}</Text>
+                      {item.type === 'rule' ? (
+                        <Feather name="repeat" size={14} color="#C084FC" />
+                      ) : null}
+                    </View>
+                    {item.type === 'task' ? (
+                      <Text style={styles.pickerRowSub}>
+                        {`Task due ${item.deadline ? parseDateOnly(item.deadline.slice(0, 10)).toLocaleDateString('en-GB') : ''}`}
+                      </Text>
+                    ) : null}
                   </View>
                   {linking === `${item.type}:${item.id}` ? (
                     <ActivityIndicator size="small" color={colors.accentCyan} />
@@ -620,7 +624,6 @@ const makeSharedCommitmentStyles = (colors: Colors) => StyleSheet.create({
   },
   pickerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
   pickerTitle: { fontSize: typography.md, fontWeight: typography.bold, color: colors.text },
-  pickerSubtitle: { fontSize: typography.xs, color: colors.textMuted, marginBottom: spacing.md },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -643,6 +646,7 @@ const makeSharedCommitmentStyles = (colors: Colors) => StyleSheet.create({
     borderBottomColor: colors.border,
     gap: spacing.md,
   },
-  pickerRowTitle: { fontSize: 18, color: colors.text },
+  pickerRowTitleWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
+  pickerRowTitle: { fontSize: 18, color: colors.text, flexShrink: 1 },
   pickerRowSub: { fontSize: typography.xs, color: colors.textMuted, marginTop: 2 },
 });

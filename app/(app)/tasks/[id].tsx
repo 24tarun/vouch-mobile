@@ -940,46 +940,52 @@ export default function TaskDetailScreen() {
   // ── Undo complete ──────────────────────────────────────────────────────────
   async function handleUndoComplete() {
     if (!task || isUndoingComplete) return;
-    const targetStatusLabel = task.postponed_at ? 'postponed' : 'active';
+    setIsUndoingComplete(true);
+    try {
+      const previousTask = task;
+      const nowIso = new Date().toISOString();
 
-    Alert.alert(
-      'Undo completion?',
-      `The selected task will be moved back to ${targetStatusLabel} status.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Undo',
-          onPress: async () => {
-            setIsUndoingComplete(true);
-            try {
-              const result = await undoCompleteTask(task.id, task.status);
-              if (!result.success) {
-                Alert.alert('Failed to undo', result.error ?? 'Please try again.');
-                return;
-              }
-              const nowIso = new Date().toISOString();
-              queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
-                ...previous,
-                task: previous.task
-                  ? {
-                      ...previous.task,
-                      status: 'ACTIVE',
-                      marked_completed_at: null,
-                      voucher_response_deadline: null,
-                      voucher_id: previous.task.ai_escalated_from ? AI_PROFILE_ID : previous.task.voucher_id,
-                      ai_escalated_from: previous.task.ai_escalated_from ? false : previous.task.ai_escalated_from,
-                      updated_at: nowIso,
-                    }
-                  : previous.task,
-              } : previous);
-              invalidateDerivedTaskViews();
-            } finally {
-              setIsUndoingComplete(false);
+      queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
+        ...previous,
+        task: previous.task
+          ? {
+              ...previous.task,
+              status: 'ACTIVE',
+              marked_completed_at: null,
+              voucher_response_deadline: null,
+              voucher_id: previous.task.ai_escalated_from ? AI_PROFILE_ID : previous.task.voucher_id,
+              ai_escalated_from: previous.task.ai_escalated_from ? false : previous.task.ai_escalated_from,
+              updated_at: nowIso,
             }
-          },
-        },
-      ],
-    );
+          : previous.task,
+      } : previous);
+
+      const result = await undoCompleteTask(task.id, task.status);
+      if (!result.success) {
+        queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
+          ...previous,
+          task: previous.task
+            ? {
+                ...previous.task,
+                ...previousTask,
+              }
+            : previous.task,
+        } : previous);
+        Toast.show({
+          type: 'error',
+          text1: 'Undo failed',
+          text2: result.error ?? 'Please try again.',
+          position: 'bottom',
+          bottomOffset: 84,
+          visibilityTime: 2500,
+        });
+        return;
+      }
+
+      invalidateDerivedTaskViews();
+    } finally {
+      setIsUndoingComplete(false);
+    }
   }
 
   // ── Complete task ──────────────────────────────────────────────────────────

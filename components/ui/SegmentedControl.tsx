@@ -46,6 +46,13 @@ export function SegmentedControl({
               styles.segOption,
               isSignalVariant && styles.segOptionSignal,
               isActive && styles.segOptionActive,
+              !isSignalVariant
+                ? {
+                    borderWidth: 1,
+                    borderColor: isActive ? `${signalColor}66` : 'transparent',
+                    backgroundColor: isActive ? `${signalColor}20` : 'transparent',
+                  }
+                : null,
               isSignalVariant
                 ? {
                     borderColor: isActive ? signalColor : `${signalColor}66`,
@@ -69,6 +76,7 @@ export function SegmentedControl({
                   styles.segLabel,
                   isSignalVariant && styles.segLabelSignal,
                   isActive && styles.segLabelActive,
+                  !isSignalVariant && isActive ? { color: signalColor } : null,
                   isSignalVariant
                     ? (isActive
                       ? styles.segLabelSignalActive
@@ -88,6 +96,7 @@ export function SegmentedControl({
               <View
                 style={[
                   styles.segBadge,
+                  { backgroundColor: signalColor },
                 ]}
               >
                 <Text style={styles.segBadgeText}>

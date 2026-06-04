@@ -11,12 +11,18 @@ import UIKit
 private let openTaskEventName = "onOpenTask"
 private let pendingOpenTaskActionsKey = "vouch_alarmkit_pending_open_task_actions_v1"
 
-private struct AlarmKitOpenTaskAction: Codable {
-  let taskId: String
-  let reminderId: String
-  let nativeAlarmId: String
+public struct AlarmKitOpenTaskAction: Codable {
+  public let taskId: String
+  public let reminderId: String
+  public let nativeAlarmId: String
 
-  var eventBody: [String: String] {
+  public init(taskId: String, reminderId: String, nativeAlarmId: String) {
+    self.taskId = taskId
+    self.reminderId = reminderId
+    self.nativeAlarmId = nativeAlarmId
+  }
+
+  public var eventBody: [String: String] {
     [
       "taskId": taskId,
       "reminderId": reminderId,
@@ -25,14 +31,14 @@ private struct AlarmKitOpenTaskAction: Codable {
   }
 }
 
-private final class AlarmKitOpenTaskActionStore {
-  static let shared = AlarmKitOpenTaskActionStore()
-  static let didEnqueueNotification = Notification.Name("VouchAlarmKitDidEnqueueOpenTaskAction")
+public final class AlarmKitOpenTaskActionStore {
+  public static let shared = AlarmKitOpenTaskActionStore()
+  public static let didEnqueueNotification = Notification.Name("VouchAlarmKitDidEnqueueOpenTaskAction")
 
   private let lock = NSLock()
   private let defaults = UserDefaults.standard
 
-  func enqueue(_ action: AlarmKitOpenTaskAction) {
+  public func enqueue(_ action: AlarmKitOpenTaskAction) {
     lock.lock()
     var actions = readActionsLocked()
     actions.append(action)
@@ -42,7 +48,7 @@ private final class AlarmKitOpenTaskActionStore {
     NotificationCenter.default.post(name: Self.didEnqueueNotification, object: nil)
   }
 
-  func consumeAll() -> [AlarmKitOpenTaskAction] {
+  public func consumeAll() -> [AlarmKitOpenTaskAction] {
     lock.lock()
     let actions = readActionsLocked()
     defaults.removeObject(forKey: pendingOpenTaskActionsKey)
@@ -289,14 +295,14 @@ private extension ISO8601DateFormatter {
 
 #if canImport(AlarmKit)
 @available(iOS 26.0, *)
-public struct VouchAlarmKitAppIntentsPackage: AppIntentsPackage {
-  public init() {}
-}
+public struct VouchAlarmMetadata: AlarmMetadata, Codable, Sendable {
+  public let reminderId: String
+  public let taskId: String
 
-@available(iOS 26.0, *)
-struct VouchAlarmMetadata: AlarmMetadata, Codable, Sendable {
-  let reminderId: String
-  let taskId: String
+  public init(reminderId: String, taskId: String) {
+    self.reminderId = reminderId
+    self.taskId = taskId
+  }
 }
 
 @available(iOS 26.0, *)
@@ -336,6 +342,10 @@ public struct VouchOpenTaskAlarmIntent: LiveActivityIntent {
       )
     )
 
+    if let url = Self.openTaskURL(taskId: taskId, reminderId: reminderId, nativeAlarmId: nativeAlarmId) {
+      await UIApplication.shared.open(url)
+    }
+
     return .result()
   }
 
@@ -349,5 +359,10 @@ public struct VouchOpenTaskAlarmIntent: LiveActivityIntent {
     ]
     return components.url
   }
+}
+
+@available(iOS 26.0, *)
+public struct VouchAlarmKitAppIntentsPackage: AppIntentsPackage {
+  public init() {}
 }
 #endif

@@ -1,29 +1,18 @@
 import type { ReactNode, RefObject } from 'react';
 import { useMemo } from 'react';
 
-import { Alert, Platform, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { Platform, RefreshControl, ScrollView, Text } from 'react-native';
 import type { ImagePickerAsset } from 'expo-image-picker';
-import { useRouter } from 'expo-router';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
-import { isOptimisticTaskId } from '@/lib/tasks/task-id';
-import { StatusPill } from '@/components/StatusPill';
 import { TaskRow, type TaskRowData } from '@/components/TaskRow';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { TasksEmptyState } from './TasksEmptyState';
 
 interface TaskContentProps {
   header?: ReactNode;
-  isSearchActive: boolean;
-  searchLoading: boolean;
-  searchError: string | null;
-  searchResults: TaskRowData[];
   dueSoonTasks: TaskRowData[];
   futureTasks: TaskRowData[];
-  pastTasks: TaskRowData[];
-  hasMorePast: boolean;
-  loadingMore: boolean;
-  loadMorePastTasks: () => void;
   refreshing: boolean;
   onRefresh: () => Promise<void>;
   onComplete: (taskId: string) => Promise<void>;
@@ -38,20 +27,13 @@ interface TaskContentProps {
   bottomInsetOffset?: number;
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
   proofUploadTaskId?: string | null;
+  hasPastTasks?: boolean;
 }
 
 export function TaskContent({
   header,
-  isSearchActive,
-  searchLoading,
-  searchError,
-  searchResults,
   dueSoonTasks,
   futureTasks,
-  pastTasks,
-  hasMorePast,
-  loadingMore,
-  loadMorePastTasks,
   refreshing,
   onRefresh,
   onComplete,
@@ -66,10 +48,10 @@ export function TaskContent({
   bottomInsetOffset = 0,
   onSubtaskComposerFocus,
   proofUploadTaskId = null,
+  hasPastTasks = false,
 }: TaskContentProps) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
-  const router = useRouter();
   const baseInset = bottomInsetOffset + 24;
   const computedBottomInset = keyboardBottomInset > 0
     ? Math.max(keyboardBottomInset + 24, baseInset)
@@ -98,43 +80,12 @@ export function TaskContent({
       }
     >
       {header}
-      {isSearchActive ? (
-        <>
-          {searchLoading ? (
-            <Text style={styles.placeholder}>Searching tasks…</Text>
-          ) : searchError ? (
-            <Text style={[styles.placeholder, { color: colors.destructive }]}>{searchError}</Text>
-          ) : searchResults.length === 0 ? (
-            <Text style={styles.placeholder}>No matching tasks found.</Text>
-          ) : (
-            searchResults.map((task) => (
-              <TouchableOpacity
-                key={`search-${task.id}`}
-                style={styles.searchResultRow}
-                activeOpacity={0.7}
-                onPress={() => {
-                  if (isOptimisticTaskId(task.id)) {
-                    Alert.alert('Please wait', 'Task is still being created.');
-                    return;
-                  }
-                  router.push(`/tasks/${task.id}` as any);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={task.title}
-              >
-                <Text style={styles.searchResultTitle} numberOfLines={1}>
-                  {task.title}
-                </Text>
-                <View style={styles.searchResultMeta}>
-                  {task.status && <StatusPill status={task.status} />}
-                  <Feather name="external-link" size={14} color={colors.textMuted} />
-                </View>
-              </TouchableOpacity>
-            ))
-          )}
-        </>
-      ) : dueSoonTasks.length === 0 && futureTasks.length === 0 && pastTasks.length === 0 ? (
-        <Text style={styles.placeholder}>Your tasks will appear here.</Text>
+      {dueSoonTasks.length === 0 && futureTasks.length === 0 ? (
+        hasPastTasks ? (
+          <Text style={styles.placeholder}>No active tasks.</Text>
+        ) : (
+          <TasksEmptyState />
+        )
       ) : (
         <>
           {dueSoonTasks.map((task) => (
@@ -154,21 +105,6 @@ export function TaskContent({
           <CollapsibleSection
             title="Future"
             tasks={futureTasks}
-            onComplete={onComplete}
-            onProofPicked={onProofPicked}
-            onProofRemoved={onProofRemoved}
-            onPostpone={onPostpone}
-            onDelete={onDelete}
-            defaultPomoDurationMinutes={defaultPomoDurationMinutes}
-            onSubtaskComposerFocus={onSubtaskComposerFocus}
-            proofUploadTaskId={proofUploadTaskId}
-          />
-          <CollapsibleSection
-            title="Past"
-            tasks={pastTasks}
-            hasMore={hasMorePast}
-            loadingMore={loadingMore}
-            onLoadMore={loadMorePastTasks}
             onComplete={onComplete}
             onProofPicked={onProofPicked}
             onProofRemoved={onProofRemoved}

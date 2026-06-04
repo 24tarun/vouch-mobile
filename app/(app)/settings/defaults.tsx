@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -14,7 +13,6 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 
 import { useTheme } from '@/lib/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
@@ -25,15 +23,10 @@ import { supabase } from '@/lib/supabase';
 import { type Currency } from '@/lib/types';
 import { getFailureCostBounds } from '@/lib/domain/failure-cost';
 import { normalizePomoDurationMinutes } from '@/lib/constants/timings';
-import {
-  type NotificationSoundKey,
-  getNotificationSoundConfigs,
-  getNotificationSoundPreviewAsset,
-  normalizeNotificationSoundKey,
-} from '@/lib/notification-sounds';
 import { formatTimeZoneLabel, getTimeZoneOptions } from '@/lib/timezones';
 import { normalizeVoucherOption } from '@/lib/settings/relationships';
-import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
+import { useTaskSortMode } from '@/lib/hooks/useTaskSortMode';
+import type { DashboardSortMode } from '@/lib/hooks/useTasks';
 
 const POMO_MIN_MINUTES = 1;
 const POMO_MAX_MINUTES = 120;
@@ -41,7 +34,7 @@ const EVENT_DURATION_MIN_MINUTES = 0;
 const EVENT_DURATION_MAX_MIN_MINUTES = 1000;
 const EVENT_DURATION_FALLBACK_MINUTES = 60;
 
-type PickerType = 'voucher' | 'currency' | 'timezone' | 'notificationSound' | null;
+type PickerType = 'voucher' | 'currency' | 'timezone' | 'taskSort' | null;
 
 interface PickerOption {
   label: string;
@@ -79,19 +72,15 @@ export default function SettingsDefaultsScreen() {
   const [defaultFailureCostInput, setDefaultFailureCostInput] = useState('10');
   const [defaultVoucherId, setDefaultVoucherId] = useState<string | null>(null);
   const [currency, setCurrency] = useState<Currency>('USD');
-  const [notificationSoundKey, setNotificationSoundKey] = useState<NotificationSoundKey>('default');
   const [timeZone, setTimeZone] = useState('UTC');
   const [timeZoneUserSet, setTimeZoneUserSet] = useState(false);
-  const [oneHourReminderEnabled, setOneHourReminderEnabled] = useState(true);
-  const [tenMinuteReminderEnabled, setTenMinuteReminderEnabled] = useState(true);
   const [defaultRequiresProofForAllTasks, setDefaultRequiresProofForAllTasks] = useState(false);
   const [voucherCanViewActiveTasks, setVoucherCanViewActiveTasks] = useState(true);
+  const [taskSortMode, setTaskSortMode] = useTaskSortMode();
 
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
   const [voucherVisibilityError, setVoucherVisibilityError] = useState<string | null>(null);
-  const [previewingSoundKey, setPreviewingSoundKey] = useState<NotificationSoundKey | null>(null);
-  const previewSoundRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
 
   const usernameSavedRef = useRef<string | null>(null);
   const defaultsSavedRef = useRef<string | null>(null);
@@ -129,9 +118,6 @@ export default function SettingsDefaultsScreen() {
     const nextFailureCostMajor = nextFailureCostCents / 100;
     const nextVoucherId = profile.default_voucher_id ?? user.id;
     const nextCurrency = profile.currency ?? 'USD';
-    const nextNotificationSoundKey = normalizeNotificationSoundKey(profile.notification_sound_key);
-    const nextOneHourReminder = profile.deadline_one_hour_warning_enabled ?? true;
-    const nextTenMinuteReminder = profile.deadline_final_warning_enabled ?? true;
     const nextDefaultRequiresProofForAllTasks = profile.default_requires_proof_for_all_tasks ?? false;
     const nextVoucherCanViewActiveTasks = profile.voucher_can_view_active_tasks ?? true;
     const nextTimeZone = profile.timezone ?? 'UTC';
@@ -147,9 +133,6 @@ export default function SettingsDefaultsScreen() {
     );
     setDefaultVoucherId(nextVoucherId);
     setCurrency(nextCurrency);
-    setNotificationSoundKey(nextNotificationSoundKey);
-    setOneHourReminderEnabled(nextOneHourReminder);
-    setTenMinuteReminderEnabled(nextTenMinuteReminder);
     setDefaultRequiresProofForAllTasks(nextDefaultRequiresProofForAllTasks);
     setVoucherCanViewActiveTasks(nextVoucherCanViewActiveTasks);
     setTimeZone(nextTimeZone);
@@ -162,9 +145,6 @@ export default function SettingsDefaultsScreen() {
       defaultFailureCostCents: nextFailureCostCents,
       defaultVoucherId: nextVoucherId,
       currency: nextCurrency,
-      notificationSoundKey: nextNotificationSoundKey,
-      oneHourReminderEnabled: nextOneHourReminder,
-      tenMinuteReminderEnabled: nextTenMinuteReminder,
       defaultRequiresProofForAllTasks: nextDefaultRequiresProofForAllTasks,
       timeZone: nextTimeZone,
       timeZoneUserSet: nextTimeZoneUserSet,
@@ -223,26 +203,42 @@ export default function SettingsDefaultsScreen() {
 
   const voucherPickerOptions = useMemo(() => voucherOptions.map((option) => ({ label: option.username, value: option.id })), [voucherOptions]);
   const timeZonePickerOptions = useMemo(() => timeZoneOptions.map((zone) => ({ label: formatTimeZoneLabel(zone), value: zone })), [timeZoneOptions]);
-  const notificationSoundPickerOptions = useMemo(() => getNotificationSoundConfigs().map((sound) => ({ label: sound.label, value: sound.key })), []);
+  const taskSortPickerOptions: PickerOption[] = useMemo(
+    () => [
+      { label: 'Deadline ascending', value: 'deadline_asc' },
+      { label: 'Deadline descending', value: 'deadline_desc' },
+      { label: 'Created ascending', value: 'created_asc' },
+      { label: 'Created descending', value: 'created_desc' },
+    ],
+    [],
+  );
+  const taskSortLabel = useMemo(() => {
+    const labels: Record<DashboardSortMode, string> = {
+      deadline_asc: 'Deadline ascending',
+      deadline_desc: 'Deadline descending',
+      created_asc: 'Created ascending',
+      created_desc: 'Created descending',
+    };
+    return labels[taskSortMode] ?? 'Deadline ascending';
+  }, [taskSortMode]);
 
   const pickerOptions: PickerOption[] = useMemo(() => {
     if (activePicker === 'voucher') return voucherPickerOptions;
     if (activePicker === 'currency') return CURRENCY_OPTIONS;
     if (activePicker === 'timezone') return timeZonePickerOptions;
-    if (activePicker === 'notificationSound') return notificationSoundPickerOptions;
+    if (activePicker === 'taskSort') return taskSortPickerOptions;
     return [];
-  }, [activePicker, voucherPickerOptions, timeZonePickerOptions, notificationSoundPickerOptions]);
+  }, [activePicker, voucherPickerOptions, timeZonePickerOptions, taskSortPickerOptions]);
 
   const pickerTitle = useMemo(() => {
     if (activePicker === 'voucher') return 'Default Voucher';
     if (activePicker === 'currency') return 'Currency';
     if (activePicker === 'timezone') return 'Timezone';
-    if (activePicker === 'notificationSound') return 'Notification sound';
+    if (activePicker === 'taskSort') return 'Task sorting';
     return '';
   }, [activePicker]);
 
   const defaultVoucherLabel = useMemo(() => voucherOptions.find((option) => option.id === defaultVoucherId)?.username ?? 'Select voucher', [voucherOptions, defaultVoucherId]);
-  const notificationSoundLabel = useMemo(() => getNotificationSoundConfigs().find((option) => option.key === notificationSoundKey)?.label ?? 'Default', [notificationSoundKey]);
 
   const defaultsSnapshot = useMemo(
     () => JSON.stringify({
@@ -251,9 +247,6 @@ export default function SettingsDefaultsScreen() {
       defaultFailureCostCents: parsedFailureCostCents,
       defaultVoucherId: resolvedDefaultVoucherId,
       currency,
-      notificationSoundKey,
-      oneHourReminderEnabled,
-      tenMinuteReminderEnabled,
       defaultRequiresProofForAllTasks,
       timeZone,
       timeZoneUserSet,
@@ -264,9 +257,6 @@ export default function SettingsDefaultsScreen() {
       parsedFailureCostCents,
       resolvedDefaultVoucherId,
       currency,
-      notificationSoundKey,
-      oneHourReminderEnabled,
-      tenMinuteReminderEnabled,
       defaultRequiresProofForAllTasks,
       timeZone,
       timeZoneUserSet,
@@ -287,47 +277,9 @@ export default function SettingsDefaultsScreen() {
       setTimeZone(value);
       setTimeZoneUserSet(true);
     }
-    if (activePicker === 'notificationSound') setNotificationSoundKey(normalizeNotificationSoundKey(value));
+    if (activePicker === 'taskSort') setTaskSortMode(value as DashboardSortMode);
     setActivePicker(null);
   }
-
-  async function handlePreviewNotificationSound(key: NotificationSoundKey) {
-    setPreviewingSoundKey(key);
-    try {
-      const previewAsset = getNotificationSoundPreviewAsset(key);
-      if (!previewAsset) {
-        Alert.alert('No preview available', 'Default system sound cannot be previewed in-app.');
-        return;
-      }
-
-      if (previewSoundRef.current) {
-        previewSoundRef.current.remove();
-        previewSoundRef.current = null;
-      }
-
-      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
-      const player = createAudioPlayer(previewAsset);
-      previewSoundRef.current = player;
-      player.seekTo(0);
-      player.play();
-
-      setTimeout(() => {
-        if (previewSoundRef.current !== player) return;
-        player.remove();
-        previewSoundRef.current = null;
-      }, 3000);
-    } finally {
-      setTimeout(() => {
-        setPreviewingSoundKey((current) => (current === key ? null : current));
-      }, 1200);
-    }
-  }
-
-  useEffect(() => () => {
-    if (!previewSoundRef.current) return;
-    previewSoundRef.current.remove();
-    previewSoundRef.current = null;
-  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -406,11 +358,8 @@ export default function SettingsDefaultsScreen() {
         default_failure_cost_cents: parsedFailureCostCents,
         default_voucher_id: resolvedDefaultVoucherId,
         currency,
-        notification_sound_key: notificationSoundKey,
         timezone: timeZone,
         timezone_user_set: timeZoneUserSet,
-        deadline_one_hour_warning_enabled: oneHourReminderEnabled,
-        deadline_final_warning_enabled: tenMinuteReminderEnabled,
         default_requires_proof_for_all_tasks: defaultRequiresProofForAllTasks,
       } : current);
 
@@ -420,11 +369,8 @@ export default function SettingsDefaultsScreen() {
         default_failure_cost_cents: parsedFailureCostCents,
         default_voucher_id: resolvedDefaultVoucherId,
         currency,
-        notification_sound_key: notificationSoundKey,
         timezone: timeZone,
         timezone_user_set: timeZoneUserSet,
-        deadline_one_hour_warning_enabled: oneHourReminderEnabled,
-        deadline_final_warning_enabled: tenMinuteReminderEnabled,
         default_requires_proof_for_all_tasks: defaultRequiresProofForAllTasks,
       }).eq('id', user.id);
 
@@ -438,7 +384,6 @@ export default function SettingsDefaultsScreen() {
       }
 
       defaultsSavedRef.current = defaultsSnapshot;
-      void syncLocalReminderNotificationsAsync(user.id);
     }, 500);
 
     return () => {
@@ -453,9 +398,6 @@ export default function SettingsDefaultsScreen() {
     parsedEventDurationMinutes,
     parsedFailureCostCents,
     currency,
-    notificationSoundKey,
-    oneHourReminderEnabled,
-    tenMinuteReminderEnabled,
     defaultRequiresProofForAllTasks,
     timeZone,
     timeZoneUserSet,
@@ -519,172 +461,157 @@ export default function SettingsDefaultsScreen() {
         <View style={styles.section}>
           <View style={styles.card}>
             <View style={styles.defaultsContent}>
-              <View style={styles.defaultsField}>
-                <View style={styles.inlineField}>
-                  <Text style={styles.inlineFieldLabel}>Email</Text>
-                  <Text style={styles.inlineFieldValue} numberOfLines={1}>{profile?.email ?? ''}</Text>
-                </View>
+              <View style={styles.inlineField}>
+                <Text style={styles.inlineFieldLabel}>Email</Text>
+                <Text style={styles.inlineFieldValue} numberOfLines={1}>{profile?.email ?? ''}</Text>
               </View>
 
-              <View style={styles.defaultsField}>
-                <View style={styles.inlineField}>
-                  <Text style={styles.inlineFieldLabel}>Username</Text>
-                  <TextInput
-                    style={styles.inlineFieldInput}
-                    placeholder="username"
-                    placeholderTextColor={colors.textSubtle}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    value={usernameDraft}
-                    onChangeText={(value) => {
-                      setUsernameDraft(value);
-                      setUsernameError(null);
-                    }}
-                  />
-                </View>
+              <View style={styles.inlineField}>
+                <Text style={styles.inlineFieldLabel}>Username</Text>
+                <TextInput
+                  style={styles.inlineFieldInput}
+                  placeholder="username"
+                  placeholderTextColor={colors.textSubtle}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  value={usernameDraft}
+                  onChangeText={(value) => {
+                    setUsernameDraft(value);
+                    setUsernameError(null);
+                  }}
+                />
               </View>
 
               {savingUsername ? <Text style={styles.savingText}>Saving username...</Text> : null}
               {usernameError ? <Text style={styles.errorText}>{usernameError}</Text> : null}
 
-              <View style={styles.defaultsField}>
-                <TouchableOpacity
-                  style={styles.inlineFieldButton}
-                  onPress={() => setActivePicker('currency')}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Select currency"
-                >
-                  <Text style={styles.inlineFieldLabel} numberOfLines={1}>Currency</Text>
-                  <View style={styles.inlineFieldRight}>
-                    <Text style={[styles.inlineFieldValue, styles.inlineFieldValueCompact]}>{currency}</Text>
-                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <TouchableOpacity
-                  style={styles.inlineFieldButton}
-                  onPress={() => setActivePicker('timezone')}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Select timezone"
-                >
-                  <Text style={styles.inlineFieldLabel} numberOfLines={1}>Timezone</Text>
-                  <View style={styles.inlineFieldRight}>
-                    <Text style={[styles.inlineFieldValue, styles.inlineFieldValueCompact]}>{formatTimeZoneLabel(timeZone)}</Text>
-                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <View style={styles.inlineField}>
-                  <Text style={styles.inlineFieldLabel}>Default pomo duration (mins)</Text>
-                  <TextInput
-                    style={styles.inlineFieldInput}
-                    placeholder={`${POMO_MIN_MINUTES}`}
-                    placeholderTextColor={colors.textSubtle}
-                    keyboardType="number-pad"
-                    value={defaultPomoInput}
-                    onChangeText={(value) => {
-                      setDefaultPomoInput(value);
-                      setDefaultsError(null);
-                    }}
-                  />
+              <TouchableOpacity
+                style={styles.inlineFieldButton}
+                onPress={() => setActivePicker('currency')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Select currency"
+              >
+                <Text style={styles.inlineFieldLabel} numberOfLines={1}>Currency</Text>
+                <View style={styles.inlineFieldRight}>
+                  <Text style={[styles.inlineFieldValue, styles.inlineFieldValueCompact]}>{currency}</Text>
+                  <Feather name="chevron-down" size={16} color={colors.textMuted} />
                 </View>
-              </View>
+              </TouchableOpacity>
 
-              <View style={styles.defaultsField}>
-                <View style={styles.inlineField}>
-                  <Text style={styles.inlineFieldLabel}>Default time-bound duration (mins)</Text>
-                  <TextInput
-                    style={styles.inlineFieldInput}
-                    placeholder={`${EVENT_DURATION_FALLBACK_MINUTES}`}
-                    placeholderTextColor={colors.textSubtle}
-                    keyboardType="number-pad"
-                    value={defaultEventDurationInput}
-                    onChangeText={(value) => {
-                      setDefaultEventDurationInput(value);
-                      setDefaultsError(null);
-                    }}
-                  />
+              <TouchableOpacity
+                style={styles.inlineFieldButton}
+                onPress={() => setActivePicker('timezone')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Select timezone"
+              >
+                <Text style={styles.inlineFieldLabel} numberOfLines={1}>Timezone</Text>
+                <View style={styles.inlineFieldRight}>
+                  <Text style={[styles.inlineFieldValue, styles.inlineFieldValueCompact]}>{formatTimeZoneLabel(timeZone)}</Text>
+                  <Feather name="chevron-down" size={16} color={colors.textMuted} />
                 </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.card}>
+            <View style={styles.defaultsContent}>
+              <View style={styles.inlineField}>
+                <Text style={styles.inlineFieldLabel}>Pomo duration (mins)</Text>
+                <TextInput
+                  style={styles.inlineFieldInput}
+                  placeholder={`${POMO_MIN_MINUTES}`}
+                  placeholderTextColor={colors.textSubtle}
+                  keyboardType="number-pad"
+                  value={defaultPomoInput}
+                  onChangeText={(value) => {
+                    setDefaultPomoInput(value);
+                    setDefaultsError(null);
+                  }}
+                />
               </View>
 
-              <View style={styles.defaultsField}>
-                <View style={styles.inlineField}>
-                  <Text style={styles.inlineFieldLabel}>{`Default failure cost (${currencySymbol})`}</Text>
-                  <TextInput
-                    style={styles.inlineFieldInput}
-                    placeholder={`${failureCostBounds.minMajor}`}
-                    placeholderTextColor={colors.textSubtle}
-                    keyboardType={currency === 'INR' ? 'number-pad' : 'decimal-pad'}
-                    value={defaultFailureCostInput}
-                    onChangeText={(value) => {
-                      setDefaultFailureCostInput(value);
-                      setDefaultsError(null);
-                    }}
-                  />
+              <View style={styles.inlineField}>
+                <Text style={styles.inlineFieldLabel}>Time-bound duration (mins)</Text>
+                <TextInput
+                  style={styles.inlineFieldInput}
+                  placeholder={`${EVENT_DURATION_FALLBACK_MINUTES}`}
+                  placeholderTextColor={colors.textSubtle}
+                  keyboardType="number-pad"
+                  value={defaultEventDurationInput}
+                  onChangeText={(value) => {
+                    setDefaultEventDurationInput(value);
+                    setDefaultsError(null);
+                  }}
+                />
+              </View>
+
+              <View style={styles.inlineField}>
+                <Text style={styles.inlineFieldLabel}>{`Failure cost (${currencySymbol})`}</Text>
+                <TextInput
+                  style={styles.inlineFieldInput}
+                  placeholder={`${failureCostBounds.minMajor}`}
+                  placeholderTextColor={colors.textSubtle}
+                  keyboardType={currency === 'INR' ? 'number-pad' : 'decimal-pad'}
+                  value={defaultFailureCostInput}
+                  onChangeText={(value) => {
+                    setDefaultFailureCostInput(value);
+                    setDefaultsError(null);
+                  }}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={styles.inlineFieldButton}
+                onPress={() => setActivePicker('voucher')}
+                activeOpacity={0.8}
+                disabled={voucherLoading}
+                accessibilityRole="button"
+                accessibilityLabel="Select default voucher"
+              >
+                <Text style={styles.inlineFieldLabel}>Default voucher</Text>
+                <View style={styles.inlineFieldRight}>
+                  <Text style={styles.inlineFieldValue}>{voucherLoading ? 'Loading...' : defaultVoucherLabel}</Text>
+                  <Feather name="chevron-down" size={16} color={colors.textMuted} />
                 </View>
-              </View>
+              </TouchableOpacity>
 
-              <View style={styles.defaultsField}>
-                <TouchableOpacity
-                  style={styles.inlineFieldButton}
-                  onPress={() => setActivePicker('voucher')}
-                  activeOpacity={0.8}
-                  disabled={voucherLoading}
-                  accessibilityRole="button"
-                  accessibilityLabel="Select default voucher"
-                >
-                  <Text style={styles.inlineFieldLabel}>Default voucher</Text>
-                  <View style={styles.inlineFieldRight}>
-                    <Text style={styles.inlineFieldValue}>{voucherLoading ? 'Loading vouchers...' : defaultVoucherLabel}</Text>
-                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.defaultsField}>
-                <TouchableOpacity
-                  style={styles.inlineFieldButton}
-                  onPress={() => setActivePicker('notificationSound')}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Select notification sound"
-                >
-                  <Text style={styles.inlineFieldLabel}>Notification sound</Text>
-                  <View style={styles.inlineFieldRight}>
-                    <Text style={styles.inlineFieldValue}>{notificationSoundLabel}</Text>
-                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}><Text style={styles.toggleTitle}>1 hour reminder</Text></View>
-                <Switch value={oneHourReminderEnabled} onValueChange={setOneHourReminderEnabled} trackColor={{ false: colors.borderStrong, true: colors.accentCyan }} thumbColor={colors.text} />
-              </View>
-
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}><Text style={styles.toggleTitle}>10 minute reminder</Text></View>
-                <Switch value={tenMinuteReminderEnabled} onValueChange={setTenMinuteReminderEnabled} trackColor={{ false: colors.borderStrong, true: colors.accentCyan }} thumbColor={colors.text} />
-              </View>
-
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}><Text style={styles.toggleTitle}>Require proof for all new tasks</Text></View>
-                <Switch value={defaultRequiresProofForAllTasks} onValueChange={setDefaultRequiresProofForAllTasks} trackColor={{ false: colors.borderStrong, true: colors.accentCyan }} thumbColor={colors.text} />
-              </View>
-
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}><Text style={styles.toggleTitle}>Allow vouchers to view my active tasks</Text></View>
-                <Switch value={voucherCanViewActiveTasks} onValueChange={setVoucherCanViewActiveTasks} trackColor={{ false: colors.borderStrong, true: colors.accentCyan }} thumbColor={colors.text} />
-              </View>
+              <TouchableOpacity
+                style={styles.inlineFieldButton}
+                onPress={() => setActivePicker('taskSort')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Select task sort order"
+              >
+                <Text style={styles.inlineFieldLabel}>Task sorting</Text>
+                <View style={styles.inlineFieldRight}>
+                  <Text style={[styles.inlineFieldValue, styles.inlineFieldValueCompact]}>{taskSortLabel}</Text>
+                  <Feather name="chevron-down" size={16} color={colors.textMuted} />
+                </View>
+              </TouchableOpacity>
 
               {savingDefaults ? <Text style={styles.savingText}>Saving...</Text> : null}
               {defaultsError ? <Text style={styles.errorText}>{defaultsError}</Text> : null}
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.card}>
+            <View style={styles.defaultsContent}>
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}><Text style={styles.toggleTitle}>Require proof for all new tasks</Text></View>
+                <View style={styles.toggleSwitchWrap}><Switch value={defaultRequiresProofForAllTasks} onValueChange={setDefaultRequiresProofForAllTasks} trackColor={{ false: colors.borderStrong, true: colors.accentCyan }} thumbColor={colors.text} /></View>
+              </View>
+
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}><Text style={styles.toggleTitle}>Allow vouchers to view active tasks</Text></View>
+                <View style={styles.toggleSwitchWrap}><Switch value={voucherCanViewActiveTasks} onValueChange={setVoucherCanViewActiveTasks} trackColor={{ false: colors.borderStrong, true: colors.accentCyan }} thumbColor={colors.text} /></View>
+              </View>
+
               {voucherVisibilityError ? <Text style={styles.errorText}>{voucherVisibilityError}</Text> : null}
             </View>
           </View>
@@ -714,21 +641,10 @@ export default function SettingsDefaultsScreen() {
                     disabled={option.disabled}
                   >
                     <Text style={[styles.pickerRowLabel, option.disabled ? styles.pickerRowLabelDisabled : null]}>{option.label}</Text>
-                    {activePicker === 'notificationSound' && notificationSoundKey === option.value ? (
+                    {activePicker === 'taskSort' && taskSortMode === option.value ? (
                       <Feather name="check" size={16} color={colors.accentCyan} />
                     ) : null}
                   </TouchableOpacity>
-                  {activePicker === 'notificationSound' && !option.disabled ? (
-                    <TouchableOpacity
-                      style={styles.previewButton}
-                      onPress={() => { void handlePreviewNotificationSound(normalizeNotificationSoundKey(option.value)); }}
-                      activeOpacity={0.75}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Preview ${option.label}`}
-                    >
-                      <Text style={styles.previewButtonText}>{previewingSoundKey === option.value ? 'Playing...' : 'Play'}</Text>
-                    </TouchableOpacity>
-                  ) : null}
                 </View>
               ))}
             </ScrollView>

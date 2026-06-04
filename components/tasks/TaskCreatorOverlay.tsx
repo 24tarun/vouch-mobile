@@ -15,7 +15,7 @@ import {
 import UiDateTimePicker from 'react-native-ui-datepicker';
 // @ts-ignore — internal module, not in public exports
 import WheelPicker from 'react-native-ui-datepicker/lib/commonjs/components/time-picker/wheel-picker/wheel-picker';
-import Animated, { useAnimatedStyle, useAnimatedReaction, interpolate, interpolateColor, runOnJS, type SharedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, interpolate, interpolateColor, type SharedValue } from 'react-native-reanimated';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { Feather } from '@expo/vector-icons';
@@ -219,7 +219,6 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
   const trafficIconColor = colors.bg;
   const [startTimePlacement, setStartTimePlacement] = useState<'timeBound' | 'event'>('timeBound');
   const [expandedControl, setExpandedControl] = useState<'timeBound' | 'eventSync' | null>(null);
-  const [contentVisible, setContentVisible] = useState(false);
   const [isCostEditing, setIsCostEditing] = useState(false);
   const latestCustomDeadlineDateRef = useRef(customDeadlineDate);
   const isRepeatEnabled = recurrenceType !== '' || showCustomRecurrenceDays;
@@ -234,15 +233,6 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
     return suggestedStartDate;
   }, [suggestedStartDate]);
 
-  useAnimatedReaction(
-    () => expandProgress.value,
-    (progress) => {
-      if (progress > 0.01 && !contentVisible) {
-        runOnJS(setContentVisible)(true);
-      }
-    },
-    [contentVisible],
-  );
 
   // Computed before early return so hooks are always called unconditionally
   const resolvedTargetTop = targetTop ?? (anchor?.y ?? 0);
@@ -278,23 +268,21 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
     if (!visible) {
       setExpandedControl(null);
       setIsCostEditing(false);
-      setContentVisible(false);
     }
   }, [visible]);
 
   useEffect(() => {
-    if (!visible || !contentVisible) return;
+    if (!visible) return;
 
     const interactionTask = InteractionManager.runAfterInteractions(() => {
       titleInputRef.current?.focus();
-      // Retry once on the next frame in case the initial focus races layout.
       requestAnimationFrame(() => titleInputRef.current?.focus());
     });
 
     return () => {
       interactionTask.cancel();
     };
-  }, [visible, contentVisible, titleInputRef]);
+  }, [visible, titleInputRef]);
 
   useEffect(() => {
     latestCustomDeadlineDateRef.current = customDeadlineDate;
@@ -378,9 +366,7 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
     setExpandedControl('eventSync');
   }
 
-  if (!visible || !anchor) {
-    return null;
-  }
+  const hiddenStyle = (!visible || !anchor) ? styles.creatorHidden : undefined;
 
   const startTimeExpandedContent = (() => {
     const hasValidManualStartDate = Boolean(eventStartDate && Number.isFinite(eventStartDate.getTime()) && eventStartDate.getTime() > 0);
@@ -434,9 +420,8 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
 
   return (
     <>
-      <Pressable style={styles.creatorOverlayBackdrop} onPress={handleDismissGesture} />
-      <Animated.View style={[styles.creatorOverlay, animatedOverlayStyle]}>
-        {contentVisible && (
+      {!hiddenStyle && <Pressable style={styles.creatorOverlayBackdrop} onPress={handleDismissGesture} />}
+      <Animated.View style={[styles.creatorOverlay, animatedOverlayStyle, hiddenStyle]}>
         <KeyboardAwareScrollView
           style={styles.creatorBody}
           enableOnAndroid
@@ -1190,7 +1175,6 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
             </View>
           ) : null}
         </KeyboardAwareScrollView>
-        )}
       </Animated.View>
     </>
   );

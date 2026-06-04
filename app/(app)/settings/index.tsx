@@ -8,14 +8,13 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
-  Share,
   Switch,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { File, Paths } from 'expo-file-system';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -31,7 +30,6 @@ import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from '@/components/settings/styles';
 import { Charity, Currency } from '@/lib/types';
 import { PageHeader } from '@/components/PageHeader';
-import { StatsOverview } from '@/components/StatsOverview';
 import {
   AI_PROFILE_ID,
   normalizeAiUsername,
@@ -43,7 +41,6 @@ import { normalizePomoDurationMinutes } from '@/lib/constants/timings';
 import { CalendarSyncSection } from '@/components/settings/CalendarSyncSection';
 import { useRelationships, type RelationshipsData } from '@/lib/hooks/useRelationships';
 import { useBlockedUsers } from '@/lib/hooks/useBlockedUsers';
-import { useSettingsStats } from '@/lib/hooks/useSettingsStats';
 import { queryKeys } from '@/lib/query/keys';
 import { WEBSITE_URL } from '@/lib/auth-urls';
 import {
@@ -342,7 +339,6 @@ export default function SettingsScreen() {
   const queryClient = useQueryClient();
   const relationshipsQuery = useRelationships(user?.id);
   const blockedUsersQuery = useBlockedUsers(user?.id);
-  const settingsStatsQuery = useSettingsStats(user?.id);
   const [activePicker, setActivePicker] = useState<PickerType>(null);
 
   const [usernameDraft, setUsernameDraft] = useState('');
@@ -359,6 +355,7 @@ export default function SettingsScreen() {
   const [timeZoneUserSet, setTimeZoneUserSet] = useState(false);
   const [charityEnabled, setCharityEnabled] = useState(false);
   const [selectedCharityId, setSelectedCharityId] = useState<string | null>(null);
+  const charityUserOverrideRef = useRef(false);
   const [oneHourReminderEnabled, setOneHourReminderEnabled] = useState(true);
   const [tenMinuteReminderEnabled, setTenMinuteReminderEnabled] = useState(true);
   const [defaultRequiresProofForAllTasks, setDefaultRequiresProofForAllTasks] = useState(false);
@@ -375,6 +372,7 @@ export default function SettingsScreen() {
   const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
   const [deleteAccountSuccess, setDeleteAccountSuccess] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [exportSent, setExportSent] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [previewingSoundKey, setPreviewingSoundKey] = useState<NotificationSoundKey | null>(null);
   const previewSoundRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
@@ -388,6 +386,7 @@ export default function SettingsScreen() {
   const [calendarSaving, setCalendarSaving] = useState(false);
   const [saveSuccessTick, setSaveSuccessTick] = useState(0);
   const [charities, setCharities] = useState<Charity[]>([]);
+  const [charitiesLoaded, setCharitiesLoaded] = useState(false);
   const [charitiesError, setCharitiesError] = useState<string | null>(null);
   const emailSavedRef = useRef<string | null>(null);
   const usernameSavedRef = useRef<string | null>(null);
@@ -402,9 +401,6 @@ export default function SettingsScreen() {
   const blockedUsers = blockedUsersQuery.blockedUsers;
   const blockedUsersLoading = blockedUsersQuery.loading;
   const blockedUsersError = blockedUsersQuery.error;
-  const settingsStats = settingsStatsQuery.data;
-  const statsLoading = settingsStatsQuery.loading;
-  const statsError = settingsStatsQuery.error;
   const voucherLoading = relationshipsLoading || blockedUsersLoading;
   const deviceTimeZone = useMemo(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -478,26 +474,30 @@ export default function SettingsScreen() {
     setVoucherCanViewActiveTasks(nextVoucherCanViewActiveTasks);
     setTimeZone(nextTimeZone);
     setTimeZoneUserSet(nextTimeZoneUserSet);
-    setCharityEnabled(nextCharityEnabled);
-    setSelectedCharityId(nextSelectedCharityId);
+    if (!charityUserOverrideRef.current) {
+      setCharityEnabled(nextCharityEnabled);
+      setSelectedCharityId(nextSelectedCharityId);
+    }
 
     emailSavedRef.current = nextEmail;
     usernameSavedRef.current = nextUsername;
-    defaultsSavedRef.current = JSON.stringify({
-      defaultPomoMinutes: nextPomo,
-      defaultEventDurationMinutes: nextEventDuration,
-      defaultFailureCostCents: nextFailureCostCents,
-      defaultVoucherId: nextVoucherId,
-      currency: nextCurrency,
-      notificationSoundKey: nextNotificationSoundKey,
-      oneHourReminderEnabled: nextOneHourReminder,
-      tenMinuteReminderEnabled: nextTenMinuteReminder,
-      defaultRequiresProofForAllTasks: nextDefaultRequiresProofForAllTasks,
-      timeZone: nextTimeZone,
-      timeZoneUserSet: nextTimeZoneUserSet,
-      charityEnabled: nextCharityEnabled,
-      selectedCharityId: nextSelectedCharityId,
-    });
+    if (!charityUserOverrideRef.current) {
+      defaultsSavedRef.current = JSON.stringify({
+        defaultPomoMinutes: nextPomo,
+        defaultEventDurationMinutes: nextEventDuration,
+        defaultFailureCostCents: nextFailureCostCents,
+        defaultVoucherId: nextVoucherId,
+        currency: nextCurrency,
+        notificationSoundKey: nextNotificationSoundKey,
+        oneHourReminderEnabled: nextOneHourReminder,
+        tenMinuteReminderEnabled: nextTenMinuteReminder,
+        defaultRequiresProofForAllTasks: nextDefaultRequiresProofForAllTasks,
+        timeZone: nextTimeZone,
+        timeZoneUserSet: nextTimeZoneUserSet,
+        charityEnabled: nextCharityEnabled,
+        selectedCharityId: nextSelectedCharityId,
+      });
+    }
     aiFeaturesSavedRef.current = nextAiVoucherEnabled;
     voucherVisibilitySavedRef.current = nextVoucherCanViewActiveTasks;
 
@@ -522,11 +522,13 @@ export default function SettingsScreen() {
       if (cancelled) return;
       if (error) {
         setCharities([]);
+        setCharitiesLoaded(true);
         setCharitiesError(error.message);
         return;
       }
 
       setCharities(((data ?? []) as Charity[]));
+      setCharitiesLoaded(true);
       setCharitiesError(null);
     }
 
@@ -545,6 +547,7 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     if (!charityEnabled) return;
+    if (!charitiesLoaded) return;
     const activeSelectedCharity = charities.find((charity) => charity.id === selectedCharityId) ?? null;
     if (!selectedCharityId || !activeSelectedCharity || !activeSelectedCharity.is_active) {
       if (defaultCharityId) {
@@ -554,7 +557,7 @@ export default function SettingsScreen() {
       setCharityEnabled(false);
       setSelectedCharityId(null);
     }
-  }, [charities, charityEnabled, defaultCharityId, selectedCharityId]);
+  }, [charities, charitiesLoaded, charityEnabled, defaultCharityId, selectedCharityId]);
 
   useEffect(() => {
     const query = friendSearchQuery.trim();
@@ -599,89 +602,60 @@ export default function SettingsScreen() {
   }, [friendSearchQuery, user]);
 
   async function handleExportData() {
-    if (!user || isExporting) return;
+    if (!user || isExporting || exportSent) return;
+
+    const EXPORT_COOLDOWN_KEY = 'vouch:last-export-ts';
+    const EXPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+    try {
+      const lastTs = await AsyncStorage.getItem(EXPORT_COOLDOWN_KEY);
+      if (lastTs) {
+        const elapsed = Date.now() - Number(lastTs);
+        if (elapsed < EXPORT_COOLDOWN_MS) {
+          const hoursLeft = Math.ceil((EXPORT_COOLDOWN_MS - elapsed) / (60 * 60 * 1000));
+          Alert.alert('Export unavailable', `You can export again in ${hoursLeft} hour${hoursLeft === 1 ? '' : 's'}.`);
+          return;
+        }
+      }
+    } catch {}
+
     setIsExporting(true);
     try {
-      const [
-        tasksRes,
-        subtasksRes,
-        remindersRes,
-        taskEventsRes,
-        ledgerRes,
-        recurrenceRulesRes,
-        pomoRes,
-        commitmentsRes,
-        friendshipsRes,
-      ] = await Promise.all([
-        supabase.from('tasks' as any).select('id, title, description, failure_cost_cents, deadline, status, postponed_at, marked_completed_at, recurrence_rule_id, iteration_number, start_at, is_strict, required_pomo_minutes, requires_proof, has_proof, resubmit_count, created_at, updated_at').eq('user_id', user.id).order('created_at', { ascending: false }),
-        supabase.from('task_subtasks' as any).select('id, parent_task_id, title, is_completed, completed_at, created_at').eq('user_id', user.id),
-        supabase.from('task_reminders' as any).select('id, parent_task_id, reminder_at, source, notified_at, created_at').eq('user_id', user.id),
-        supabase.from('task_events' as any).select('id, task_id, event_type, from_status, to_status, created_at, task:tasks!inner(user_id)').eq('tasks.user_id', user.id).order('created_at', { ascending: true }),
-        supabase.from('ledger_entries' as any).select('id, task_id, period, amount_cents, entry_type, created_at').eq('user_id', user.id).order('created_at', { ascending: true }),
-        supabase.from('recurrence_rules' as any).select('id, title, description, failure_cost_cents, required_pomo_minutes, requires_proof, rule_config, timezone, latest_iteration, created_at, updated_at').eq('user_id', user.id),
-        supabase.from('pomo_sessions' as any).select('id, task_id, duration_minutes, elapsed_seconds, is_strict, status, started_at, completed_at, created_at').eq('user_id', user.id).order('created_at', { ascending: false }),
-        supabase.from('commitments' as any).select('id, name, description, start_date, end_date, status, created_at, updated_at').eq('user_id', user.id).order('created_at', { ascending: false }),
-        supabase.from('friendships' as any).select('id, created_at, friend:profiles!friendships_friend_id_fkey(username, email)').eq('user_id', user.id),
-      ]);
-
-      const exportQueryError =
-        tasksRes.error?.message
-        || subtasksRes.error?.message
-        || remindersRes.error?.message
-        || taskEventsRes.error?.message
-        || ledgerRes.error?.message
-        || recurrenceRulesRes.error?.message
-        || pomoRes.error?.message
-        || commitmentsRes.error?.message
-        || friendshipsRes.error?.message;
-
-      if (exportQueryError) {
-        Alert.alert('Export failed', exportQueryError);
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) {
+        Alert.alert('Export failed', 'Not authenticated.');
         return;
       }
 
-      const subtasksByTask: Record<string, unknown[]> = {};
-      const remindersByTask: Record<string, unknown[]> = {};
-      for (const s of (subtasksRes.data ?? []) as any[]) {
-        if (!subtasksByTask[s.parent_task_id]) subtasksByTask[s.parent_task_id] = [];
-        subtasksByTask[s.parent_task_id].push(s);
-      }
-      for (const r of (remindersRes.data ?? []) as any[]) {
-        if (!remindersByTask[r.parent_task_id]) remindersByTask[r.parent_task_id] = [];
-        remindersByTask[r.parent_task_id].push(r);
+      const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim();
+      const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim();
+      if (!supabaseUrl || !anonKey) {
+        Alert.alert('Export failed', 'Missing configuration.');
+        return;
       }
 
-      const exportPayload = {
-        exported_at: new Date().toISOString(),
-        profile: {
-          id: user.id,
-          email: user.email,
-          username: profile?.username,
-          currency: profile?.currency,
-          created_at: profile?.created_at,
+      const response = await fetch(`${supabaseUrl}/functions/v1/export-user-data`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': anonKey,
+          'Authorization': `Bearer ${accessToken}`,
         },
-        tasks: ((tasksRes.data ?? []) as any[]).map((t: any) => ({
-          ...t,
-          subtasks: subtasksByTask[t.id] ?? [],
-          reminders: remindersByTask[t.id] ?? [],
-        })),
-        task_events: ((taskEventsRes.data ?? []) as any[]).map(({ task: _task, ...e }) => e),
-        ledger_entries: ledgerRes.data ?? [],
-        recurrence_rules: recurrenceRulesRes.data ?? [],
-        pomo_sessions: pomoRes.data ?? [],
-        commitments: commitmentsRes.data ?? [],
-        friends: ((friendshipsRes.data ?? []) as any[]).map((f: any) => ({
-          username: f.friend?.username ?? null,
-          email: f.friend?.email ?? null,
-          friends_since: f.created_at,
-        })),
-      };
+      });
 
-      const json = JSON.stringify(exportPayload, null, 2);
-      const filename = `vouch-export-${new Date().toISOString().slice(0, 10)}.json`;
-      const file = new File(Paths.cache, filename);
-      file.write(json);
-      await Share.share({ url: file.uri, title: filename });
+      const result = await response.json() as { success?: boolean; error?: string; rateLimited?: boolean };
+
+      if (!response.ok) {
+        if (result.rateLimited) {
+          await AsyncStorage.setItem(EXPORT_COOLDOWN_KEY, String(Date.now()));
+        }
+        Alert.alert('Export failed', result.error ?? 'Unknown error.');
+        return;
+      }
+
+      await AsyncStorage.setItem(EXPORT_COOLDOWN_KEY, String(Date.now()));
+      setExportSent(true);
     } catch {
       Alert.alert('Export failed', 'Could not export your data. Please try again.');
     } finally {
@@ -957,7 +931,6 @@ export default function SettingsScreen() {
       await Promise.all([
         refreshRelationshipsAndSearch(),
         blockedUsersQuery.refetch(),
-        settingsStatsQuery.refetch(),
         supabase
           .from('charities')
           .select('id, key, name, is_active')
@@ -1344,7 +1317,6 @@ export default function SettingsScreen() {
     () => getNotificationSoundConfigs().map((sound) => ({ label: sound.label, value: sound.key })),
     [],
   );
-
   const pickerOptions: PickerOption[] = useMemo(() => {
     if (activePicker === 'voucher') return voucherPickerOptions;
     if (activePicker === 'currency') return CURRENCY_OPTIONS;
@@ -1452,6 +1424,7 @@ export default function SettingsScreen() {
       setTimeZoneUserSet(true);
     }
     if (activePicker === 'charity') {
+      charityUserOverrideRef.current = true;
       if (value === '__none__') {
         setSelectedCharityId(null);
         setCharityEnabled(false);
@@ -1592,8 +1565,8 @@ export default function SettingsScreen() {
     let cancelled = false;
     const timer = setTimeout(async () => {
       setSavingDefaults(true);
-      const resolvedCharityEnabled = charityEnabled && Boolean(selectedCharityId);
-      const resolvedSelectedCharityId = resolvedCharityEnabled ? selectedCharityId : null;
+      const resolvedCharityEnabled = charityEnabled;
+      const resolvedSelectedCharityId = selectedCharityId;
       const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
       queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) => current ? {
         ...current,
@@ -1641,6 +1614,7 @@ export default function SettingsScreen() {
       }
 
       defaultsSavedRef.current = defaultsSnapshot;
+      charityUserOverrideRef.current = false;
       setSaveSuccessTick((current) => current + 1);
       void syncLocalReminderNotificationsAsync(user.id);
     }, 500);
@@ -1810,107 +1784,97 @@ export default function SettingsScreen() {
           />
         }
       >
-        <StatsOverview
-          totalTasks={settingsStats?.totalTasks}
-          accepted={settingsStats?.accepted}
-          denied={settingsStats?.denied}
-          missed={settingsStats?.missed}
-          totalVouched={settingsStats?.totalVouched}
-          focusedSeconds={settingsStats?.focusedSeconds}
-          loading={statsLoading}
-          error={statsError}
-        />
+        <Text style={styles.signedInText}>Signed in as {user?.email ?? ''}</Text>
 
         <View style={styles.section}>
           <View style={styles.card}>
-            <TouchableOpacity
-              style={styles.manageFriendsRow}
-              onPress={() => router.push('/settings/theme')}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Open themes"
-            >
-              <Text style={styles.manageFriendsRowText}>Themes</Text>
-              <Feather name="chevron-right" size={18} color={colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-        </View>
+            <View style={styles.defaultsContent}>
+              <TouchableOpacity
+                style={styles.inlineFieldButton}
+                onPress={() => router.push('/settings/theme')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Open appearance"
+              >
+                <Text style={styles.inlineFieldLabel}>Appearance</Text>
+                <Feather name="chevron-right" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
 
-        <View style={styles.section}>
-          <View style={styles.card}>
-            <TouchableOpacity
-              style={styles.manageFriendsRow}
-              onPress={() => router.push('/settings/manage-friends')}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Manage friends"
-            >
-              <Text style={styles.manageFriendsRowText}>Manage Friends</Text>
-              <Feather name="chevron-right" size={18} color={colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-        </View>
+              <TouchableOpacity
+                style={styles.inlineFieldButton}
+                onPress={() => router.push('/settings/defaults')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Open defaults"
+              >
+                <Text style={styles.inlineFieldLabel}>Defaults</Text>
+                <Feather name="chevron-right" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
 
-        <View style={styles.section}>
-          <View style={styles.card}>
-            <TouchableOpacity
-              style={styles.manageFriendsRow}
-              onPress={() => router.push('/settings/defaults')}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Open defaults"
-            >
-              <Text style={styles.manageFriendsRowText}>Defaults</Text>
-              <Feather name="chevron-right" size={18} color={colors.textMuted} />
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.inlineFieldButton}
+                onPress={() => router.push('/settings/manage-friends')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Manage friends"
+              >
+                <Text style={styles.inlineFieldLabel}>Manage Friends</Text>
+                <Feather name="chevron-right" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+
+            </View>
           </View>
         </View>
 
         <View style={styles.section}>
           <View style={styles.card}>
             <View style={styles.defaultsContent}>
+              <TouchableOpacity
+                style={styles.inlineFieldButton}
+                onPress={() => setActivePicker('notificationSound')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Select notification sound"
+              >
+                <Text numberOfLines={1} style={[styles.inlineFieldLabel, styles.inlineFieldLabelFixed]}>
+                  Notification sound
+                </Text>
+                <View style={styles.inlineFieldRight}>
+                  <Text style={styles.inlineFieldValue}>{notificationSoundLabel}</Text>
+                  <Feather name="chevron-down" size={16} color={colors.textMuted} />
+                </View>
+              </TouchableOpacity>
+
               <View style={styles.toggleRow}>
                 <View style={styles.toggleTextWrap}>
-                  <Text style={styles.toggleTitle}>Enable charity mode</Text>
+                  <Text style={styles.toggleTitle}>1 hour reminder</Text>
                 </View>
-                <Switch
-                  value={charityEnabled}
-                  onValueChange={(nextEnabled) => {
-                    setCharityEnabled(nextEnabled);
-                    if (!nextEnabled) {
-                      setSelectedCharityId(null);
-                      if (activePicker === 'charity') {
-                        setActivePicker(null);
-                      }
-                      return;
-                    }
-                    if (!selectedCharityId || !selectedCharity || !selectedCharity.is_active) {
-                      setSelectedCharityId(defaultCharityId);
-                    }
-                    setActivePicker('charity');
-                  }}
-                  trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                  thumbColor={colors.text}
-                />
+                <View style={styles.toggleSwitchWrap}>
+                  <Switch
+                    value={oneHourReminderEnabled}
+                    onValueChange={setOneHourReminderEnabled}
+                    trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                    thumbColor={colors.text}
+                  />
+                </View>
               </View>
 
-              {charityEnabled ? (
-                <View style={styles.defaultsField}>
-                  <Text style={styles.defaultsLabel}>Charity</Text>
-                  <TouchableOpacity
-                    style={styles.selectButton}
-                    onPress={() => setActivePicker('charity')}
-                    activeOpacity={0.8}
-                    accessibilityRole="button"
-                    accessibilityLabel="Select charity"
-                  >
-                    <Text style={styles.selectLabel}>{selectedCharityLabel}</Text>
-                    <Feather name="chevron-down" size={18} color={colors.textMuted} />
-                  </TouchableOpacity>
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}>
+                  <Text style={styles.toggleTitle}>10 minute reminder</Text>
                 </View>
-              ) : null}
+                <View style={styles.toggleSwitchWrap}>
+                  <Switch
+                    value={tenMinuteReminderEnabled}
+                    onValueChange={setTenMinuteReminderEnabled}
+                    trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                    thumbColor={colors.text}
+                  />
+                </View>
+              </View>
 
-              {charitiesError ? <Text style={styles.errorText}>{charitiesError}</Text> : null}
+              {savingDefaults ? <Text style={styles.savingText}>Saving...</Text> : null}
+              {defaultsError ? <Text style={styles.errorText}>{defaultsError}</Text> : null}
             </View>
           </View>
         </View>
@@ -1920,14 +1884,64 @@ export default function SettingsScreen() {
             <View style={styles.defaultsContent}>
               <View style={styles.toggleRow}>
                 <View style={styles.toggleTextWrap}>
+                  <Text style={styles.toggleTitle}>Charity mode</Text>
+                </View>
+                <View style={styles.toggleSwitchWrap}>
+                  <Switch
+                    value={charityEnabled}
+                    onValueChange={(nextEnabled) => {
+                      charityUserOverrideRef.current = true;
+                      setCharityEnabled(nextEnabled);
+                      if (!nextEnabled) {
+                        setSelectedCharityId(null);
+                        if (activePicker === 'charity') {
+                          setActivePicker(null);
+                        }
+                        return;
+                      }
+                      if (!selectedCharityId || !selectedCharity || !selectedCharity.is_active) {
+                        setSelectedCharityId(defaultCharityId);
+                      }
+                      setActivePicker('charity');
+                    }}
+                    trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                    thumbColor={colors.text}
+                  />
+                </View>
+              </View>
+
+              {charityEnabled ? (
+                <TouchableOpacity
+                  style={styles.inlineFieldButton}
+                  onPress={() => setActivePicker('charity')}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Select charity"
+                >
+                  <Text numberOfLines={1} style={[styles.inlineFieldLabel, styles.inlineFieldLabelFixed]}>
+                    Charity
+                  </Text>
+                  <View style={styles.inlineFieldRight}>
+                    <Text style={styles.inlineFieldValue}>{selectedCharityLabel}</Text>
+                    <Feather name="chevron-down" size={16} color={colors.textMuted} />
+                  </View>
+                </TouchableOpacity>
+              ) : null}
+
+              {charitiesError ? <Text style={styles.errorText}>{charitiesError}</Text> : null}
+
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}>
                   <Text style={styles.toggleTitle}>AI-voucher</Text>
                 </View>
-                <Switch
-                  value={aiVoucherEnabled}
-                  onValueChange={setAiVoucherEnabled}
-                  trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                  thumbColor={colors.text}
-                />
+                <View style={styles.toggleSwitchWrap}>
+                  <Switch
+                    value={aiVoucherEnabled}
+                    onValueChange={setAiVoucherEnabled}
+                    trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                    thumbColor={colors.text}
+                  />
+                </View>
               </View>
 
               {savingAiFeatures ? <Text style={styles.savingText}>Saving AI features...</Text> : null}
@@ -1944,37 +1958,38 @@ export default function SettingsScreen() {
         ) : null}
 
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Account</Text>
           <View style={styles.card}>
-            <SettingsRow
-              icon="log-out"
-              label="Sign out"
-              onPress={handleSignOut}
-              destructive
-            />
-            <SettingsRow
-              icon="download"
-              label={isExporting ? 'Exporting...' : 'Export my data'}
-              onPress={() => { void handleExportData(); }}
-            />
-            <SettingsRow
-              icon="trash-2"
-              label={
-                deleteAccountSuccess
-                  ? 'Account deleted'
-                  : isDeletingAccount
-                    ? 'Deleting account...'
-                    : isCheckingDeleteConflicts
-                      ? 'Checking...'
-                      : 'Delete account permanently'
-              }
-              onPress={handleDeleteAccount}
-              destructive
-              disabled={isDeletingAccount || isCheckingDeleteConflicts || deleteAccountSuccess}
-              accessibilityHint="Deletes your account permanently"
-            />
-            {deleteAccountError ? <Text style={styles.errorText}>{deleteAccountError}</Text> : null}
-            {deleteAccountSuccess ? <Text style={styles.successText}>Account successfully deleted.</Text> : null}
+            <View style={styles.defaultsContent}>
+              <SettingsRow
+                icon="log-out"
+                label="Sign out"
+                onPress={handleSignOut}
+                destructive
+              />
+              <SettingsRow
+                icon="mail"
+                label={exportSent ? 'Please check your email in a little while' : isExporting ? 'Sending to email...' : 'Export my data'}
+                onPress={() => { void handleExportData(); }}
+              />
+              <SettingsRow
+                icon="trash-2"
+                label={
+                  deleteAccountSuccess
+                    ? 'Account deleted'
+                    : isDeletingAccount
+                      ? 'Deleting account...'
+                      : isCheckingDeleteConflicts
+                        ? 'Checking...'
+                        : 'Delete account permanently'
+                }
+                onPress={handleDeleteAccount}
+                destructive
+                disabled={isDeletingAccount || isCheckingDeleteConflicts || deleteAccountSuccess}
+                accessibilityHint="Deletes your account permanently"
+              />
+              {deleteAccountError ? <Text style={styles.errorText}>{deleteAccountError}</Text> : null}
+              {deleteAccountSuccess ? <Text style={styles.successText}>Account successfully deleted.</Text> : null}
+            </View>
           </View>
         </View>
       </ScrollView>

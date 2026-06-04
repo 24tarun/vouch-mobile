@@ -17,9 +17,10 @@ export function ReputationBar({ data }: ReputationBarProps) {
   const dynamicStyles = useMemo(() => ({
     score: { color: isDark ? '#ffffff' : '#1C1C1E' },
     track: {
-      backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-      borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#E8EDF4',
+      borderColor: isDark ? 'rgba(255,255,255,0.06)' : '#D8DEE8',
     },
+    fillGlow: isDark ? styles.fillGlowIos : null,
   }), [isDark]);
   const fillAnim = useRef(new Animated.Value(0)).current;
   const targetFill = (data.score / 1000) * 100;
@@ -54,7 +55,7 @@ export function ReputationBar({ data }: ReputationBarProps) {
         <Animated.View
           style={[
             styles.fill,
-            Platform.OS === 'ios' && styles.fillGlowIos,
+            Platform.OS === 'ios' && dynamicStyles.fillGlow,
             {
               width: fillAnim.interpolate({
                 inputRange: [0, 100],
@@ -84,10 +85,6 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontSize: 11,
     color: '#ffffff',
-    // orange glow on text
-    textShadowColor: 'rgba(249,115,22,0.7)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 6,
   },
   velocity: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',

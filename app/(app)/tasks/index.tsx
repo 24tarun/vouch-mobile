@@ -27,7 +27,8 @@ import { TaskContent } from '@/components/tasks/TaskContent';
 import { normalizePomoDurationMinutes, OPTIMISTIC_COMPLETION_TIMEOUT_MS } from '@/lib/constants/timings';
 import { useTaskCreatorHandle } from '@/lib/taskCreatorState';
 import { useFriends } from '@/lib/hooks/useFriends';
-import { useTasks, type DashboardSortMode } from '@/lib/hooks/useTasks';
+import { useTasks } from '@/lib/hooks/useTasks';
+import { useOnboarding } from '@/lib/hooks/useOnboarding';
 import { useGoogleCalendarConnection } from '@/hooks/useGoogleCalendarConnection';
 import { useAuth } from '@/hooks/useAuth';
 import { useReputationScore } from '@/lib/hooks/useReputationScore';
@@ -41,15 +42,13 @@ import {
 } from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import { TasksScreenCreatorOverlay } from '@/components/tasks/TasksScreenCreatorOverlay';
-import { TasksScreenSearchOverlay } from '@/components/tasks/TasksScreenSearchOverlay';
 import { TasksScreenPostponeOverlay } from '@/components/tasks/TasksScreenPostponeOverlay';
-import { TasksScreenSortMenu } from '@/components/tasks/TasksScreenSortMenu';
-import type { TasksScreenSortMenuHandle } from '@/components/tasks/TasksScreenSortMenu';
+import { useTaskSortMode } from '@/lib/hooks/useTaskSortMode';
 import { TasksScreenConfettiOverlay } from '@/components/tasks/TasksScreenConfettiOverlay';
 
 import { getFutureBoundaryMs } from '@/lib/utils/date-only';
 
-type OverlayMode = 'closed' | 'create' | 'search';
+type OverlayMode = 'closed' | 'create';
 
 export default function TasksScreen() {
   const insets = useSafeAreaInsets();
@@ -63,20 +62,15 @@ export default function TasksScreen() {
   const queryClient = useQueryClient();
   const rootRef = useRef<View | null>(null);
   const creatorAnchorRef = useRef<View | null>(null);
-  const sortButtonRef = useRef<View | null>(null);
-  const sortMenuRef = useRef<TasksScreenSortMenuHandle>(null);
   const taskCreatorHandle = useTaskCreatorHandle();
 
-  const [sortMode, setSortMode] = useState<DashboardSortMode>('deadline_asc');
+  const [sortMode] = useTaskSortMode();
   const {
     dueSoonTasks,
     futureTasks,
-    pastTasks,
-    hasMorePast,
-    loadingMore,
     refetch: refetchTasks,
-    loadMorePastTasks,
   } = useTasks(sortMode);
+  const { onboardingComplete, completeOnboarding } = useOnboarding();
   const [refreshing, setRefreshing] = useState(false);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('closed');
   const expandProgress = useSharedValue(0);
@@ -102,17 +96,12 @@ export default function TasksScreen() {
   const defaultPomoDurationMinutes = normalizePomoDurationMinutes(authProfile?.default_pomo_duration_minutes);
 
   const isCreateOverlayOpen = overlayMode === 'create';
-  const isSearchOverlayOpen = overlayMode === 'search';
   const isOverlayOpen = overlayMode !== 'closed';
 
   const bottomDockOffset = spacing.xl + spacing.sm + spacing.xs;
   const bottomDockReservedInset = bottomDockOffset + bottomActionsHeight + spacing.sm;
   const creatorTargetTop = 0;
   const creatorTargetHeight = screenHeight;
-  const searchTargetTop = insets.top;
-  const searchTargetHeight = screenHeight - insets.top;
-  const sortMenuWidth = Math.min(screenWidth - spacing.lg * 2, 320);
-
   const displayName = (authProfile?.username ?? 'there').trim() || 'there';
   const todayParts = getTodayParts();
 
@@ -163,17 +152,6 @@ export default function TasksScreen() {
     openOverlay('create');
   }, [openOverlay]);
 
-  const openSearchSheet = useCallback(() => {
-    openOverlay('search');
-  }, [openOverlay]);
-
-  const openSortMenu = useCallback(() => {
-    if (isOverlayOpen) return;
-    sortButtonRef.current?.measureInWindow((x, y, width, height) => {
-      sortMenuRef.current?.open({ pageX: x, pageY: y, width, height });
-    });
-  }, [isOverlayOpen]);
-
   useFocusEffect(
     useCallback(() => {
       refetchTasks();
@@ -206,11 +184,6 @@ export default function TasksScreen() {
     );
   }, [futureTasks, optimisticTasks, optimisticallyCompletingTaskIds]);
 
-  const visiblePastTasks = useMemo(
-    () => pastTasks.filter((task) => !optimisticallyCompletingTaskIds.includes(task.id)),
-    [pastTasks, optimisticallyCompletingTaskIds],
-  );
-
   useEffect(() => {
     if (optimisticTasks.length === 0) return;
     const serverIds = new Set([...dueSoonTasks, ...futureTasks].map((task) => task.id));
@@ -219,15 +192,6 @@ export default function TasksScreen() {
       return next.length === prev.length ? prev : next;
     });
   }, [dueSoonTasks, futureTasks, optimisticTasks.length]);
-
-  useEffect(() => {
-    if (optimisticallyCompletingTaskIds.length === 0) return;
-    const pastIds = new Set(pastTasks.map((task) => task.id));
-    setOptimisticallyCompletingTaskIds((prev) => {
-      const next = prev.filter((id) => !pastIds.has(id));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [pastTasks, optimisticallyCompletingTaskIds.length]);
 
   useEffect(() => {
     if (optimisticallyCompletingTaskIds.length === 0) return;
@@ -407,6 +371,8 @@ export default function TasksScreen() {
       };
     });
 
+    setConfettiBurstCount((prev) => prev + 1);
+
     const result = await completeTask(taskId);
     if (!result.success) {
       setOptimisticallyCompletingTaskIds((prev) => prev.filter((id) => id !== taskId));
@@ -424,8 +390,6 @@ export default function TasksScreen() {
       Alert.alert('Could not complete task', result.error ?? 'Unknown error');
       return;
     }
-
-    setConfettiBurstCount((prev) => prev + 1);
 
     void queryClient.invalidateQueries({ queryKey: queryKeys.taskDetail(taskId) });
     refetchTasks();
@@ -489,7 +453,10 @@ export default function TasksScreen() {
 
   const addOptimisticTask = useCallback((task: TaskRowData) => {
     setOptimisticTasks((prev) => [task, ...prev]);
-  }, []);
+    if (!onboardingComplete) {
+      void completeOnboarding();
+    }
+  }, [onboardingComplete, completeOnboarding]);
 
   const removeOptimisticTask = useCallback((taskId: string) => {
     setOptimisticTasks((prev) => prev.filter((t) => t.id !== taskId));
@@ -552,34 +519,10 @@ export default function TasksScreen() {
         removeOptimisticTask={removeOptimisticTask}
         updateOptimisticTaskId={updateOptimisticTaskId}
       />
-      <TasksScreenSearchOverlay
-        visible={isSearchOverlayOpen}
-        anchor={creatorAnchor}
-        expandProgress={expandProgress}
-        screenWidth={screenWidth}
-        targetTop={searchTargetTop}
-        targetHeight={searchTargetHeight}
-        onClose={closeOverlay}
-      />
-      <TasksScreenSortMenu
-        ref={sortMenuRef}
-        sortMenuWidth={sortMenuWidth}
-        safeTopInset={insets.top + spacing.sm}
-        sortMode={sortMode}
-        onChangeSortMode={setSortMode}
-      />
       <TaskContent
         header={taskListHeader}
-        isSearchActive={false}
-        searchLoading={false}
-        searchError={null}
-        searchResults={[]}
         dueSoonTasks={mergedDueSoonTasks}
         futureTasks={mergedFutureTasks}
-        pastTasks={visiblePastTasks}
-        hasMorePast={hasMorePast}
-        loadingMore={loadingMore}
-        loadMorePastTasks={loadMorePastTasks}
         refreshing={refreshing}
         onRefresh={handleRefresh}
         onComplete={handleCompleteTask}
@@ -594,13 +537,11 @@ export default function TasksScreen() {
         bottomInsetOffset={bottomDockReservedInset}
         onSubtaskComposerFocus={handleSubtaskComposerFocus}
         proofUploadTaskId={proofUploadTaskId}
+        hasPastTasks={onboardingComplete}
       />
       <TaskBottomActions
         creatorAnchorRef={creatorAnchorRef}
-        sortButtonRef={sortButtonRef}
-        onOpenSearchSheet={openSearchSheet}
         onOpenCreateSheet={openCreateSheet}
-        onOpenSortMenu={openSortMenu}
         onMeasuredHeight={setBottomActionsHeight}
         overlayOpen={isOverlayOpen}
         bottomOffset={bottomDockOffset}

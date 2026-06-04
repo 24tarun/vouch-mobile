@@ -8,11 +8,10 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   body: {
     flex: 1,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.sm,
   },
   bodyContent: {
-    gap: spacing.lg,
-    paddingVertical: spacing.lg,
+    paddingTop: spacing.sm,
     paddingBottom: spacing.xxl,
   },
   manageFriendsHeader: {
@@ -79,10 +78,9 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   readOnlyField: {
     minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
   },
@@ -91,38 +89,47 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     color: colors.text,
   },
 
+  signedInText: {
+    fontSize: typography.sm,
+    color: colors.textMuted,
+    textAlign: 'center',
+    paddingTop: spacing.md,
+  },
+
   // Sections
   section: {
-    gap: spacing.sm,
-    paddingTop: spacing.lg,
+    gap: spacing.xs,
+    paddingTop: spacing.md,
   },
   sectionLabel: {
-    fontSize: typography.base,
+    fontSize: typography.xs,
     fontWeight: typography.semibold,
     color: colors.textMuted,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  card: {},
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
   cardDivider: {
     height: 1,
     backgroundColor: colors.border,
-    marginVertical: spacing.sm,
   },
   row: {
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   rowTinted: {
-    borderWidth: 1,
-    borderColor: colors.destructive + '66',
     backgroundColor: colors.destructiveMuted + '26',
-    borderRadius: radius.md,
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
   },
   rowDisabled: {
     opacity: 0.65,
@@ -142,14 +149,12 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   },
   manageFriendsRow: {
     minHeight: 48,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface2,
     paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   manageFriendsRowText: {
     fontSize: typography.base,
@@ -174,7 +179,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontWeight: typography.medium,
   },
   defaultsContent: {
-    gap: spacing.md,
+    // no gap — separator lines handle spacing
   },
   defaultsField: {
     gap: spacing.sm,
@@ -202,15 +207,13 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontWeight: typography.medium,
   },
   selectButton: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface2,
+    minHeight: 48,
     paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   selectLabel: {
     color: colors.text,
@@ -219,25 +222,21 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     paddingRight: spacing.sm,
   },
   textInput: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
+    minHeight: 48,
     paddingHorizontal: spacing.md,
     color: colors.text,
     fontSize: typography.base,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   usernameInlineField: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
+    minHeight: 48,
     paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   usernameInlineLabel: {
     fontSize: typography.base,
@@ -253,33 +252,32 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     paddingVertical: 0,
   },
   inlineField: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.bg,
+    minHeight: 48,
     paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   inlineFieldButton: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface2,
+    minHeight: 48,
     paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   inlineFieldLabel: {
     fontSize: typography.base,
     color: colors.textMuted,
     fontWeight: typography.medium,
     flexShrink: 1,
+  },
+  inlineFieldLabelFixed: {
+    flexShrink: 0,
   },
   inlineFieldInput: {
     flex: 1,
@@ -310,6 +308,7 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    padding: spacing.md,
   },
   themeModeButton: {
     flex: 1,
@@ -336,18 +335,26 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontWeight: typography.semibold,
   },
   toggleRow: {
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   toggleTextWrap: {
     flex: 1,
     gap: 2,
   },
+  toggleSwitchWrap: {
+    width: 52,
+    alignItems: 'flex-end',
+  },
   toggleTitle: {
     fontSize: typography.base,
-    color: colors.text,
+    color: colors.textMuted,
     fontWeight: typography.medium,
   },
   toggleSub: {
@@ -358,6 +365,8 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   errorText: {
     fontSize: typography.sm,
     color: colors.destructive,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   eventColorOptionsWrap: {
     flexDirection: 'row',
@@ -390,10 +399,14 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   savingText: {
     fontSize: typography.sm,
     color: colors.textMuted,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   successText: {
     fontSize: typography.sm,
     color: colors.success,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   blockedUserRow: {
     flexDirection: 'row',

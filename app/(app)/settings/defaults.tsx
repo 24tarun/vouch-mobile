@@ -3,7 +3,6 @@ import {
   Modal,
   Pressable,
   ScrollView,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -74,17 +73,13 @@ export default function SettingsDefaultsScreen() {
   const [currency, setCurrency] = useState<Currency>('USD');
   const [timeZone, setTimeZone] = useState('UTC');
   const [timeZoneUserSet, setTimeZoneUserSet] = useState(false);
-  const [defaultRequiresProofForAllTasks, setDefaultRequiresProofForAllTasks] = useState(false);
-  const [voucherCanViewActiveTasks, setVoucherCanViewActiveTasks] = useState(true);
   const [taskSortMode, setTaskSortMode] = useTaskSortMode();
 
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
-  const [voucherVisibilityError, setVoucherVisibilityError] = useState<string | null>(null);
 
   const usernameSavedRef = useRef<string | null>(null);
   const defaultsSavedRef = useRef<string | null>(null);
-  const voucherVisibilitySavedRef = useRef<boolean | null>(null);
 
   const voucherLoading = relationshipsLoading || blockedUsersLoading;
 
@@ -118,8 +113,6 @@ export default function SettingsDefaultsScreen() {
     const nextFailureCostMajor = nextFailureCostCents / 100;
     const nextVoucherId = profile.default_voucher_id ?? user.id;
     const nextCurrency = profile.currency ?? 'USD';
-    const nextDefaultRequiresProofForAllTasks = profile.default_requires_proof_for_all_tasks ?? false;
-    const nextVoucherCanViewActiveTasks = profile.voucher_can_view_active_tasks ?? true;
     const nextTimeZone = profile.timezone ?? 'UTC';
     const nextTimeZoneUserSet = profile.timezone_user_set ?? false;
 
@@ -133,8 +126,6 @@ export default function SettingsDefaultsScreen() {
     );
     setDefaultVoucherId(nextVoucherId);
     setCurrency(nextCurrency);
-    setDefaultRequiresProofForAllTasks(nextDefaultRequiresProofForAllTasks);
-    setVoucherCanViewActiveTasks(nextVoucherCanViewActiveTasks);
     setTimeZone(nextTimeZone);
     setTimeZoneUserSet(nextTimeZoneUserSet);
 
@@ -145,15 +136,12 @@ export default function SettingsDefaultsScreen() {
       defaultFailureCostCents: nextFailureCostCents,
       defaultVoucherId: nextVoucherId,
       currency: nextCurrency,
-      defaultRequiresProofForAllTasks: nextDefaultRequiresProofForAllTasks,
       timeZone: nextTimeZone,
       timeZoneUserSet: nextTimeZoneUserSet,
     });
-    voucherVisibilitySavedRef.current = nextVoucherCanViewActiveTasks;
 
     setUsernameError(null);
     setDefaultsError(null);
-    setVoucherVisibilityError(null);
   }, [profile, user]);
 
   const normalizedUsernameDraft = usernameDraft.trim().toLowerCase();
@@ -247,7 +235,6 @@ export default function SettingsDefaultsScreen() {
       defaultFailureCostCents: parsedFailureCostCents,
       defaultVoucherId: resolvedDefaultVoucherId,
       currency,
-      defaultRequiresProofForAllTasks,
       timeZone,
       timeZoneUserSet,
     }),
@@ -257,7 +244,6 @@ export default function SettingsDefaultsScreen() {
       parsedFailureCostCents,
       resolvedDefaultVoucherId,
       currency,
-      defaultRequiresProofForAllTasks,
       timeZone,
       timeZoneUserSet,
     ],
@@ -360,7 +346,6 @@ export default function SettingsDefaultsScreen() {
         currency,
         timezone: timeZone,
         timezone_user_set: timeZoneUserSet,
-        default_requires_proof_for_all_tasks: defaultRequiresProofForAllTasks,
       } : current);
 
       const { error } = await supabase.from('profiles').update({
@@ -371,7 +356,6 @@ export default function SettingsDefaultsScreen() {
         currency,
         timezone: timeZone,
         timezone_user_set: timeZoneUserSet,
-        default_requires_proof_for_all_tasks: defaultRequiresProofForAllTasks,
       }).eq('id', user.id);
 
       setSavingDefaults(false);
@@ -398,7 +382,6 @@ export default function SettingsDefaultsScreen() {
     parsedEventDurationMinutes,
     parsedFailureCostCents,
     currency,
-    defaultRequiresProofForAllTasks,
     timeZone,
     timeZoneUserSet,
     timeZoneOptions,
@@ -407,39 +390,6 @@ export default function SettingsDefaultsScreen() {
     eventDurationValidationError,
     queryClient,
   ]);
-
-  useEffect(() => {
-    if (!user) return;
-    if (voucherVisibilitySavedRef.current === null) return;
-    if (voucherCanViewActiveTasks === voucherVisibilitySavedRef.current) return;
-
-    setVoucherVisibilityError(null);
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      const previousProfile = queryClient.getQueryData(queryKeys.currentProfile(user.id));
-      queryClient.setQueryData(queryKeys.currentProfile(user.id), (current: any) => current ? {
-        ...current,
-        voucher_can_view_active_tasks: voucherCanViewActiveTasks,
-      } : current);
-
-      const { error } = await supabase.from('profiles').update({ voucher_can_view_active_tasks: voucherCanViewActiveTasks }).eq('id', user.id);
-
-      if (cancelled) return;
-
-      if (error) {
-        queryClient.setQueryData(queryKeys.currentProfile(user.id), previousProfile);
-        setVoucherVisibilityError(error.message);
-        return;
-      }
-
-      voucherVisibilitySavedRef.current = voucherCanViewActiveTasks;
-    }, 400);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [voucherCanViewActiveTasks, queryClient, user]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -599,23 +549,6 @@ export default function SettingsDefaultsScreen() {
           </View>
         </View>
 
-        <View style={styles.section}>
-          <View style={styles.card}>
-            <View style={styles.defaultsContent}>
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}><Text style={styles.toggleTitle}>Require proof for all new tasks</Text></View>
-                <View style={styles.toggleSwitchWrap}><Switch value={defaultRequiresProofForAllTasks} onValueChange={setDefaultRequiresProofForAllTasks} trackColor={{ false: colors.borderStrong, true: colors.accentCyan }} thumbColor={colors.text} /></View>
-              </View>
-
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}><Text style={styles.toggleTitle}>Allow vouchers to view active tasks</Text></View>
-                <View style={styles.toggleSwitchWrap}><Switch value={voucherCanViewActiveTasks} onValueChange={setVoucherCanViewActiveTasks} trackColor={{ false: colors.borderStrong, true: colors.accentCyan }} thumbColor={colors.text} /></View>
-              </View>
-
-              {voucherVisibilityError ? <Text style={styles.errorText}>{voucherVisibilityError}</Text> : null}
-            </View>
-          </View>
-        </View>
       </ScrollView>
 
       <Modal visible={activePicker !== null} transparent animationType="fade" onRequestClose={() => setActivePicker(null)}>

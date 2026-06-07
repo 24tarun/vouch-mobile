@@ -1944,8 +1944,37 @@ export default function SettingsScreen() {
                 </View>
               </View>
 
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}>
+                  <Text style={styles.toggleTitle}>Require proof for all new tasks</Text>
+                </View>
+                <View style={styles.toggleSwitchWrap}>
+                  <Switch
+                    value={defaultRequiresProofForAllTasks}
+                    onValueChange={setDefaultRequiresProofForAllTasks}
+                    trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                    thumbColor={colors.text}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}>
+                  <Text style={styles.toggleTitle}>Allow vouchers to view active tasks</Text>
+                </View>
+                <View style={styles.toggleSwitchWrap}>
+                  <Switch
+                    value={voucherCanViewActiveTasks}
+                    onValueChange={setVoucherCanViewActiveTasks}
+                    trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                    thumbColor={colors.text}
+                  />
+                </View>
+              </View>
+
               {savingAiFeatures ? <Text style={styles.savingText}>Saving AI features...</Text> : null}
               {aiFeaturesError ? <Text style={styles.errorText}>{aiFeaturesError}</Text> : null}
+              {voucherVisibilityError ? <Text style={styles.errorText}>{voucherVisibilityError}</Text> : null}
             </View>
           </View>
         </View>

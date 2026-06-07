@@ -85,7 +85,7 @@ export interface Profile {
   deadline_final_warning_enabled: boolean;
   notification_sound_key: 'default' | 'tone_01' | 'tone_02' | 'tone_03';
   voucher_can_view_active_tasks: boolean;
-  mobile_notifications_enabled: boolean;
+  web_notifications_enabled: boolean;
   hide_tips: boolean;
   lifetime_xp: number;
   display_xp_bar_on_dashboard: boolean;

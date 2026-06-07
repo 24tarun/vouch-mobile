@@ -567,7 +567,7 @@ export async function registerForPushNotificationsAsync(
       .from('expo_push_tokens')
       .upsert(
         { user_id: userId, token, updated_at: new Date().toISOString() },
-        { onConflict: 'user_id,token' },
+        { onConflict: 'token' },
       );
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return;

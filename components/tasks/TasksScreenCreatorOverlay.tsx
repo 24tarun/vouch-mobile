@@ -871,7 +871,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
       const isAiVoucher = effectiveVoucherId === AI_PROFILE_ID;
       const finalRequiresProof = isAiVoucher
         ? true
-        : (defaultRequiresProofForAllTasks || requiresProof || titleRequiresProof);
+        : (requiresProof || titleRequiresProof);
       const googleEventColorId = effectiveEventSyncEnabled ? selectedGoogleEventColorId : null;
 
       if (effectiveRecurrenceType) {

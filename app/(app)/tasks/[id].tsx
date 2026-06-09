@@ -249,7 +249,20 @@ export default function TaskDetailScreen() {
   // ── Subtasks ───────────────────────────────────────────────────────────────
   interface Subtask { id: string; title: string; is_completed: boolean; completed_at: string | null }
   const MAX_SUBTASKS = 20;
-  const [subtasks, setSubtasks] = useState<Subtask[]>([]);
+
+  const getCachedSubtasks = useCallback((): Subtask[] | undefined => {
+    const allCaches = queryClient.getQueriesData<{ dueSoonTasks: { id: string; subtasks?: Subtask[] }[]; futureTasks: { id: string; subtasks?: Subtask[] }[] }>({ queryKey: ['task-lists'] });
+    for (const [, cache] of allCaches) {
+      if (!cache) continue;
+      for (const bucket of [cache.dueSoonTasks, cache.futureTasks]) {
+        const match = bucket?.find((t) => t.id === id);
+        if (match?.subtasks) return match.subtasks;
+      }
+    }
+    return undefined;
+  }, [id, queryClient]);
+
+  const [subtasks, setSubtasks] = useState<Subtask[]>(() => getCachedSubtasks() ?? []);
   const [newSubtaskDraft, setNewSubtaskDraft] = useState('');
   const subtaskInputRef = useRef<TextInput>(null);
   const subtaskSnapshotRef = useRef<Subtask[]>([]);
@@ -257,6 +270,11 @@ export default function TaskDetailScreen() {
 
   useEffect(() => {
     if (!id) return;
+    const cached = getCachedSubtasks();
+    if (cached) {
+      setSubtasks(cached);
+      return;
+    }
     let cancelled = false;
     setSubtasks([]);
     supabase
@@ -269,7 +287,7 @@ export default function TaskDetailScreen() {
         setSubtasks(data as Subtask[]);
       });
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, getCachedSubtasks]);
 
   async function handleAddSubtask() {
     const title = newSubtaskDraft.trim();

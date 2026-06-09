@@ -33,6 +33,13 @@ interface Subtask {
 const MAX_SUBTASKS = 20;
 const DELETE_WINDOW_MS = 10 * 60 * 1000;
 
+export interface SubtaskRowData {
+  id: string;
+  title: string;
+  is_completed: boolean;
+  completed_at: string | null;
+}
+
 export interface TaskRowData {
   id: string;
   title: string;
@@ -45,6 +52,7 @@ export interface TaskRowData {
   created_at?: string;
   subtaskTotal?: number;
   subtaskCompleted?: number;
+  subtasks?: SubtaskRowData[];
   completed?: boolean; // legacy fallback when status not provided
 }
 

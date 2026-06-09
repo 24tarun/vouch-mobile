@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import type { TaskRowData } from '@/components/TaskRow';
+import type { SubtaskRowData, TaskRowData } from '@/components/TaskRow';
 import { TASK_ACTIVE_STATUSES, TASK_PAST_STATUSES } from '@/lib/constants/task-status';
 import { useAuth } from '@/hooks/useAuth';
 import { queryKeys } from '@/lib/query/keys';
@@ -131,28 +131,28 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
 
   const activeTasks = (activeRes.data ?? []) as RawTask[];
   const activeIds = activeTasks.map((task) => task.id);
-  const subtaskCountByTaskId = new Map<string, { total: number; completed: number }>();
+  const subtasksByTaskId = new Map<string, SubtaskRowData[]>();
 
   if (activeIds.length > 0) {
     const { data: subtaskRows, error: subtaskError } = await supabase
       .from('task_subtasks')
-      .select('parent_task_id, is_completed')
-      .in('parent_task_id', activeIds);
+      .select('id, parent_task_id, title, is_completed, completed_at')
+      .in('parent_task_id', activeIds)
+      .order('created_at', { ascending: true });
 
     if (subtaskError) {
       throw new Error(subtaskError.message);
     }
 
-    for (const row of (subtaskRows ?? []) as { parent_task_id: string; is_completed: boolean }[]) {
-      const counts = subtaskCountByTaskId.get(row.parent_task_id) ?? { total: 0, completed: 0 };
-      counts.total += 1;
-      if (row.is_completed) counts.completed += 1;
-      subtaskCountByTaskId.set(row.parent_task_id, counts);
+    for (const row of (subtaskRows ?? []) as (SubtaskRowData & { parent_task_id: string })[]) {
+      const list = subtasksByTaskId.get(row.parent_task_id) ?? [];
+      list.push({ id: row.id, title: row.title, is_completed: row.is_completed, completed_at: row.completed_at });
+      subtasksByTaskId.set(row.parent_task_id, list);
     }
   }
 
   const toActiveRowData = (row: RawTask): TaskRowData => {
-    const counts = subtaskCountByTaskId.get(row.id);
+    const subs = subtasksByTaskId.get(row.id);
     return {
       id: row.id,
       title: row.title,
@@ -162,8 +162,9 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
       requires_proof: Boolean(row.requires_proof),
       postponed_at: row.postponed_at ?? null,
       recurrence_rule_id: row.recurrence_rule_id ?? null,
-      subtaskTotal: counts?.total,
-      subtaskCompleted: counts?.completed,
+      subtasks: subs,
+      subtaskTotal: subs?.length,
+      subtaskCompleted: subs?.filter((s) => s.is_completed).length,
       created_at: row.created_at,
     };
   };

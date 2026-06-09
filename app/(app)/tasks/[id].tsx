@@ -267,6 +267,7 @@ export default function TaskDetailScreen() {
   const subtaskInputRef = useRef<TextInput>(null);
   const subtaskSnapshotRef = useRef<Subtask[]>([]);
   const mutatingSubtaskIdsRef = useRef<Set<string>>(new Set());
+  const hasUserToggledSubtasksRef = useRef(false);
 
   useEffect(() => {
     if (!id) return;
@@ -351,7 +352,9 @@ export default function TaskDetailScreen() {
   const [pomoDuration, setPomoDuration] = useState(25);
   const [pomoDraft, setPomoDraft] = useState('25');
   const [isEditingPomo, setIsEditingPomo] = useState(false);
-  const [expandedPanel, setExpandedPanel] = useState<'reminders' | 'subtasks' | null>(null);
+  const [expandedPanel, setExpandedPanel] = useState<'reminders' | 'subtasks' | null>(
+    () => ((getCachedSubtasks()?.length ?? 0) > 0 ? 'subtasks' : null),
+  );
   const [isMutatingReminder, setIsMutatingReminder] = useState(false);
   const [customReminderDate, setCustomReminderDate] = useState<Date>(() => {
     const d = new Date();
@@ -378,6 +381,21 @@ export default function TaskDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [proofLightboxOpen, setProofLightboxOpen] = useState(false);
   const [proofCaptureOpen, setProofCaptureOpen] = useState(false);
+
+  useEffect(() => {
+    hasUserToggledSubtasksRef.current = false;
+    setExpandedPanel((getCachedSubtasks()?.length ?? 0) > 0 ? 'subtasks' : null);
+  }, [getCachedSubtasks]);
+
+  useEffect(() => {
+    if (subtasks.length === 0 || hasUserToggledSubtasksRef.current || expandedPanel !== null) return;
+    setExpandedPanel('subtasks');
+  }, [expandedPanel, subtasks.length]);
+
+  function handleSubtasksTogglePress() {
+    hasUserToggledSubtasksRef.current = true;
+    setExpandedPanel((current) => (current === 'subtasks' ? null : 'subtasks'));
+  }
   const [escalationPickerOpen, setEscalationPickerOpen] = useState(false);
   const [escalationFriendsLoading, setEscalationFriendsLoading] = useState(false);
   const [escalationFriends, setEscalationFriends] = useState<Array<{ id: string; username: string; email: string }>>([]);
@@ -1765,7 +1783,7 @@ export default function TaskDetailScreen() {
                     styles.toggleHalfBtn,
                     { backgroundColor: colors.surface2, borderColor: colors.borderStrong },
                   ]}
-                  onPress={() => setExpandedPanel((current) => (current === 'subtasks' ? null : 'subtasks'))}
+                  onPress={handleSubtasksTogglePress}
                   activeOpacity={0.75}
                   accessibilityLabel={`Subtasks, ${subtasks.length} items`}
                 >

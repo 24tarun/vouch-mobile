@@ -265,6 +265,14 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       return;
     }
 
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('alarm_style_notifications_enabled')
+      .eq('id', userId)
+      .maybeSingle();
+    const alarmStyleEnabled = (profileRow as { alarm_style_notifications_enabled?: boolean } | null)
+      ?.alarm_style_notifications_enabled ?? false;
+
     const reminderRows = (reminders as {
       id: string;
       parent_task_id: string;
@@ -318,7 +326,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     });
 
     const shouldUseIOSAlarmKit = (source: string | null) =>
-      Platform.OS === 'ios' && source === DEFAULT_DEADLINE_10M_REMINDER_SOURCE;
+      alarmStyleEnabled && Platform.OS === 'ios' && source === DEFAULT_DEADLINE_10M_REMINDER_SOURCE;
 
     const hasIOSAlarmKitCandidate = validReminders.some((row) => shouldUseIOSAlarmKit(row.source));
     const alarmKitAvailable = hasIOSAlarmKitCandidate

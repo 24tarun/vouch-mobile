@@ -16,6 +16,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '@/lib/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { makeStyles } from '@/components/settings/styles';
+import { SaveStatusTrafficLights, type SaveIndicatorPhase } from '@/components/settings/SaveStatusTrafficLights';
 import { useManageFriends } from '@/lib/hooks/useManageFriends';
 import { queryKeys } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase';
@@ -77,6 +78,7 @@ export default function SettingsDefaultsScreen() {
 
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
+  const [saveSuccessTick, setSaveSuccessTick] = useState(0);
 
   const usernameSavedRef = useRef<string | null>(null);
   const defaultsSavedRef = useRef<string | null>(null);
@@ -302,6 +304,7 @@ export default function SettingsDefaultsScreen() {
 
       usernameSavedRef.current = normalizedUsernameDraft;
       setUsernameDraft(normalizedUsernameDraft);
+      setSaveSuccessTick((c) => c + 1);
     }, 700);
 
     return () => {
@@ -368,6 +371,7 @@ export default function SettingsDefaultsScreen() {
       }
 
       defaultsSavedRef.current = defaultsSnapshot;
+      setSaveSuccessTick((c) => c + 1);
     }, 500);
 
     return () => {
@@ -391,6 +395,16 @@ export default function SettingsDefaultsScreen() {
     queryClient,
   ]);
 
+  const usernameDirty = usernameSavedRef.current !== null && normalizedUsernameDraft !== usernameSavedRef.current;
+  const defaultsDirty = defaultsSavedRef.current !== null && defaultsSnapshot !== defaultsSavedRef.current;
+  const anyDirty = usernameDirty || defaultsDirty;
+  const anySaving = savingUsername || savingDefaults;
+  const saveIndicatorPhase: SaveIndicatorPhase = anySaving
+    ? 'saving'
+    : anyDirty
+      ? 'dirty'
+      : 'idle';
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.manageFriendsHeader}>
@@ -404,7 +418,10 @@ export default function SettingsDefaultsScreen() {
           <Feather name="chevron-left" size={20} color={colors.text} />
           <Text style={styles.manageFriendsBackText}>Settings</Text>
         </TouchableOpacity>
-        <Text style={styles.manageFriendsTitle}>Defaults</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={styles.manageFriendsTitle}>Defaults</Text>
+          <SaveStatusTrafficLights phase={saveIndicatorPhase} successTick={saveSuccessTick} />
+        </View>
       </View>
 
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent} showsVerticalScrollIndicator={false}>
@@ -432,7 +449,6 @@ export default function SettingsDefaultsScreen() {
                 />
               </View>
 
-              {savingUsername ? <Text style={styles.savingText}>Saving username...</Text> : null}
               {usernameError ? <Text style={styles.errorText}>{usernameError}</Text> : null}
 
               <TouchableOpacity
@@ -543,7 +559,6 @@ export default function SettingsDefaultsScreen() {
                 </View>
               </TouchableOpacity>
 
-              {savingDefaults ? <Text style={styles.savingText}>Saving...</Text> : null}
               {defaultsError ? <Text style={styles.errorText}>{defaultsError}</Text> : null}
             </View>
           </View>

@@ -103,7 +103,7 @@ beforeEach(async () => {
   jest.clearAllMocks();
   await AsyncStorage.clear();
   mockPlatformOS = 'ios';
-  mockProfile = { notification_sound_key: 'default' };
+  mockProfile = { notification_sound_key: 'default', alarm_style_notifications_enabled: true };
   mockTasks = [{ id: 'task-1', title: 'Pay rent', status: 'ACTIVE' }];
   mockReminders = [{
     id: 'reminder-1',

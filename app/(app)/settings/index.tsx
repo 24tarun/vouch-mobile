@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Animated,
   Alert,
-  Easing,
   Linking,
   Modal,
   Pressable,
@@ -15,16 +13,12 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import {
-  syncLocalReminderNotificationsAsync,
-  unregisterForPushNotificationsAsync,
-} from '@/lib/notifications';
+import { unregisterForPushNotificationsAsync } from '@/lib/notifications';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from '@/components/settings/styles';
@@ -44,12 +38,6 @@ import { useBlockedUsers } from '@/lib/hooks/useBlockedUsers';
 import { queryKeys } from '@/lib/query/keys';
 import { WEBSITE_URL } from '@/lib/auth-urls';
 import {
-  type NotificationSoundKey,
-  getNotificationSoundConfigs,
-  getNotificationSoundPreviewAsset,
-  normalizeNotificationSoundKey,
-} from '@/lib/notification-sounds';
-import {
   type BlockedUserOption,
   type IncomingFriendRequest,
   type OutgoingFriendRequest,
@@ -60,7 +48,7 @@ import {
 } from '@/lib/settings/relationships';
 import { formatTimeZoneLabel, getTimeZoneOptions } from '@/lib/timezones';
 
-type PickerType = 'voucher' | 'currency' | 'timezone' | 'charity' | 'notificationSound' | null;
+type PickerType = 'voucher' | 'currency' | 'timezone' | 'charity' | null;
 
 interface PickerOption {
   label: string;
@@ -95,171 +83,7 @@ const CURRENCY_OPTIONS: PickerOption[] = [
   { label: 'INR', value: 'INR' },
 ];
 
-type SaveIndicatorPhase = 'idle' | 'dirty' | 'saving' | 'saved';
-
-function SaveStatusTrafficLights({
-  phase,
-  successTick,
-}: {
-  phase: SaveIndicatorPhase;
-  successTick: number;
-}) {
-  const { colors } = useTheme();
-  const pulse = useRef(new Animated.Value(0)).current;
-  const [flashPhase, setFlashPhase] = useState<Exclude<SaveIndicatorPhase, 'idle'> | null>(null);
-  const previousPhaseRef = useRef<SaveIndicatorPhase>(phase);
-  const lightSize = 22;
-  const lightRadius = lightSize / 2;
-
-  useEffect(() => {
-    const previousPhase = previousPhaseRef.current;
-    previousPhaseRef.current = phase;
-
-    if (phase === previousPhase || (phase !== 'dirty' && phase !== 'saving')) return;
-
-    setFlashPhase(phase);
-    pulse.setValue(0);
-    Animated.sequence([
-      Animated.timing(pulse, {
-        toValue: 1,
-        duration: 180,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: false,
-      }),
-      Animated.timing(pulse, {
-        toValue: 0,
-        duration: 150,
-        easing: Easing.in(Easing.quad),
-        useNativeDriver: false,
-      }),
-      Animated.timing(pulse, {
-        toValue: 1,
-        duration: 180,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: false,
-      }),
-    ]).start(() => {
-      setFlashPhase(null);
-      pulse.setValue(0);
-    });
-  }, [phase, pulse]);
-
-  useEffect(() => {
-    if (successTick === 0) return;
-
-    setFlashPhase('saved');
-    pulse.setValue(0);
-    Animated.sequence([
-      Animated.timing(pulse, {
-        toValue: 1,
-        duration: 180,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: false,
-      }),
-      Animated.timing(pulse, {
-        toValue: 0,
-        duration: 150,
-        easing: Easing.in(Easing.quad),
-        useNativeDriver: false,
-      }),
-      Animated.timing(pulse, {
-        toValue: 1,
-        duration: 180,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: false,
-      }),
-    ]).start(() => {
-      setFlashPhase(null);
-      pulse.setValue(0);
-    });
-  }, [successTick, pulse]);
-
-  const displayedPhase = flashPhase ?? phase;
-
-  const redOpacity = displayedPhase === 'dirty'
-    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.52, 1] })
-    : 0.25;
-  const amberOpacity = displayedPhase === 'saving'
-    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.52, 1] })
-    : 0.25;
-  const greenOpacity = displayedPhase === 'saved'
-    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [0.58, 1] })
-    : displayedPhase === 'dirty' || displayedPhase === 'saving'
-      ? 0.08
-      : 0.92;
-  const redScale = displayedPhase === 'dirty'
-    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.16] })
-    : 1;
-  const amberScale = displayedPhase === 'saving'
-    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.16] })
-    : 1;
-  const greenScale = displayedPhase === 'saved'
-    ? pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] })
-    : displayedPhase === 'dirty' || displayedPhase === 'saving'
-      ? 1
-      : 1.04;
-
-  return (
-    <View
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
-      accessibilityLabel={
-        phase === 'dirty'
-          ? 'Unsaved settings changes'
-          : phase === 'saving'
-            ? 'Saving settings'
-            : phase === 'saved'
-              ? 'Settings saved'
-              : 'Settings are up to date'
-      }
-    >
-      <Animated.View
-        style={{
-          width: lightSize,
-          height: lightSize,
-          borderRadius: lightRadius,
-          backgroundColor: colors.destructive,
-          opacity: redOpacity,
-          transform: [{ scale: redScale }],
-          shadowColor: colors.destructive,
-          shadowOpacity: displayedPhase === 'dirty' ? 0.6 : 0.14,
-          shadowRadius: displayedPhase === 'dirty' ? 8 : 2,
-          shadowOffset: { width: 0, height: 0 },
-          elevation: displayedPhase === 'dirty' ? 6 : 0,
-        }}
-      />
-      <Animated.View
-        style={{
-          width: lightSize,
-          height: lightSize,
-          borderRadius: lightRadius,
-          backgroundColor: colors.warning,
-          opacity: amberOpacity,
-          transform: [{ scale: amberScale }],
-          shadowColor: colors.warning,
-          shadowOpacity: displayedPhase === 'saving' ? 0.55 : 0.14,
-          shadowRadius: displayedPhase === 'saving' ? 8 : 2,
-          shadowOffset: { width: 0, height: 0 },
-          elevation: displayedPhase === 'saving' ? 6 : 0,
-        }}
-      />
-      <Animated.View
-        style={{
-          width: lightSize,
-          height: lightSize,
-          borderRadius: lightRadius,
-          backgroundColor: colors.success,
-          opacity: greenOpacity,
-          transform: [{ scale: greenScale }],
-          shadowColor: colors.success,
-          shadowOpacity: displayedPhase === 'saved' ? 0.62 : displayedPhase === 'idle' ? 0.4 : 0,
-          shadowRadius: displayedPhase === 'saved' ? 10 : displayedPhase === 'idle' ? 6 : 0,
-          shadowOffset: { width: 0, height: 0 },
-          elevation: displayedPhase === 'saved' ? 7 : displayedPhase === 'idle' ? 4 : 0,
-        }}
-      />
-    </View>
-  );
-}
+import { SaveStatusTrafficLights, type SaveIndicatorPhase } from '@/components/settings/SaveStatusTrafficLights';
 
 function buildUserSummaryFromCandidate(candidate: SearchCandidate): UserSummary {
   const username = normalizeAiUsername(candidate.id, candidate.username, 'Friend');
@@ -350,14 +174,11 @@ export default function SettingsScreen() {
   const [defaultFailureCostInput, setDefaultFailureCostInput] = useState('10');
   const [defaultVoucherId, setDefaultVoucherId] = useState<string | null>(null);
   const [currency, setCurrency] = useState<Currency>('USD');
-  const [notificationSoundKey, setNotificationSoundKey] = useState<NotificationSoundKey>('default');
   const [timeZone, setTimeZone] = useState('UTC');
   const [timeZoneUserSet, setTimeZoneUserSet] = useState(false);
   const [charityEnabled, setCharityEnabled] = useState(false);
   const [selectedCharityId, setSelectedCharityId] = useState<string | null>(null);
   const charityUserOverrideRef = useRef(false);
-  const [oneHourReminderEnabled, setOneHourReminderEnabled] = useState(true);
-  const [tenMinuteReminderEnabled, setTenMinuteReminderEnabled] = useState(true);
   const [defaultRequiresProofForAllTasks, setDefaultRequiresProofForAllTasks] = useState(false);
 
   const [relationshipInFlight, setRelationshipInFlight] = useState<Record<string, RelationshipAction | null>>({});
@@ -374,8 +195,6 @@ export default function SettingsScreen() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportSent, setExportSent] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
-  const [previewingSoundKey, setPreviewingSoundKey] = useState<NotificationSoundKey | null>(null);
-  const previewSoundRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
   const [defaultsError, setDefaultsError] = useState<string | null>(null);
   const [aiVoucherEnabled, setAiVoucherEnabled] = useState(false);
   const [savingAiFeatures, setSavingAiFeatures] = useState(false);
@@ -445,9 +264,6 @@ export default function SettingsScreen() {
     const nextFailureCostMajor = nextFailureCostCents / 100;
     const nextVoucherId = profile.default_voucher_id ?? user.id;
     const nextCurrency = profile.currency ?? 'USD';
-    const nextNotificationSoundKey = normalizeNotificationSoundKey(profile.notification_sound_key);
-    const nextOneHourReminder = profile.deadline_one_hour_warning_enabled ?? true;
-    const nextTenMinuteReminder = profile.deadline_final_warning_enabled ?? true;
     const nextDefaultRequiresProofForAllTasks = profile.default_requires_proof_for_all_tasks ?? false;
     const nextAiVoucherEnabled = profile.ai_friend_opt_in ?? false;
     const nextVoucherCanViewActiveTasks = profile.voucher_can_view_active_tasks ?? true;
@@ -455,7 +271,6 @@ export default function SettingsScreen() {
     const nextTimeZoneUserSet = profile.timezone_user_set ?? false;
     const nextCharityEnabled = profile.charity_enabled ?? false;
     const nextSelectedCharityId = profile.selected_charity_id ?? null;
-
     setUsernameDraft(nextUsername);
     setDefaultPomoInput(String(nextPomo));
     setDefaultEventDurationInput(String(nextEventDuration));
@@ -466,9 +281,6 @@ export default function SettingsScreen() {
     );
     setDefaultVoucherId(nextVoucherId);
     setCurrency(nextCurrency);
-    setNotificationSoundKey(nextNotificationSoundKey);
-    setOneHourReminderEnabled(nextOneHourReminder);
-    setTenMinuteReminderEnabled(nextTenMinuteReminder);
     setDefaultRequiresProofForAllTasks(nextDefaultRequiresProofForAllTasks);
     setAiVoucherEnabled(nextAiVoucherEnabled);
     setVoucherCanViewActiveTasks(nextVoucherCanViewActiveTasks);
@@ -488,9 +300,6 @@ export default function SettingsScreen() {
         defaultFailureCostCents: nextFailureCostCents,
         defaultVoucherId: nextVoucherId,
         currency: nextCurrency,
-        notificationSoundKey: nextNotificationSoundKey,
-        oneHourReminderEnabled: nextOneHourReminder,
-        tenMinuteReminderEnabled: nextTenMinuteReminder,
         defaultRequiresProofForAllTasks: nextDefaultRequiresProofForAllTasks,
         timeZone: nextTimeZone,
         timeZoneUserSet: nextTimeZoneUserSet,
@@ -1313,21 +1122,15 @@ export default function SettingsScreen() {
     ],
     [charities],
   );
-  const notificationSoundPickerOptions: PickerOption[] = useMemo(
-    () => getNotificationSoundConfigs().map((sound) => ({ label: sound.label, value: sound.key })),
-    [],
-  );
   const pickerOptions: PickerOption[] = useMemo(() => {
     if (activePicker === 'voucher') return voucherPickerOptions;
     if (activePicker === 'currency') return CURRENCY_OPTIONS;
     if (activePicker === 'timezone') return timeZonePickerOptions;
     if (activePicker === 'charity') return charityPickerOptions;
-    if (activePicker === 'notificationSound') return notificationSoundPickerOptions;
     return [];
   }, [
     activePicker,
     charityPickerOptions,
-    notificationSoundPickerOptions,
     timeZonePickerOptions,
     voucherPickerOptions,
   ]);
@@ -1337,7 +1140,6 @@ export default function SettingsScreen() {
     if (activePicker === 'currency') return 'Currency';
     if (activePicker === 'timezone') return 'Timezone';
     if (activePicker === 'charity') return 'Charity';
-    if (activePicker === 'notificationSound') return 'Notification sound';
     return '';
   }, [activePicker]);
 
@@ -1349,12 +1151,6 @@ export default function SettingsScreen() {
     () => charities.find((charity) => charity.id === selectedCharityId)?.name ?? 'Select one charity',
     [charities, selectedCharityId],
   );
-  const notificationSoundLabel = useMemo(
-    () =>
-      getNotificationSoundConfigs().find((option) => option.key === notificationSoundKey)?.label
-      ?? 'Default',
-    [notificationSoundKey],
-  );
   const defaultsSnapshot = useMemo(
     () =>
       JSON.stringify({
@@ -1363,9 +1159,6 @@ export default function SettingsScreen() {
         defaultFailureCostCents: parsedFailureCostCents,
         defaultVoucherId: resolvedDefaultVoucherId,
         currency,
-        notificationSoundKey,
-        oneHourReminderEnabled,
-        tenMinuteReminderEnabled,
         defaultRequiresProofForAllTasks,
         timeZone,
         timeZoneUserSet,
@@ -1378,9 +1171,6 @@ export default function SettingsScreen() {
       parsedFailureCostCents,
       resolvedDefaultVoucherId,
       currency,
-      notificationSoundKey,
-      oneHourReminderEnabled,
-      tenMinuteReminderEnabled,
       defaultRequiresProofForAllTasks,
       timeZone,
       timeZoneUserSet,
@@ -1434,53 +1224,8 @@ export default function SettingsScreen() {
       setSelectedCharityId(value);
       setCharityEnabled(true);
     }
-    if (activePicker === 'notificationSound') {
-      setNotificationSoundKey(normalizeNotificationSoundKey(value));
-    }
     setActivePicker(null);
   }
-
-  async function handlePreviewNotificationSound(key: NotificationSoundKey) {
-    setPreviewingSoundKey(key);
-    try {
-      const previewAsset = getNotificationSoundPreviewAsset(key);
-      if (!previewAsset) {
-        Alert.alert('No preview available', 'Default system sound cannot be previewed in-app.');
-        return;
-      }
-
-      if (previewSoundRef.current) {
-        previewSoundRef.current.remove();
-        previewSoundRef.current = null;
-      }
-
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      });
-
-      const player = createAudioPlayer(previewAsset);
-      previewSoundRef.current = player;
-      player.seekTo(0);
-      player.play();
-
-      setTimeout(() => {
-        if (previewSoundRef.current !== player) return;
-        player.remove();
-        previewSoundRef.current = null;
-      }, 3000);
-    } finally {
-      setTimeout(() => {
-        setPreviewingSoundKey((current) => (current === key ? null : current));
-      }, 1200);
-    }
-  }
-
-  useEffect(() => () => {
-    if (!previewSoundRef.current) return;
-    previewSoundRef.current.remove();
-    previewSoundRef.current = null;
-  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -1575,13 +1320,10 @@ export default function SettingsScreen() {
         default_failure_cost_cents: parsedFailureCostCents,
         default_voucher_id: resolvedDefaultVoucherId,
         currency,
-        notification_sound_key: notificationSoundKey,
         timezone: timeZone,
         timezone_user_set: timeZoneUserSet,
         charity_enabled: resolvedCharityEnabled,
         selected_charity_id: resolvedSelectedCharityId,
-        deadline_one_hour_warning_enabled: oneHourReminderEnabled,
-        deadline_final_warning_enabled: tenMinuteReminderEnabled,
         default_requires_proof_for_all_tasks: defaultRequiresProofForAllTasks,
       } : current);
 
@@ -1593,13 +1335,10 @@ export default function SettingsScreen() {
           default_failure_cost_cents: parsedFailureCostCents,
           default_voucher_id: resolvedDefaultVoucherId,
           currency,
-          notification_sound_key: notificationSoundKey,
           timezone: timeZone,
           timezone_user_set: timeZoneUserSet,
           charity_enabled: resolvedCharityEnabled,
           selected_charity_id: resolvedSelectedCharityId,
-          deadline_one_hour_warning_enabled: oneHourReminderEnabled,
-          deadline_final_warning_enabled: tenMinuteReminderEnabled,
           default_requires_proof_for_all_tasks: defaultRequiresProofForAllTasks,
         })
         .eq('id', user.id);
@@ -1616,7 +1355,6 @@ export default function SettingsScreen() {
       defaultsSavedRef.current = defaultsSnapshot;
       charityUserOverrideRef.current = false;
       setSaveSuccessTick((current) => current + 1);
-      void syncLocalReminderNotificationsAsync(user.id);
     }, 500);
 
     return () => {
@@ -1630,9 +1368,6 @@ export default function SettingsScreen() {
     parsedFailureCostCents,
     resolvedDefaultVoucherId,
     currency,
-    notificationSoundKey,
-    oneHourReminderEnabled,
-    tenMinuteReminderEnabled,
     defaultRequiresProofForAllTasks,
     timeZone,
     timeZoneOptions,
@@ -1822,59 +1557,17 @@ export default function SettingsScreen() {
                 <Feather name="chevron-right" size={16} color={colors.textMuted} />
               </TouchableOpacity>
 
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.card}>
-            <View style={styles.defaultsContent}>
               <TouchableOpacity
                 style={styles.inlineFieldButton}
-                onPress={() => setActivePicker('notificationSound')}
+                onPress={() => router.push('/settings/notifications')}
                 activeOpacity={0.8}
                 accessibilityRole="button"
-                accessibilityLabel="Select notification sound"
+                accessibilityLabel="Open notifications"
               >
-                <Text numberOfLines={1} style={[styles.inlineFieldLabel, styles.inlineFieldLabelFixed]}>
-                  Notification sound
-                </Text>
-                <View style={styles.inlineFieldRight}>
-                  <Text style={styles.inlineFieldValue}>{notificationSoundLabel}</Text>
-                  <Feather name="chevron-down" size={16} color={colors.textMuted} />
-                </View>
+                <Text style={styles.inlineFieldLabel}>Notifications</Text>
+                <Feather name="chevron-right" size={16} color={colors.textMuted} />
               </TouchableOpacity>
 
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}>
-                  <Text style={styles.toggleTitle}>1 hour reminder</Text>
-                </View>
-                <View style={styles.toggleSwitchWrap}>
-                  <Switch
-                    value={oneHourReminderEnabled}
-                    onValueChange={setOneHourReminderEnabled}
-                    trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                    thumbColor={colors.text}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.toggleRow}>
-                <View style={styles.toggleTextWrap}>
-                  <Text style={styles.toggleTitle}>10 minute reminder</Text>
-                </View>
-                <View style={styles.toggleSwitchWrap}>
-                  <Switch
-                    value={tenMinuteReminderEnabled}
-                    onValueChange={setTenMinuteReminderEnabled}
-                    trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
-                    thumbColor={colors.text}
-                  />
-                </View>
-              </View>
-
-              {savingDefaults ? <Text style={styles.savingText}>Saving...</Text> : null}
-              {defaultsError ? <Text style={styles.errorText}>{defaultsError}</Text> : null}
             </View>
           </View>
         </View>
@@ -1973,6 +1666,7 @@ export default function SettingsScreen() {
               </View>
 
               {savingAiFeatures ? <Text style={styles.savingText}>Saving AI features...</Text> : null}
+              {defaultsError ? <Text style={styles.errorText}>{defaultsError}</Text> : null}
               {aiFeaturesError ? <Text style={styles.errorText}>{aiFeaturesError}</Text> : null}
               {voucherVisibilityError ? <Text style={styles.errorText}>{voucherVisibilityError}</Text> : null}
             </View>
@@ -2053,23 +1747,7 @@ export default function SettingsScreen() {
                     <Text style={[styles.pickerRowLabel, option.disabled ? styles.pickerRowLabelDisabled : null]}>
                       {option.label}
                     </Text>
-                    {activePicker === 'notificationSound' && notificationSoundKey === option.value ? (
-                      <Feather name="check" size={16} color={colors.accentCyan} />
-                    ) : null}
                   </TouchableOpacity>
-                  {activePicker === 'notificationSound' && !option.disabled ? (
-                    <TouchableOpacity
-                      style={styles.previewButton}
-                      onPress={() => { void handlePreviewNotificationSound(normalizeNotificationSoundKey(option.value)); }}
-                      activeOpacity={0.75}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Preview ${option.label}`}
-                    >
-                      <Text style={styles.previewButtonText}>
-                        {previewingSoundKey === option.value ? 'Playing...' : 'Play'}
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
                 </View>
               ))}
             </ScrollView>

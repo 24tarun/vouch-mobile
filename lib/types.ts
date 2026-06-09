@@ -94,6 +94,7 @@ export interface Profile {
   ai_friend_opt_in: boolean;
   charity_enabled: boolean;
   selected_charity_id: string | null;
+  alarm_style_notifications_enabled: boolean;
   timezone: string;
   timezone_user_set: boolean;
   created_at: string;

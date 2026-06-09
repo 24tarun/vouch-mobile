@@ -68,9 +68,10 @@ export default function TasksScreen() {
   const {
     dueSoonTasks,
     futureTasks,
+    loading: tasksLoading,
     refetch: refetchTasks,
   } = useTasks(sortMode);
-  const { onboardingComplete, completeOnboarding } = useOnboarding();
+  const { onboardingComplete, loading: onboardingLoading, completeOnboarding } = useOnboarding();
   const [refreshing, setRefreshing] = useState(false);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('closed');
   const expandProgress = useSharedValue(0);
@@ -538,6 +539,7 @@ export default function TasksScreen() {
         onSubtaskComposerFocus={handleSubtaskComposerFocus}
         proofUploadTaskId={proofUploadTaskId}
         hasPastTasks={onboardingComplete}
+        initialLoading={tasksLoading || onboardingLoading}
       />
       <TaskBottomActions
         creatorAnchorRef={creatorAnchorRef}

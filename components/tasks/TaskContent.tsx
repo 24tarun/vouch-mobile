@@ -28,6 +28,7 @@ interface TaskContentProps {
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
   proofUploadTaskId?: string | null;
   hasPastTasks?: boolean;
+  initialLoading?: boolean;
 }
 
 export function TaskContent({
@@ -49,6 +50,7 @@ export function TaskContent({
   onSubtaskComposerFocus,
   proofUploadTaskId = null,
   hasPastTasks = false,
+  initialLoading = false,
 }: TaskContentProps) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
@@ -81,10 +83,12 @@ export function TaskContent({
     >
       {header}
       {dueSoonTasks.length === 0 && futureTasks.length === 0 ? (
-        hasPastTasks ? (
-          <Text style={styles.placeholder}>No active tasks.</Text>
-        ) : (
-          <TasksEmptyState />
+        initialLoading ? null : (
+          hasPastTasks ? (
+            <Text style={styles.placeholder}>No active tasks.</Text>
+          ) : (
+            <TasksEmptyState />
+          )
         )
       ) : (
         <>

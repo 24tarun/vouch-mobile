@@ -864,221 +864,91 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     });
 
     setIsCreatingTask(true);
-    let createdTaskId: string | null = null;
     try {
       const userClientInstanceId = await resolveUserClientInstanceId(currentUserId);
-      let recurrenceRuleId: string | null = null;
       const isAiVoucher = effectiveVoucherId === AI_PROFILE_ID;
       const finalRequiresProof = isAiVoucher
         ? true
         : (requiresProof || titleRequiresProof);
       const googleEventColorId = effectiveEventSyncEnabled ? selectedGoogleEventColorId : null;
+      const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const recurrenceDaysToUse = effectiveRecurrenceType === 'WEEKLY'
+        ? (showCustomRecurrenceDays && recurrenceDays.length > 0 ? recurrenceDays : [deadlineToCreate.getDay()])
+        : null;
+      const recurrenceTime = effectiveRecurrenceType
+        ? new Intl.DateTimeFormat('en-GB', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+            timeZone: userTimezone,
+          }).format(deadlineToCreate)
+        : null;
+      const reminderOffsetsMs = buildManualReminderOffsetsMs(deadlineToCreate, remindersToCreate);
+      const lastGeneratedDate = effectiveRecurrenceType
+        ? new Intl.DateTimeFormat('en-CA', {
+            timeZone: userTimezone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          }).format(deadlineToCreate)
+        : null;
 
-      if (effectiveRecurrenceType) {
-        const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-        const recurrenceTime = new Intl.DateTimeFormat('en-GB', {
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-          timeZone: userTimezone,
-        }).format(deadlineToCreate);
+      const { data, error: createTaskError } = await supabase.rpc('create_task_atomic', {
+        p_voucher_id: effectiveVoucherId,
+        p_title: taskTitle,
+        p_creation_input: rawTitle,
+        p_description: null,
+        p_failure_cost_cents: failureCostCents,
+        p_required_pomo_minutes: requiredPomoParse.requiredPomoMinutes,
+        p_requires_proof: finalRequiresProof,
+        p_deadline: deadlineIso,
+        p_start_at: effectiveTimeBoundEnabled ? boundedStartIso : null,
+        p_is_strict: effectiveTimeBoundEnabled,
+        p_google_sync_for_task: effectiveEventSyncEnabled,
+        p_google_event_start_at: eventStartIso,
+        p_google_event_end_at: eventEndIso,
+        p_google_event_color_id: googleEventColorId,
+        p_created_by_user_client_instance_id: userClientInstanceId,
+        p_subtasks: trimmedSubtaskTitles,
+        p_reminder_at: remindersToCreate.map((reminder) => reminder.reminderAt.toISOString()),
+        p_reminder_sources: remindersToCreate.map((reminder) => reminder.source),
+        p_recurrence_type: effectiveRecurrenceType || null,
+        p_recurrence_interval: effectiveRecurrenceType ? 1 : null,
+        p_recurrence_days: recurrenceDaysToUse,
+        p_recurrence_timezone: effectiveRecurrenceType ? userTimezone : null,
+        p_recurrence_time_of_day: recurrenceTime,
+        p_time_bound_for_rule: effectiveTimeBoundEnabled,
+        p_window_start_offset_minutes: startOffsetMinutes,
+        p_google_event_duration_minutes: effectiveEventSyncEnabled ? startOffsetMinutes : null,
+        p_last_generated_date: lastGeneratedDate,
+        p_manual_reminder_offsets_ms: reminderOffsetsMs,
+      });
 
-        const ruleConfig: Record<string, unknown> = {
-          frequency: effectiveRecurrenceType,
-          interval: 1,
-          time_of_day: recurrenceTime,
-        };
+      const createdRow = Array.isArray(data) ? data[0] : data;
+      const createdTaskId = createdRow?.task_id as string | undefined;
+      const recurrenceRuleId = (createdRow?.recurrence_rule_id as string | null | undefined) ?? null;
 
-        if (effectiveRecurrenceType === 'WEEKLY') {
-          const recurrenceDaysToUse = showCustomRecurrenceDays && recurrenceDays.length > 0
-            ? recurrenceDays
-            : [deadlineToCreate.getDay()];
-          ruleConfig.days_of_week = recurrenceDaysToUse;
-        }
-
-        const reminderOffsetsMs = buildManualReminderOffsetsMs(deadlineToCreate, remindersToCreate);
-        const lastGeneratedDate = new Intl.DateTimeFormat('en-CA', {
-          timeZone: userTimezone,
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        }).format(deadlineToCreate);
-
-        const { data: insertedRule, error: recurrenceRuleInsertError } = await supabase
-          .from('recurrence_rules')
-          .insert({
-            user_id: currentUserId,
-            voucher_id: effectiveVoucherId,
-            title: taskTitle,
-            description: null,
-            failure_cost_cents: failureCostCents,
-            required_pomo_minutes: requiredPomoParse.requiredPomoMinutes,
-            requires_proof: finalRequiresProof,
-            rule_config: ruleConfig as any,
-            timezone: userTimezone,
-            google_sync_for_rule: effectiveEventSyncEnabled,
-            time_bound_for_rule: effectiveTimeBoundEnabled,
-            window_start_offset_minutes: startOffsetMinutes,
-            google_event_duration_minutes: effectiveEventSyncEnabled ? startOffsetMinutes : null,
-            google_event_color_id: googleEventColorId,
-            manual_reminder_offsets_ms: reminderOffsetsMs.length > 0 ? reminderOffsetsMs : null,
-            last_generated_date: lastGeneratedDate,
-          } as any)
-          .select('id')
-          .single();
-
-        if (recurrenceRuleInsertError || !insertedRule?.id) {
-          removeOptimisticTask(optimisticTaskId);
-          Toast.show({
-            type: 'proofError',
-            text1: 'A task failed to create',
-            position: 'bottom',
-            bottomOffset: 84,
-            visibilityTime: 2600,
-          });
-          return;
-        }
-        recurrenceRuleId = insertedRule.id as string;
-      }
-
-      const { data: createdTask, error: taskInsertError } = await supabase
-        .from('tasks')
-        .insert({
-          user_id: currentUserId,
-          voucher_id: effectiveVoucherId,
-          title: taskTitle,
-          description: null,
-          failure_cost_cents: failureCostCents,
-          required_pomo_minutes: requiredPomoParse.requiredPomoMinutes,
-          requires_proof: finalRequiresProof,
-          deadline: deadlineIso,
-          status: 'ACTIVE',
-          start_at: effectiveTimeBoundEnabled ? boundedStartIso : null,
-          is_strict: effectiveTimeBoundEnabled,
-          google_sync_for_task: effectiveEventSyncEnabled,
-          google_event_start_at: eventStartIso,
-          google_event_end_at: eventEndIso,
-          google_event_color_id: googleEventColorId,
-          recurrence_rule_id: recurrenceRuleId,
-          created_by_user_client_instance_id: userClientInstanceId,
-          updated_at: nowIso,
-        } as any)
-        .select('id')
-        .single();
-
-      if (taskInsertError || !createdTask?.id) {
-        if (recurrenceRuleId) {
-          await supabase
-            .from('recurrence_rules')
-            .delete()
-            .eq('id', recurrenceRuleId)
-            .eq('user_id', currentUserId);
-        }
+      if (createTaskError || !createdTaskId) {
         removeOptimisticTask(optimisticTaskId);
         Toast.show({
           type: 'proofError',
-          text1: 'A task failed to create',
+          text1: 'Task creation failed',
+          text2: createTaskError?.message ?? 'Please try again.',
           position: 'bottom',
           bottomOffset: 84,
-          visibilityTime: 2600,
+          visibilityTime: 3200,
         });
         return;
       }
 
-      createdTaskId = createdTask.id;
-      updateOptimisticTaskId(optimisticTaskId, createdTask.id, recurrenceRuleId);
-
-      const subtaskRows = trimmedSubtaskTitles.map((subtaskTitle) => ({
-        parent_task_id: createdTask.id,
-        user_id: currentUserId,
-        title: subtaskTitle,
-        is_completed: false,
-        completed_at: null,
-        created_at: nowIso,
-        updated_at: nowIso,
-      }));
-
-      if (subtaskRows.length > 0) {
-        const { error: subtaskInsertError } = await supabase
-          .from('task_subtasks')
-          .insert(subtaskRows as any);
-
-        if (subtaskInsertError) {
-          await supabase
-            .from('tasks')
-            .delete()
-            .eq('id', createdTask.id)
-            .eq('user_id', currentUserId);
-          if (recurrenceRuleId) {
-            await supabase
-              .from('recurrence_rules')
-              .delete()
-              .eq('id', recurrenceRuleId)
-              .eq('user_id', currentUserId);
-          }
-          removeOptimisticTask(optimisticTaskId);
-          removeOptimisticTask(createdTask.id);
-          Toast.show({
-            type: 'proofError',
-            text1: 'A task failed to create',
-            position: 'bottom',
-            bottomOffset: 84,
-            visibilityTime: 2600,
-          });
-          return;
-        }
-      }
-
-      const reminderRows = remindersToCreate.map((reminder) => {
-        const reminderIso = reminder.reminderAt.toISOString();
-        return {
-          parent_task_id: createdTask.id,
-          user_id: currentUserId,
-          reminder_at: reminderIso,
-          source: reminder.source,
-          notified_at: reminder.reminderAt.getTime() <= Date.now() ? nowIso : null,
-          created_at: nowIso,
-          updated_at: nowIso,
-        };
-      });
-
-      if (reminderRows.length > 0) {
-        const { error: reminderInsertError } = await supabase
-          .from('task_reminders')
-          .insert(reminderRows as any);
-
-        if (reminderInsertError) {
-          await supabase
-            .from('tasks')
-            .delete()
-            .eq('id', createdTask.id)
-            .eq('user_id', currentUserId);
-          if (recurrenceRuleId) {
-            await supabase
-              .from('recurrence_rules')
-              .delete()
-              .eq('id', recurrenceRuleId)
-              .eq('user_id', currentUserId);
-          }
-          removeOptimisticTask(optimisticTaskId);
-          removeOptimisticTask(createdTask.id);
-          Toast.show({
-            type: 'proofError',
-            text1: 'A task failed to create',
-            position: 'bottom',
-            bottomOffset: 84,
-            visibilityTime: 2600,
-          });
-          return;
-        }
-      }
+      updateOptimisticTaskId(optimisticTaskId, createdTaskId, recurrenceRuleId);
 
       refetchTasks();
       void syncLocalReminderNotificationsAsync(currentUserId);
 
       if (effectiveEventSyncEnabled) {
         void (async () => {
-          const syncResult = await syncGoogleCalendarTaskAfterCreate(createdTask.id);
+          const syncResult = await syncGoogleCalendarTaskAfterCreate(createdTaskId);
           if (syncResult.message) {
             Toast.show({
               type: 'proofError',
@@ -1090,15 +960,15 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
           }
         })();
       }
-    } catch {
+    } catch (error) {
       removeOptimisticTask(optimisticTaskId);
-      if (createdTaskId) removeOptimisticTask(createdTaskId);
       Toast.show({
         type: 'proofError',
-        text1: 'A task failed to create',
+        text1: 'Task creation failed',
+        text2: error instanceof Error ? error.message : 'Please try again.',
         position: 'bottom',
         bottomOffset: 84,
-        visibilityTime: 2600,
+        visibilityTime: 3200,
       });
     } finally {
       setIsCreatingTask(false);

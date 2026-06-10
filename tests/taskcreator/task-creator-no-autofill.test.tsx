@@ -3,6 +3,8 @@ import { render } from '@testing-library/react-native';
 
 
 import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
+import type { GoogleEventColorId } from '@/lib/task-title-parser';
+import type { RecurrenceType } from '@/components/tasks/types';
 
 const defaultProps = {
   visible: true,
@@ -62,7 +64,7 @@ const defaultProps = {
   setShowCustomReminderIosModal: jest.fn(),
   setCustomReminderDate: jest.fn(),
   onAddCustomReminder: jest.fn(),
-  recurrenceType: '',
+  recurrenceType: '' as RecurrenceType,
   showCustomRecurrenceDays: false,
   onClearRecurrence: jest.fn(),
   onResetDeadlineAndRecurrence: jest.fn(),
@@ -79,7 +81,7 @@ const defaultProps = {
   setEventSyncEnabled: jest.fn(),
   eventStartDate: null,
   setEventStartDate: jest.fn(),
-  selectedGoogleEventColorId: '1',
+  selectedGoogleEventColorId: '1' as GoogleEventColorId,
   setSelectedGoogleEventColorId: jest.fn(),
   suggestedStartDate: new Date('2026-05-05T12:00:00.000Z'),
   showEventStartAndroidPicker: false,

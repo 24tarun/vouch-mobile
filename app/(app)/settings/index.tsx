@@ -77,6 +77,7 @@ const EVENT_DURATION_FALLBACK_MINUTES = 60;
 const SHOW_CALENDAR_SYNC = false;
 const ACCOUNT_DELETE_FALLBACK_URL = `${WEBSITE_URL}/settings`;
 const ACCOUNT_DELETE_API_URL = `${WEBSITE_URL}/api/account/delete`;
+const PRIVACY_POLICY_URL = `${WEBSITE_URL}/privacy-policy`;
 const CURRENCY_OPTIONS: PickerOption[] = [
   { label: 'USD', value: 'USD' },
   { label: 'EUR', value: 'EUR' },
@@ -1712,6 +1713,12 @@ export default function SettingsScreen() {
               />
               {deleteAccountError ? <Text style={styles.errorText}>{deleteAccountError}</Text> : null}
               {deleteAccountSuccess ? <Text style={styles.successText}>Account successfully deleted.</Text> : null}
+              <SettingsRow
+                icon="file-text"
+                label="Privacy Policy"
+                onPress={() => { void Linking.openURL(PRIVACY_POLICY_URL); }}
+                accessibilityHint="Opens the Privacy Policy"
+              />
             </View>
           </View>
         </View>

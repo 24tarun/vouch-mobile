@@ -42,6 +42,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTaskDetail } from '@/lib/hooks/useTaskDetail';
 import { queryKeys } from '@/lib/query/keys';
 import { isOptimisticTaskId } from '@/lib/tasks/task-id';
+import { getDefaultDeadline } from '@/lib/task-title-parser';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
 import { LegacyPostponeCalendarPicker } from '@/components/tasks/LegacyPostponeCalendarPicker';
 import { ProofCaptureModal } from '@/components/tasks/ProofCaptureModal';
@@ -377,7 +378,7 @@ export default function TaskDetailScreen() {
   const [isAcceptingDenial, setIsAcceptingDenial] = useState(false);
   const [isSubmittingAiReview, setIsSubmittingAiReview] = useState(false);
   const [postponePickerOpen, setPostponePickerOpen] = useState(false);
-  const [postponePickerDate, setPostponePickerDate] = useState<Date>(new Date());
+  const [postponePickerDate, setPostponePickerDate] = useState<Date>(() => getDefaultDeadline());
   const [refreshing, setRefreshing] = useState(false);
   const [proofLightboxOpen, setProofLightboxOpen] = useState(false);
   const [proofCaptureOpen, setProofCaptureOpen] = useState(false);
@@ -406,6 +407,7 @@ export default function TaskDetailScreen() {
     startSession,
   } = usePomodoro();
   const task = detail.data?.task ?? null;
+  const taskId = task?.id ?? null;
   const voucherUsername = task?.voucher_id === AI_PROFILE_ID
     ? AI_PROFILE_USERNAME
     : detail.data?.voucherUsername ?? null;
@@ -431,6 +433,12 @@ export default function TaskDetailScreen() {
     setPomoDuration(defaultPomo);
     setPomoDraft(String(defaultPomo));
   }, [profile?.currency, profile?.default_pomo_duration_minutes]);
+
+  useEffect(() => {
+    if (postponePickerOpen && taskId) {
+      setPostponePickerDate(getDefaultDeadline());
+    }
+  }, [postponePickerOpen, taskId]);
 
   function showProofToast(message: string, tone: 'error' | 'success') {
     Toast.show({

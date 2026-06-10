@@ -450,6 +450,8 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                 onSubmitEditing={() => onCreate()}
                 onFocus={() => setIsTitleFocused(true)}
                 onBlur={() => setIsTitleFocused(false)}
+                textContentType="none"
+                autoComplete="off"
               />
             </Pressable>
 
@@ -512,6 +514,8 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                 onSubmitEditing={() => newSubtaskDraft.trim().length === 0 ? onCreate() : onAddDraftSubtask()}
                 onFocus={() => setIsSubtaskFocused(true)}
                 onBlur={() => setIsSubtaskFocused(false)}
+                textContentType="none"
+                autoComplete="off"
               />
               {newSubtaskDraft.trim().length > 0 && (
                 <TouchableOpacity
@@ -1089,6 +1093,8 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                   onFocus={() => setFailureCostSelection({ start: failureCostInput.length, end: failureCostInput.length })}
                   onSelectionChange={() => setFailureCostSelection(undefined)}
                   onSubmitEditing={() => setIsCostEditing(false)}
+                  textContentType="none"
+                  autoComplete="off"
                 />
               </View>
               <View style={styles.costQuickSelectRow}>

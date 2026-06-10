@@ -1,24 +1,6 @@
 import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
 import { InteractionManager } from 'react-native';
-
-jest.mock('react-native-reanimated', () => {
-  const Reanimated = require('react-native-reanimated/mock');
-  Reanimated.useAnimatedReaction = (prepare: () => number, reactFn: (value: number) => void) => {
-    reactFn(prepare());
-  };
-  Reanimated.runOnJS = (fn: (...args: unknown[]) => unknown) => fn;
-  return Reanimated;
-});
-
-jest.mock('react-native-keyboard-aware-scroll-view', () => ({
-  KeyboardAwareScrollView: 'KeyboardAwareScrollView',
-}));
-
-jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
-jest.mock('react-native-ui-datepicker', () => 'UiDateTimePicker');
-jest.mock('react-native-ui-datepicker/lib/commonjs/components/time-picker/wheel-picker/wheel-picker', () => 'WheelPicker', { virtual: true });
-
 import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
 
 describe('TaskCreatorOverlay keyboard focus behavior', () => {

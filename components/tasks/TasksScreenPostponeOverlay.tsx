@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
@@ -6,6 +6,7 @@ import { LegacyPostponeCalendarPicker } from '@/components/tasks/LegacyPostponeC
 import { postponeTaskDeadline } from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import type { TaskRowData } from '@/components/TaskRow';
+import { getDefaultDeadline } from '@/lib/task-title-parser';
 
 interface Props {
   task: TaskRowData | null;
@@ -18,8 +19,15 @@ export const TasksScreenPostponeOverlay = memo(function TasksScreenPostponeOverl
   refetchTasks,
   onClose,
 }: Props) {
-  const [postponePickerDate, setPostponePickerDate] = useState(new Date());
+  const taskId = task?.id ?? null;
+  const [postponePickerDate, setPostponePickerDate] = useState(() => getDefaultDeadline());
   const [postponingTaskId, setPostponingTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (taskId) {
+      setPostponePickerDate(getDefaultDeadline());
+    }
+  }, [taskId]);
 
   function handlePostponePickerChange(_event: DateTimePickerEvent, selected?: Date) {
     if (selected) setPostponePickerDate(selected);

@@ -136,7 +136,7 @@ function isValidCalendarDate(year: number, month: number, day: number): boolean 
   );
 }
 
-function getDefaultDeadline(now: Date = new Date()): Date {
+export function getDefaultDeadline(now: Date = new Date()): Date {
   const deadline = new Date(now);
   deadline.setHours(23, 0, 0, 0);
   if (deadline.getTime() <= now.getTime()) {

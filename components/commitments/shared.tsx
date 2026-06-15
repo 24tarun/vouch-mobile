@@ -364,6 +364,7 @@ export function TaskPickerModal({
             .from('tasks')
             .select('id, title, deadline, failure_cost_cents')
             .eq('user_id', userId)
+            .is('recurrence_rule_id', null)
             .in('status', ['ACTIVE', 'POSTPONED'])
             .order('deadline', { ascending: true }),
           supabase

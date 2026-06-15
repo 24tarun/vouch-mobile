@@ -121,15 +121,29 @@ function computeEarnedSoFar(
   }, 0);
 }
 
+interface RuleCostInfo {
+  id: string;
+  failure_cost_cents: number;
+}
+
 function computeTotalTarget(
   linkedTasks: CommitmentTaskLite[],
   startDate: string,
   endDate: string,
+  linkedRules: RuleCostInfo[] = [],
 ): number {
-  return filterTasksInWindow(linkedTasks, startDate, endDate).reduce(
-    (sum, task) => sum + (Number(task.failure_cost_cents) || 0),
+  const totalDays = dayDiffInclusive(startDate, endDate);
+
+  const oneOffTotal = filterTasksInWindow(linkedTasks, startDate, endDate)
+    .filter((t) => !t.recurrence_rule_id)
+    .reduce((sum, task) => sum + (Number(task.failure_cost_cents) || 0), 0);
+
+  const recurringTotal = linkedRules.reduce(
+    (sum, rule) => sum + (Number(rule.failure_cost_cents) || 0) * totalDays,
     0,
   );
+
+  return oneOffTotal + recurringTotal;
 }
 
 function getDayStatuses(
@@ -201,7 +215,7 @@ export async function fetchCommitments(userId: string): Promise<CommitmentListIt
   const minStart = allStarts[0];
   const maxEnd = allEnds[allEnds.length - 1];
 
-  const [oneOffRes, recurringRes] = await Promise.all([
+  const [oneOffRes, recurringRes, rulesRes] = await Promise.all([
     taskIds.length > 0
       ? supabase
           .from('tasks')
@@ -220,16 +234,28 @@ export async function fetchCommitments(userId: string): Promise<CommitmentListIt
           .lte('deadline', `${maxEnd}T23:59:59.999Z`)
           .neq('status', 'DELETED')
       : Promise.resolve({ data: [], error: null }),
+    ruleIds.length > 0
+      ? supabase
+          .from('recurrence_rules')
+          .select('id, failure_cost_cents')
+          .in('id', ruleIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   if (oneOffRes.error) throw new Error(oneOffRes.error.message);
   if (recurringRes.error) throw new Error(recurringRes.error.message);
+  if (rulesRes.error) throw new Error(rulesRes.error.message);
 
   const oneOffById = new Map<string, CommitmentTaskLite>();
   for (const task of ((oneOffRes.data ?? []) as CommitmentTaskLite[])) {
     oneOffById.set(task.id, task);
   }
   const recurringInstances = (recurringRes.data ?? []) as CommitmentTaskLite[];
+
+  const rulesById = new Map<string, RuleCostInfo>();
+  for (const rule of ((rulesRes.data ?? []) as RuleCostInfo[])) {
+    rulesById.set(rule.id, rule);
+  }
 
   const linksByCommitmentId = new Map<string, CommitmentTaskLink[]>();
   for (const link of links) {
@@ -265,7 +291,7 @@ export async function fetchCommitments(userId: string): Promise<CommitmentListIt
       ...commitment,
       derived_status: computeDerivedStatus(commitment, linkedTasks),
       earned_so_far_cents: computeEarnedSoFar(linkedTasks, commitment.start_date, commitment.end_date),
-      total_target_cents: computeTotalTarget(linkedTasks, commitment.start_date, commitment.end_date),
+      total_target_cents: computeTotalTarget(linkedTasks, commitment.start_date, commitment.end_date, [...ruleIdsForThis].map((id) => rulesById.get(id)).filter((r): r is RuleCostInfo => Boolean(r))),
       days_total: dayDiffInclusive(commitment.start_date, commitment.end_date),
       days_remaining: Math.max(0, dayDiffFromToday(commitment.end_date)),
       starts_in_days: dayDiffFromToday(commitment.start_date),

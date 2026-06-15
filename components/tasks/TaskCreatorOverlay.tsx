@@ -39,6 +39,8 @@ import {
 } from './types';
 import { makeStyles } from './styles';
 
+const HIDDEN_REMINDER_SOURCES = new Set(['DEFAULT_DEADLINE_DUE']);
+
 interface CreatorAnchor {
   x: number;
   y: number;
@@ -223,6 +225,10 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
   const latestCustomDeadlineDateRef = useRef(customDeadlineDate);
   const isRepeatEnabled = recurrenceType !== '' || showCustomRecurrenceDays;
   const isProofEnabled = isAiVoucherSelected ? true : requiresProof;
+  const visibleDraftReminders = useMemo(
+    () => draftReminders.filter((reminder) => !HIDDEN_REMINDER_SOURCES.has(reminder.source)),
+    [draftReminders],
+  );
   const sanitizedSuggestedStartDate = useMemo(() => {
     const ts = suggestedStartDate?.getTime?.() ?? NaN;
     if (!Number.isFinite(ts) || ts <= 0) {
@@ -617,11 +623,11 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                 <Feather name="plus" size={16} color="#FBBF24" />
               </TouchableOpacity>
             </View>
-            {draftReminders.length === 0 ? (
+            {visibleDraftReminders.length === 0 ? (
               <Text style={styles.reminderEmpty}>No reminders set.</Text>
             ) : (
               <View style={styles.reminderRows}>
-                {draftReminders.map((reminder, index) => (
+                {visibleDraftReminders.map((reminder, index) => (
                   <View key={reminder.id} style={styles.reminderRow}>
                     <View style={styles.reminderBody}>
                       <Text style={styles.reminderAt}>{formatReminderDateTimeLabel(reminder.reminderAt)}</Text>

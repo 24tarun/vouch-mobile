@@ -156,7 +156,9 @@ function CreateModal({
       86_400_000,
   ) + 1;
   const linkedTaskCount = linkedTasks.length;
-  const pledgeCents = linkedTasks.reduce((sum, item) => sum + Number(item.failureCostCents ?? 0), 0);
+  const oneOffCents = linkedTasks.filter((item) => item.type === 'task').reduce((sum, item) => sum + Number(item.failureCostCents ?? 0), 0);
+  const recurringCents = linkedTasks.filter((item) => item.type === 'rule').reduce((sum, item) => sum + Number(item.failureCostCents ?? 0), 0) * totalDays;
+  const pledgeCents = oneOffCents + recurringCents;
 
   function onDateChange(_event: DateTimePickerEvent, date?: Date) {
     if (Platform.OS === 'android') setActivePicker(null);

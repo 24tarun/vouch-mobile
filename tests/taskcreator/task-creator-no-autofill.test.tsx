@@ -14,7 +14,7 @@ jest.mock('@expo/vector-icons', () => {
 
 import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
 import type { GoogleEventColorId } from '@/lib/task-title-parser';
-import type { RecurrenceType } from '@/components/tasks/types';
+import type { DraftReminder, RecurrenceType } from '@/components/tasks/types';
 
 const defaultProps = {
   visible: true,
@@ -140,5 +140,30 @@ describe('TaskCreatorOverlay autofill prevention', () => {
     fireEvent.press(getByText('In 10m'));
 
     expect(setCustomDeadlineDate).toHaveBeenCalledWith(new Date('2026-05-05T12:10:00.000Z'));
+  });
+
+  it('hides the final-call reminder from the visible reminder list', () => {
+    const draftReminders: DraftReminder[] = [
+      {
+        id: 'preset-10m',
+        source: 'DEFAULT_DEADLINE_10M',
+        reminderAt: new Date(2026, 4, 5, 11, 50, 0, 0),
+      },
+      {
+        id: 'preset-due',
+        source: 'DEFAULT_DEADLINE_DUE',
+        reminderAt: new Date(2026, 4, 5, 12, 0, 0, 0),
+      },
+    ];
+
+    const { getByText, queryByText } = render(
+      <TaskCreatorOverlay
+        {...defaultProps}
+        draftReminders={draftReminders}
+      />,
+    );
+
+    expect(getByText('11:50 05/05/26')).toBeTruthy();
+    expect(queryByText('12:00 05/05/26')).toBeNull();
   });
 });

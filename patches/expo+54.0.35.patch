@@ -1,0 +1,81 @@
+diff --git a/node_modules/expo/node_modules/@expo/cli/build/src/start/doctor/apple/SimulatorAppPrerequisite.js b/node_modules/expo/node_modules/@expo/cli/build/src/start/doctor/apple/SimulatorAppPrerequisite.js
+index 9094b4b..61f33c3 100644
+--- a/node_modules/expo/node_modules/@expo/cli/build/src/start/doctor/apple/SimulatorAppPrerequisite.js
++++ b/node_modules/expo/node_modules/@expo/cli/build/src/start/doctor/apple/SimulatorAppPrerequisite.js
+@@ -92,6 +92,13 @@ const debug = require('debug')('expo:doctor:apple:simulatorApp');
+     }
+     return null;
+ }
++async function getDeviceHubAppIdViaAppleScriptAsync() {
++    try {
++        return (await (0, _osascript().execAsync)('id of app "DeviceHub"')).trim();
++    } catch  {
++    }
++    return null;
++}
+ /**
+  * Fallback: locate Simulator.app via the active Xcode developer directory and read its
+  * CFBundleIdentifier directly from the app bundle's Info.plist.
+@@ -114,7 +121,7 @@ const debug = require('debug')('expo:doctor:apple:simulatorApp');
+     return null;
+ }
+ async function getSimulatorAppIdAsync() {
+-    return await getSimulatorAppIdViaAppleScriptAsync() ?? await getSimulatorAppIdFromBundleAsync();
++    return await getSimulatorAppIdViaAppleScriptAsync() ?? await getSimulatorAppIdFromBundleAsync() ?? await getDeviceHubAppIdViaAppleScriptAsync();
+ }
+ class SimulatorAppPrerequisite extends _Prerequisite.Prerequisite {
+     static #_ = this.instance = new SimulatorAppPrerequisite();
+@@ -124,7 +131,7 @@ class SimulatorAppPrerequisite extends _Prerequisite.Prerequisite {
+             // This error may occur in CI where the users intends to install just the simulators but no Xcode.
+             throw new _Prerequisite.PrerequisiteCommandError('SIMULATOR_APP', "Can't determine id of Simulator app; the Simulator is most likely not installed on this machine. Run `sudo xcode-select -s /Applications/Xcode.app`");
+         }
+-        if (result !== 'com.apple.iphonesimulator' && result !== 'com.apple.CoreSimulator.SimulatorTrampoline') {
++        if (result !== 'com.apple.iphonesimulator' && result !== 'com.apple.CoreSimulator.SimulatorTrampoline' && result !== 'com.apple.dt.Devices') {
+             throw new _Prerequisite.PrerequisiteCommandError('SIMULATOR_APP', "Simulator is installed but is identified as '" + result + "'; don't know what that is.");
+         }
+         debug(`Simulator app id: ${result}`);
+diff --git a/node_modules/expo/node_modules/@expo/cli/build/src/start/platforms/ios/ensureSimulatorAppRunning.js b/node_modules/expo/node_modules/@expo/cli/build/src/start/platforms/ios/ensureSimulatorAppRunning.js
+index b7dd0bc..18bb711 100644
+--- a/node_modules/expo/node_modules/@expo/cli/build/src/start/platforms/ios/ensureSimulatorAppRunning.js
++++ b/node_modules/expo/node_modules/@expo/cli/build/src/start/platforms/ios/ensureSimulatorAppRunning.js
+@@ -94,6 +94,14 @@ async function waitForSimulatorAppToStart({ maxWaitTime } = {}) {
+ }
+ // I think the app can be open while no simulators are booted.
+ async function isSimulatorAppRunningAsync() {
++    try {
++        await (0, _spawnasync().default)('pgrep', [
++            '-x',
++            'Simulator|DeviceHub'
++        ]);
++        return true;
++    } catch  {
++    }
+     try {
+         const zeroMeansNo = (await _osascript().execAsync('tell app "System Events" to count processes whose name is "Simulator"')).trim();
+         if (zeroMeansNo === '0') {
+@@ -103,6 +111,9 @@ async function isSimulatorAppRunningAsync() {
+         if (error.message.includes('Application isn’t running')) {
+             return false;
+         }
++        if (error.message.includes('Not authorized to send Apple events')) {
++            return true;
++        }
+         throw error;
+     }
+     return true;
+@@ -116,6 +127,15 @@ async function openSimulatorAppAsync(device) {
+         // This has no effect if the app is already running.
+         args.push('--args', '-CurrentDeviceUDID', device.udid);
+     }
+-    await (0, _spawnasync().default)('open', args);
++    try {
++        await (0, _spawnasync().default)('open', args);
++    } catch  {
++        await (0, _spawnasync().default)('open', [
++            '-a',
++            'DeviceHub'
++        ]);
++    }
+ }
+ 
+ //# sourceMappingURL=ensureSimulatorAppRunning.js.map

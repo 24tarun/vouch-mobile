@@ -377,7 +377,10 @@ function AuthGuard() {
         (payload: any) => {
           const { new: newRow, old: oldRow } = payload;
 
-          if (newRow?.notification_sound_key !== oldRow?.notification_sound_key) {
+          if (
+            newRow?.notification_sound_key !== oldRow?.notification_sound_key
+            || newRow?.deadline_due_warning_enabled !== oldRow?.deadline_due_warning_enabled
+          ) {
             reminderSyncLimiter.trigger();
           }
         },

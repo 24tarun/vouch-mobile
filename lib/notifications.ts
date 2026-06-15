@@ -4,6 +4,7 @@ import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as AlarmKit from 'alarm-kit';
 import { supabase } from './supabase';
+import { resolveUserClientInstanceId } from './user-client-instance';
 import {
   type NotificationSoundKey,
   getNotificationSoundChannelId,
@@ -18,6 +19,7 @@ const LOCAL_REMINDER_ALARMKIT_MAP_KEY = 'vouch_local_reminder_alarmkit_ids_v1';
 const LOCAL_REMINDER_SOUND_KEY = 'vouch_local_reminder_sound_key_v1';
 const ACTIVE_TASK_STATUSES = new Set(['ACTIVE', 'POSTPONED']);
 const DEFAULT_DEADLINE_10M_REMINDER_SOURCE = 'DEFAULT_DEADLINE_10M';
+const DEFAULT_DEADLINE_DUE_REMINDER_SOURCE = 'DEFAULT_DEADLINE_DUE';
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -123,6 +125,93 @@ async function getExpoPushTokenAsync(): Promise<string | null> {
   return token;
 }
 
+function isPushTokenClientInstanceSchemaError(error: { message?: string; code?: string } | null): boolean {
+  if (!error) return false;
+  const message = error.message ?? '';
+  return error.code === '42703'
+    || error.code === '42P10'
+    || /user_client_instance_id|expo_push_tokens_user_client_instance_unique|schema cache/i.test(message);
+}
+
+function isPushTokenUniqueConflict(error: { message?: string; code?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === '23505' || /duplicate key value violates unique constraint/i.test(error.message ?? '');
+}
+
+async function upsertLegacyPushTokenAsync(
+  userId: string,
+  token: string,
+  updatedAt: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('expo_push_tokens')
+    .upsert(
+      { user_id: userId, token, updated_at: updatedAt },
+      { onConflict: 'token' },
+    );
+
+  if (error) {
+    console.warn('[notifications] registration failed:', error.message);
+  }
+}
+
+async function upsertClientInstancePushTokenAsync(input: {
+  userId: string;
+  token: string;
+  userClientInstanceId: string;
+  updatedAt: string;
+}): Promise<boolean> {
+  const row = {
+    user_id: input.userId,
+    user_client_instance_id: input.userClientInstanceId,
+    token: input.token,
+    updated_at: input.updatedAt,
+  };
+
+  const { error } = await supabase
+    .from('expo_push_tokens')
+    .upsert(row, { onConflict: 'user_id,user_client_instance_id' });
+
+  if (!error) {
+    await supabase
+      .from('expo_push_tokens')
+      .delete()
+      .eq('user_id', input.userId)
+      .is('user_client_instance_id', null);
+    return true;
+  }
+
+  if (isPushTokenUniqueConflict(error)) {
+    await supabase
+      .from('expo_push_tokens')
+      .delete()
+      .eq('user_id', input.userId)
+      .eq('token', input.token);
+
+    const { error: retryError } = await supabase
+      .from('expo_push_tokens')
+      .upsert(row, { onConflict: 'user_id,user_client_instance_id' });
+
+    if (!retryError) {
+      await supabase
+        .from('expo_push_tokens')
+        .delete()
+        .eq('user_id', input.userId)
+        .is('user_client_instance_id', null);
+      return true;
+    }
+
+    if (isPushTokenClientInstanceSchemaError(retryError)) return false;
+    console.warn('[notifications] registration failed:', retryError.message);
+    return true;
+  }
+
+  if (isPushTokenClientInstanceSchemaError(error)) return false;
+
+  console.warn('[notifications] registration failed:', error.message);
+  return true;
+}
+
 export function getTaskIdFromNotificationResponse(
   response: Notifications.NotificationResponse | null | undefined,
 ): string | null {
@@ -201,6 +290,14 @@ function createReminderContent(input: {
   notificationSoundKey: NotificationSoundKey;
 }): Notifications.NotificationContentInput {
   const source = input.source ?? 'MANUAL';
+  if (source === DEFAULT_DEADLINE_DUE_REMINDER_SOURCE) {
+    return {
+      title: 'Final call',
+      body: `Mark "${input.taskTitle}" complete now or it will be missed.`,
+      sound: resolveNotificationSoundName(input.notificationSoundKey),
+    };
+  }
+
   const bodyPrefix = source === 'DEFAULT_DEADLINE_10M'
     ? 'Due in about 10 minutes'
     : source === 'DEFAULT_DEADLINE_1H'
@@ -267,11 +364,19 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
 
     const { data: profileRow } = await supabase
       .from('profiles')
-      .select('alarm_style_notifications_enabled')
+      .select('alarm_style_notifications_enabled, deadline_due_warning_enabled')
       .eq('id', userId)
       .maybeSingle();
-    const alarmStyleEnabled = (profileRow as { alarm_style_notifications_enabled?: boolean } | null)
+    const alarmStyleEnabled = (profileRow as {
+      alarm_style_notifications_enabled?: boolean;
+      deadline_due_warning_enabled?: boolean;
+    } | null)
       ?.alarm_style_notifications_enabled ?? false;
+    const deadlineDueWarningEnabled = (profileRow as {
+      alarm_style_notifications_enabled?: boolean;
+      deadline_due_warning_enabled?: boolean;
+    } | null)
+      ?.deadline_due_warning_enabled ?? true;
 
     const reminderRows = (reminders as {
       id: string;
@@ -321,6 +426,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     const nowMs = Date.now();
 
     const validReminders = pendingReminderRows.filter((row) => {
+      if (row.source === DEFAULT_DEADLINE_DUE_REMINDER_SOURCE && !deadlineDueWarningEnabled) return false;
       const reminderAt = new Date(row.reminder_at).getTime();
       return Number.isFinite(reminderAt) && reminderAt > nowMs && tasksById.has(row.parent_task_id);
     });
@@ -464,7 +570,9 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
             notificationSoundKey,
           }),
           data: {
-            kind: 'DEADLINE_REMINDER',
+            kind: reminder.source === DEFAULT_DEADLINE_DUE_REMINDER_SOURCE
+              ? 'DEADLINE_FINAL_CALL'
+              : 'DEADLINE_REMINDER',
             category: 'DEADLINE_REMINDER',
             task_id: reminder.parent_task_id,
             reminder_id: reminder.id,
@@ -571,12 +679,20 @@ export async function registerForPushNotificationsAsync(
 
     throwIfAborted(signal);
 
-    await supabase
-      .from('expo_push_tokens')
-      .upsert(
-        { user_id: userId, token, updated_at: new Date().toISOString() },
-        { onConflict: 'token' },
-      );
+    const updatedAt = new Date().toISOString();
+    const userClientInstanceId = await resolveUserClientInstanceId(userId);
+
+    if (userClientInstanceId) {
+      const handled = await upsertClientInstancePushTokenAsync({
+        userId,
+        token,
+        userClientInstanceId,
+        updatedAt,
+      });
+      if (handled) return;
+    }
+
+    await upsertLegacyPushTokenAsync(userId, token, updatedAt);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return;
     console.warn('[notifications] registration failed:', err);

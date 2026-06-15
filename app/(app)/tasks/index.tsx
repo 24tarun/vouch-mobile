@@ -94,7 +94,9 @@ export default function TasksScreen() {
 
   const { friends, currentUserId, profile, loading: friendsLoading, error: friendsError } = useFriends();
   const defaultRequiresProofForAllTasks = profile?.default_requires_proof_for_all_tasks ?? false;
+  const autoSubmitAfterProofUpload = authProfile?.auto_submit_after_proof_upload ?? profile?.auto_submit_after_proof_upload ?? true;
   const defaultPomoDurationMinutes = normalizePomoDurationMinutes(authProfile?.default_pomo_duration_minutes);
+  const alwaysShowActiveTasks = authProfile?.always_show_active_tasks ?? false;
 
   const isCreateOverlayOpen = overlayMode === 'create';
   const isOverlayOpen = overlayMode !== 'closed';
@@ -280,11 +282,14 @@ export default function TasksScreen() {
       refetchTasks();
       Toast.show({
         type: 'proofSuccess',
-        text1: 'Proof uploaded',
+        text1: autoSubmitAfterProofUpload ? 'Proof uploaded. Submitting...' : 'Proof uploaded',
         position: 'bottom',
         bottomOffset: 84,
         visibilityTime: 1800,
       });
+      if (autoSubmitAfterProofUpload) {
+        await handleCompleteTaskRef.current!(taskId);
+      }
     } finally {
       proofUploadLockRef.current = false;
       setProofUploadTaskId((prev) => (prev === taskId ? null : prev));
@@ -540,6 +545,7 @@ export default function TasksScreen() {
         proofUploadTaskId={proofUploadTaskId}
         hasPastTasks={onboardingComplete}
         initialLoading={tasksLoading || onboardingLoading}
+        alwaysShowActiveTasks={alwaysShowActiveTasks}
       />
       <TaskBottomActions
         creatorAnchorRef={creatorAnchorRef}

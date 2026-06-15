@@ -19,8 +19,10 @@ interface UseFriendsResult {
     | 'default_failure_cost_cents'
     | 'default_voucher_id'
     | 'default_requires_proof_for_all_tasks'
+    | 'auto_submit_after_proof_upload'
     | 'deadline_one_hour_warning_enabled'
     | 'deadline_final_warning_enabled'
+    | 'deadline_due_warning_enabled'
   > | null;
   loading: boolean;
   error: string | null;
@@ -51,8 +53,10 @@ export function useFriends(): UseFriendsResult {
           default_failure_cost_cents: profile.default_failure_cost_cents,
           default_voucher_id: profile.default_voucher_id,
           default_requires_proof_for_all_tasks: profile.default_requires_proof_for_all_tasks,
+          auto_submit_after_proof_upload: profile.auto_submit_after_proof_upload,
           deadline_one_hour_warning_enabled: profile.deadline_one_hour_warning_enabled,
           deadline_final_warning_enabled: profile.deadline_final_warning_enabled,
+          deadline_due_warning_enabled: profile.deadline_due_warning_enabled,
         }
       : null,
     loading: relationships.loading,

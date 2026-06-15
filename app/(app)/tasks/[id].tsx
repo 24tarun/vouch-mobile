@@ -418,6 +418,7 @@ export default function TaskDetailScreen() {
   const hasUploadedProof = Boolean(proof);
   const recurrenceRule = detail.data?.recurrenceRule ?? null;
   const proofPreviewWidth = screenWidth - spacing.lg * 2;
+  const autoSubmitAfterProofUpload = profile?.auto_submit_after_proof_upload ?? true;
 
   const refetchDetail = detail.refetch;
   useFocusEffect(
@@ -468,6 +469,10 @@ export default function TaskDetailScreen() {
     if (!task || proofUploadLockRef.current) return;
 
     const isReplacingProof = Boolean(proof);
+    const shouldAutoCompleteAfterUpload =
+      autoSubmitAfterProofUpload &&
+      task.user_id === user?.id &&
+      (task.status === 'ACTIVE' || task.status === 'POSTPONED');
     const shouldQueueAiAfterUpload = task.status === 'AWAITING_USER' && task.voucher_id === AI_PROFILE_ID;
     proofUploadLockRef.current = true;
     setProofUploading(true);
@@ -490,6 +495,21 @@ export default function TaskDetailScreen() {
           : previous.task,
       } : previous);
       await Promise.resolve(detail.refetch());
+      if (shouldAutoCompleteAfterUpload) {
+        setIsCompleting(true);
+        let completeResult: Awaited<ReturnType<typeof completeTask>>;
+        try {
+          completeResult = await completeTask(task.id);
+        } finally {
+          setIsCompleting(false);
+        }
+        if (!completeResult.success) {
+          Alert.alert('Proof uploaded, but could not complete task', completeResult.error ?? 'Unknown error');
+          return;
+        }
+        if (completeResult.userId) void syncLocalReminderNotificationsAsync(completeResult.userId);
+        await Promise.resolve(detail.refetch());
+      }
       if (shouldQueueAiAfterUpload) {
         Toast.show({
           type: 'proofSuccess',

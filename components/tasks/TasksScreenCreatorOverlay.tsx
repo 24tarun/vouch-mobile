@@ -53,6 +53,7 @@ interface FriendProfileShape {
   default_requires_proof_for_all_tasks: boolean | null;
   deadline_one_hour_warning_enabled: boolean | null;
   deadline_final_warning_enabled: boolean | null;
+  deadline_due_warning_enabled: boolean | null;
 }
 
 interface Props {
@@ -102,6 +103,7 @@ function buildPresetDeadlineReminders(
   removedPresetSources: DraftReminderPresetSource[],
   oneHourEnabled: boolean,
   finalEnabled: boolean,
+  dueEnabled: boolean,
 ): DraftReminder[] {
   const presetReminders: DraftReminder[] = [];
 
@@ -117,6 +119,13 @@ function buildPresetDeadlineReminders(
       id: 'preset-deadline-10m',
       source: 'DEFAULT_DEADLINE_10M',
       reminderAt: new Date(deadline.getTime() - 10 * 60 * 1000),
+    });
+  }
+  if (dueEnabled && !removedPresetSources.includes('DEFAULT_DEADLINE_DUE')) {
+    presetReminders.push({
+      id: 'preset-deadline-due',
+      source: 'DEFAULT_DEADLINE_DUE',
+      reminderAt: new Date(deadline.getTime()),
     });
   }
 
@@ -366,11 +375,13 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   useEffect(() => {
     const oneHourEnabled = friendProfile?.deadline_one_hour_warning_enabled ?? true;
     const finalEnabled = friendProfile?.deadline_final_warning_enabled ?? true;
+    const dueEnabled = friendProfile?.deadline_due_warning_enabled ?? true;
     const presetReminders = buildPresetDeadlineReminders(
       deadlineDate,
       removedPresetSources,
       oneHourEnabled,
       finalEnabled,
+      dueEnabled,
     );
 
     setDraftReminders((prev) => {
@@ -382,6 +393,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     removedPresetSources,
     friendProfile?.deadline_one_hour_warning_enabled,
     friendProfile?.deadline_final_warning_enabled,
+    friendProfile?.deadline_due_warning_enabled,
   ]);
 
   function handleTitleChange(text: string) {
@@ -798,11 +810,13 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     const parsedReminderTimes = parseReminderTimesFromTitle(rawTitle);
     const oneHourEnabled = friendProfile?.deadline_one_hour_warning_enabled ?? true;
     const finalEnabled = friendProfile?.deadline_final_warning_enabled ?? true;
+    const dueEnabled = friendProfile?.deadline_due_warning_enabled ?? true;
     const recalculatedPresetReminders = buildPresetDeadlineReminders(
       deadlineToCreate,
       removedPresetSources,
       oneHourEnabled,
       finalEnabled,
+      dueEnabled,
     );
     const manualDraftReminders = draftReminders.filter((item) => item.source === 'MANUAL');
     const effectiveDraftReminders = sortDraftReminders([...manualDraftReminders, ...recalculatedPresetReminders]);
@@ -817,6 +831,8 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
       if (!reminderByIso.has(iso)) reminderByIso.set(iso, reminder);
     }
     const remindersToCreate = sortDraftReminders(Array.from(reminderByIso.values()));
+    const atomicCreateReminders = remindersToCreate.filter((reminder) => reminder.source !== 'DEFAULT_DEADLINE_DUE');
+    const dueReminderToCreate = remindersToCreate.find((reminder) => reminder.source === 'DEFAULT_DEADLINE_DUE') ?? null;
     const hasReminderAfterDeadline = remindersToCreate.some(
       (reminder) => reminder.reminderAt.getTime() > deadlineToCreate.getTime(),
     );
@@ -910,8 +926,8 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
         p_google_event_color_id: googleEventColorId,
         p_created_by_user_client_instance_id: userClientInstanceId,
         p_subtasks: trimmedSubtaskTitles,
-        p_reminder_at: remindersToCreate.map((reminder) => reminder.reminderAt.toISOString()),
-        p_reminder_sources: remindersToCreate.map((reminder) => reminder.source),
+        p_reminder_at: atomicCreateReminders.map((reminder) => reminder.reminderAt.toISOString()),
+        p_reminder_sources: atomicCreateReminders.map((reminder) => reminder.source),
         p_recurrence_type: effectiveRecurrenceType || null,
         p_recurrence_interval: effectiveRecurrenceType ? 1 : null,
         p_recurrence_days: recurrenceDaysToUse,
@@ -942,6 +958,23 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
       }
 
       updateOptimisticTaskId(optimisticTaskId, createdTaskId, recurrenceRuleId);
+
+      if (dueReminderToCreate) {
+        const dueReminderIso = dueReminderToCreate.reminderAt.toISOString();
+        const { error: dueReminderError } = await supabase
+          .from('task_reminders')
+          .upsert({
+            parent_task_id: createdTaskId,
+            user_id: currentUserId,
+            reminder_at: dueReminderIso,
+            source: 'DEFAULT_DEADLINE_DUE',
+            notified_at: null,
+          } as any, { onConflict: 'parent_task_id,reminder_at', ignoreDuplicates: true });
+
+        if (dueReminderError) {
+          console.warn('[task-creator] failed to insert deadline due reminder:', dueReminderError.message);
+        }
+      }
 
       refetchTasks();
       void syncLocalReminderNotificationsAsync(currentUserId);

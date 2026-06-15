@@ -5,7 +5,7 @@ export interface TodayParts {
   monthName: string;
 }
 
-export type DraftReminderPresetSource = 'DEFAULT_DEADLINE_1H' | 'DEFAULT_DEADLINE_10M';
+export type DraftReminderPresetSource = 'DEFAULT_DEADLINE_1H' | 'DEFAULT_DEADLINE_10M' | 'DEFAULT_DEADLINE_DUE';
 export type DraftReminderSource = DraftReminderPresetSource | 'MANUAL';
 export type RecurrenceType = '' | 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 

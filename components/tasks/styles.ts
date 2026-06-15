@@ -697,6 +697,28 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     alignSelf: 'stretch',
     gap: spacing.sm,
   },
+  deadlineQuickChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  deadlineQuickChip: {
+    flexGrow: 1,
+    minWidth: 76,
+    height: 36,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#FBBF2459',
+    backgroundColor: '#FBBF2414',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.sm,
+  },
+  deadlineQuickChipText: {
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
+    color: '#FBBF24',
+  },
   deadlineModalActionButton: {
     height: 56,
     flex: 1,

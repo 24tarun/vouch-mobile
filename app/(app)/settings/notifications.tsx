@@ -51,6 +51,7 @@ export default function SettingsNotificationsScreen() {
   const [notificationSoundKey, setNotificationSoundKey] = useState<NotificationSoundKey>('default');
   const [oneHourReminderEnabled, setOneHourReminderEnabled] = useState(true);
   const [tenMinuteReminderEnabled, setTenMinuteReminderEnabled] = useState(true);
+  const [deadlineDueReminderEnabled, setDeadlineDueReminderEnabled] = useState(true);
   const [alarmStyleNotificationsEnabled, setAlarmStyleNotificationsEnabled] = useState(false);
   const [alarmKitAvailable, setAlarmKitAvailable] = useState(false);
 
@@ -68,17 +69,20 @@ export default function SettingsNotificationsScreen() {
     const nextNotificationSoundKey = normalizeNotificationSoundKey(profile.notification_sound_key);
     const nextOneHourReminder = profile.deadline_one_hour_warning_enabled ?? true;
     const nextTenMinuteReminder = profile.deadline_final_warning_enabled ?? true;
+    const nextDeadlineDueReminder = profile.deadline_due_warning_enabled ?? true;
     const nextAlarmStyleNotifications = profile.alarm_style_notifications_enabled ?? false;
 
     setNotificationSoundKey(nextNotificationSoundKey);
     setOneHourReminderEnabled(nextOneHourReminder);
     setTenMinuteReminderEnabled(nextTenMinuteReminder);
+    setDeadlineDueReminderEnabled(nextDeadlineDueReminder);
     setAlarmStyleNotificationsEnabled(nextAlarmStyleNotifications);
 
     defaultsSavedRef.current = JSON.stringify({
       notificationSoundKey: nextNotificationSoundKey,
       oneHourReminderEnabled: nextOneHourReminder,
       tenMinuteReminderEnabled: nextTenMinuteReminder,
+      deadlineDueReminderEnabled: nextDeadlineDueReminder,
       alarmStyleNotificationsEnabled: nextAlarmStyleNotifications,
     });
 
@@ -118,12 +122,14 @@ export default function SettingsNotificationsScreen() {
         notificationSoundKey,
         oneHourReminderEnabled,
         tenMinuteReminderEnabled,
+        deadlineDueReminderEnabled,
         alarmStyleNotificationsEnabled,
       }),
     [
       notificationSoundKey,
       oneHourReminderEnabled,
       tenMinuteReminderEnabled,
+      deadlineDueReminderEnabled,
       alarmStyleNotificationsEnabled,
     ],
   );
@@ -192,6 +198,7 @@ export default function SettingsNotificationsScreen() {
         notification_sound_key: notificationSoundKey,
         deadline_one_hour_warning_enabled: oneHourReminderEnabled,
         deadline_final_warning_enabled: tenMinuteReminderEnabled,
+        deadline_due_warning_enabled: deadlineDueReminderEnabled,
         alarm_style_notifications_enabled: alarmStyleNotificationsEnabled,
       } : current);
 
@@ -201,6 +208,7 @@ export default function SettingsNotificationsScreen() {
           notification_sound_key: notificationSoundKey,
           deadline_one_hour_warning_enabled: oneHourReminderEnabled,
           deadline_final_warning_enabled: tenMinuteReminderEnabled,
+          deadline_due_warning_enabled: deadlineDueReminderEnabled,
           alarm_style_notifications_enabled: alarmStyleNotificationsEnabled,
         })
         .eq('id', user.id);
@@ -228,6 +236,7 @@ export default function SettingsNotificationsScreen() {
     notificationSoundKey,
     oneHourReminderEnabled,
     tenMinuteReminderEnabled,
+    deadlineDueReminderEnabled,
     alarmStyleNotificationsEnabled,
     defaultsSnapshot,
     queryClient,
@@ -301,6 +310,21 @@ export default function SettingsNotificationsScreen() {
                   <Switch
                     value={tenMinuteReminderEnabled}
                     onValueChange={setTenMinuteReminderEnabled}
+                    trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                    thumbColor={colors.text}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}>
+                  <Text style={styles.toggleTitle}>Final call at deadline</Text>
+                  <Text style={styles.toggleSub}>Last chance to mark a task complete before it is missed.</Text>
+                </View>
+                <View style={styles.toggleSwitchWrap}>
+                  <Switch
+                    value={deadlineDueReminderEnabled}
+                    onValueChange={setDeadlineDueReminderEnabled}
                     trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
                     thumbColor={colors.text}
                   />

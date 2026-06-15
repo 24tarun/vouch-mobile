@@ -36,7 +36,8 @@ export type PomoStatus = 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'DELETED';
 export type ReminderSource =
   | 'MANUAL'
   | 'DEFAULT_DEADLINE_1H'
-  | 'DEFAULT_DEADLINE_10M';
+  | 'DEFAULT_DEADLINE_10M'
+  | 'DEFAULT_DEADLINE_DUE';
 
 export type RecurrenceFrequency =
   | 'DAILY'
@@ -80,11 +81,14 @@ export interface Profile {
   default_failure_cost_cents: number;
   default_voucher_id: string | null;
   default_requires_proof_for_all_tasks: boolean;
+  auto_submit_after_proof_upload: boolean;
   strict_pomo_enabled: boolean;
   deadline_one_hour_warning_enabled: boolean;
   deadline_final_warning_enabled: boolean;
+  deadline_due_warning_enabled: boolean;
   notification_sound_key: 'default' | 'tone_01' | 'tone_02' | 'tone_03';
   voucher_can_view_active_tasks: boolean;
+  always_show_active_tasks: boolean;
   web_notifications_enabled: boolean;
   hide_tips: boolean;
   lifetime_xp: number;
@@ -312,4 +316,3 @@ export interface VoucherPendingTask extends TaskWithRelations {
   proof_request_count: number;
   rectify_passes_used: number;
 }
-

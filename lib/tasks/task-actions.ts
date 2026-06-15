@@ -15,6 +15,8 @@ interface TaskMutationResult {
   warningMessage?: string;
 }
 
+const DEADLINE_INCLUSIVE_MINUTE_MS = 60 * 1000;
+
 function getOffsetIsoForTimeZone(date: Date, timeZone: string): string {
   const offsetPart = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -65,7 +67,9 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
   const userId = await getAuthenticatedUserId();
   if (!userId) return { success: false, error: 'Please sign in again and retry.' };
 
-  const nowIso = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const completionDeadlineCutoffIso = new Date(now.getTime() - DEADLINE_INCLUSIVE_MINUTE_MS).toISOString();
   const actorUserClientInstanceId = await resolveUserClientInstanceId(userId);
   const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -123,7 +127,7 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
     .eq('id', taskId)
     .eq('user_id', userId)
     .in('status', ['ACTIVE', 'POSTPONED'])
-    .gt('deadline', nowIso)
+    .gt('deadline', completionDeadlineCutoffIso)
     .select('id');
 
   if (error) return { success: false, userId, error: error.message };

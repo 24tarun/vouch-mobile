@@ -181,6 +181,7 @@ export default function SettingsScreen() {
   const [selectedCharityId, setSelectedCharityId] = useState<string | null>(null);
   const charityUserOverrideRef = useRef(false);
   const [defaultRequiresProofForAllTasks, setDefaultRequiresProofForAllTasks] = useState(false);
+  const [autoSubmitAfterProofUpload, setAutoSubmitAfterProofUpload] = useState(true);
 
   const [relationshipInFlight, setRelationshipInFlight] = useState<Record<string, RelationshipAction | null>>({});
   const [friendSearchQuery, setFriendSearchQuery] = useState('');
@@ -266,6 +267,7 @@ export default function SettingsScreen() {
     const nextVoucherId = profile.default_voucher_id ?? user.id;
     const nextCurrency = profile.currency ?? 'USD';
     const nextDefaultRequiresProofForAllTasks = profile.default_requires_proof_for_all_tasks ?? false;
+    const nextAutoSubmitAfterProofUpload = profile.auto_submit_after_proof_upload ?? true;
     const nextAiVoucherEnabled = profile.ai_friend_opt_in ?? false;
     const nextVoucherCanViewActiveTasks = profile.voucher_can_view_active_tasks ?? true;
     const nextTimeZone = profile.timezone ?? 'UTC';
@@ -283,6 +285,7 @@ export default function SettingsScreen() {
     setDefaultVoucherId(nextVoucherId);
     setCurrency(nextCurrency);
     setDefaultRequiresProofForAllTasks(nextDefaultRequiresProofForAllTasks);
+    setAutoSubmitAfterProofUpload(nextAutoSubmitAfterProofUpload);
     setAiVoucherEnabled(nextAiVoucherEnabled);
     setVoucherCanViewActiveTasks(nextVoucherCanViewActiveTasks);
     setTimeZone(nextTimeZone);
@@ -302,6 +305,7 @@ export default function SettingsScreen() {
         defaultVoucherId: nextVoucherId,
         currency: nextCurrency,
         defaultRequiresProofForAllTasks: nextDefaultRequiresProofForAllTasks,
+        autoSubmitAfterProofUpload: nextAutoSubmitAfterProofUpload,
         timeZone: nextTimeZone,
         timeZoneUserSet: nextTimeZoneUserSet,
         charityEnabled: nextCharityEnabled,
@@ -1161,6 +1165,7 @@ export default function SettingsScreen() {
         defaultVoucherId: resolvedDefaultVoucherId,
         currency,
         defaultRequiresProofForAllTasks,
+        autoSubmitAfterProofUpload,
         timeZone,
         timeZoneUserSet,
         charityEnabled,
@@ -1173,6 +1178,7 @@ export default function SettingsScreen() {
       resolvedDefaultVoucherId,
       currency,
       defaultRequiresProofForAllTasks,
+      autoSubmitAfterProofUpload,
       timeZone,
       timeZoneUserSet,
       charityEnabled,
@@ -1326,6 +1332,7 @@ export default function SettingsScreen() {
         charity_enabled: resolvedCharityEnabled,
         selected_charity_id: resolvedSelectedCharityId,
         default_requires_proof_for_all_tasks: defaultRequiresProofForAllTasks,
+        auto_submit_after_proof_upload: autoSubmitAfterProofUpload,
       } : current);
 
       const { error } = await supabase
@@ -1341,6 +1348,7 @@ export default function SettingsScreen() {
           charity_enabled: resolvedCharityEnabled,
           selected_charity_id: resolvedSelectedCharityId,
           default_requires_proof_for_all_tasks: defaultRequiresProofForAllTasks,
+          auto_submit_after_proof_upload: autoSubmitAfterProofUpload,
         })
         .eq('id', user.id);
 
@@ -1370,6 +1378,7 @@ export default function SettingsScreen() {
     resolvedDefaultVoucherId,
     currency,
     defaultRequiresProofForAllTasks,
+    autoSubmitAfterProofUpload,
     timeZone,
     timeZoneOptions,
     timeZoneUserSet,
@@ -1646,6 +1655,20 @@ export default function SettingsScreen() {
                   <Switch
                     value={defaultRequiresProofForAllTasks}
                     onValueChange={setDefaultRequiresProofForAllTasks}
+                    trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
+                    thumbColor={colors.text}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleTextWrap}>
+                  <Text style={styles.toggleTitle}>Auto-submit after proof upload</Text>
+                </View>
+                <View style={styles.toggleSwitchWrap}>
+                  <Switch
+                    value={autoSubmitAfterProofUpload}
+                    onValueChange={setAutoSubmitAfterProofUpload}
                     trackColor={{ false: colors.borderStrong, true: colors.accentCyan }}
                     thumbColor={colors.text}
                   />

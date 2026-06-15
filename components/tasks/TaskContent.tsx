@@ -29,6 +29,7 @@ interface TaskContentProps {
   proofUploadTaskId?: string | null;
   hasPastTasks?: boolean;
   initialLoading?: boolean;
+  alwaysShowActiveTasks?: boolean;
 }
 
 export function TaskContent({
@@ -51,6 +52,7 @@ export function TaskContent({
   proofUploadTaskId = null,
   hasPastTasks = false,
   initialLoading = false,
+  alwaysShowActiveTasks = false,
 }: TaskContentProps) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
@@ -106,18 +108,35 @@ export function TaskContent({
               proofActionInProgress={proofUploadTaskId === task.id}
             />
           ))}
-          <CollapsibleSection
-            title="Future"
-            tasks={futureTasks}
-            onComplete={onComplete}
-            onProofPicked={onProofPicked}
-            onProofRemoved={onProofRemoved}
-            onPostpone={onPostpone}
-            onDelete={onDelete}
-            defaultPomoDurationMinutes={defaultPomoDurationMinutes}
-            onSubtaskComposerFocus={onSubtaskComposerFocus}
-            proofUploadTaskId={proofUploadTaskId}
-          />
+          {alwaysShowActiveTasks ? (
+            futureTasks.map((task) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                onComplete={onComplete}
+                onProofPicked={onProofPicked}
+                onProofRemoved={onProofRemoved}
+                onPostpone={onPostpone}
+                onDelete={onDelete}
+                defaultPomoDurationMinutes={defaultPomoDurationMinutes}
+                onSubtaskComposerFocus={onSubtaskComposerFocus}
+                proofActionInProgress={proofUploadTaskId === task.id}
+              />
+            ))
+          ) : (
+            <CollapsibleSection
+              title="Future"
+              tasks={futureTasks}
+              onComplete={onComplete}
+              onProofPicked={onProofPicked}
+              onProofRemoved={onProofRemoved}
+              onPostpone={onPostpone}
+              onDelete={onDelete}
+              defaultPomoDurationMinutes={defaultPomoDurationMinutes}
+              onSubtaskComposerFocus={onSubtaskComposerFocus}
+              proofUploadTaskId={proofUploadTaskId}
+            />
+          )}
         </>
       )}
     </ScrollView>

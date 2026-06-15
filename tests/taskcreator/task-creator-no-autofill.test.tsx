@@ -1,6 +1,16 @@
+/* eslint-disable @typescript-eslint/no-require-imports, import/first */
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { fireEvent, render } from '@testing-library/react-native';
 
+jest.mock('@expo/vector-icons', () => {
+  const React = require('react');
+  const { Text } = require('react-native');
+  const MockIcon = ({ name }: { name?: string }) => React.createElement(Text, null, name ?? 'icon');
+  return {
+    Feather: MockIcon,
+    Ionicons: MockIcon,
+  };
+});
 
 import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
 import type { GoogleEventColorId } from '@/lib/task-title-parser';
@@ -89,6 +99,16 @@ const defaultProps = {
 };
 
 describe('TaskCreatorOverlay autofill prevention', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
   it('task title input has textContentType="none" to prevent macOS password autofill', () => {
     const { getByPlaceholderText } = render(<TaskCreatorOverlay {...defaultProps} />);
 
@@ -103,5 +123,22 @@ describe('TaskCreatorOverlay autofill prevention', () => {
     const subtaskInput = getByPlaceholderText('Add subtask...');
     expect(subtaskInput.props.textContentType).toBe('none');
     expect(subtaskInput.props.autoComplete).toBe('off');
+  });
+
+  it('quick deadline chips update the pending deadline', () => {
+    const setCustomDeadlineDate = jest.fn();
+    jest.setSystemTime(new Date('2026-05-05T12:00:30.000Z'));
+
+    const { getByText } = render(
+      <TaskCreatorOverlay
+        {...defaultProps}
+        showCustomDeadlineIosModal
+        setCustomDeadlineDate={setCustomDeadlineDate}
+      />,
+    );
+
+    fireEvent.press(getByText('In 10m'));
+
+    expect(setCustomDeadlineDate).toHaveBeenCalledWith(new Date('2026-05-05T12:10:00.000Z'));
   });
 });

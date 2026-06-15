@@ -9,6 +9,8 @@ const DAILY_RECURRING_POSTPONE_SAME_DAY_ERROR = 'Daily repeating tasks can only 
 const MANUAL_REMINDER_SOURCE = 'MANUAL';
 const DEFAULT_DEADLINE_1H_REMINDER_SOURCE = 'DEFAULT_DEADLINE_1H';
 const DEFAULT_DEADLINE_10M_REMINDER_SOURCE = 'DEFAULT_DEADLINE_10M';
+const DEFAULT_DEADLINE_DUE_REMINDER_SOURCE = 'DEFAULT_DEADLINE_DUE';
+const DEADLINE_INCLUSIVE_MINUTE_MS = 60 * 1000;
 
 type PostponeResult =
   | { success: true }
@@ -59,6 +61,7 @@ function buildDefaultDeadlineReminderRows(input: {
   deadline: Date;
   deadlineOneHourWarningEnabled: boolean;
   deadlineFinalWarningEnabled: boolean;
+  deadlineDueWarningEnabled: boolean;
   now?: Date;
 }) {
   const {
@@ -67,6 +70,7 @@ function buildDefaultDeadlineReminderRows(input: {
     deadline,
     deadlineOneHourWarningEnabled,
     deadlineFinalWarningEnabled,
+    deadlineDueWarningEnabled,
     now = new Date(),
   } = input;
 
@@ -105,6 +109,11 @@ function buildDefaultDeadlineReminderRows(input: {
     10 * 60 * 1000,
     DEFAULT_DEADLINE_10M_REMINDER_SOURCE,
   );
+  pushReminder(
+    deadlineDueWarningEnabled,
+    0,
+    DEFAULT_DEADLINE_DUE_REMINDER_SOURCE,
+  );
 
   return Array.from(rowsByReminderMs.entries())
     .sort((a, b) => a[0] - b[0])
@@ -129,7 +138,7 @@ async function realignTaskRemindersAfterPostpone(
 
   const { data: reminderDefaultsProfile, error: reminderDefaultsError } = await supabase
     .from('profiles')
-    .select('deadline_one_hour_warning_enabled, deadline_final_warning_enabled')
+    .select('deadline_one_hour_warning_enabled, deadline_final_warning_enabled, deadline_due_warning_enabled')
     .eq('id', userId)
     .maybeSingle();
 
@@ -187,6 +196,8 @@ async function realignTaskRemindersAfterPostpone(
       ((reminderDefaultsProfile as any)?.deadline_one_hour_warning_enabled as boolean | undefined) ?? true,
     deadlineFinalWarningEnabled:
       ((reminderDefaultsProfile as any)?.deadline_final_warning_enabled as boolean | undefined) ?? true,
+    deadlineDueWarningEnabled:
+      ((reminderDefaultsProfile as any)?.deadline_due_warning_enabled as boolean | undefined) ?? true,
     now,
   });
 
@@ -286,7 +297,10 @@ export async function postponeTask(
       return { success: false, error: INVALID_DEADLINE_ERROR };
     }
 
-    if (Date.now() >= currentDeadline.getTime()) {
+    const now = new Date();
+    const activeDeadlineCutoffIso = new Date(now.getTime() - DEADLINE_INCLUSIVE_MINUTE_MS).toISOString();
+
+    if (now.getTime() >= currentDeadline.getTime() + DEADLINE_INCLUSIVE_MINUTE_MS) {
       return { success: false, error: 'Deadline has passed' };
     }
 
@@ -328,10 +342,10 @@ export async function postponeTask(
       }
     }
 
-    const nowIso = new Date().toISOString();
+    const nowIso = now.toISOString();
     const resolvedActorUserClientInstanceId =
       actorUserClientInstanceId ?? await resolveUserClientInstanceId(userId);
-    const { error: updateError } = await supabase
+    const { data: updatedRows, error: updateError } = await supabase
       .from('tasks')
       .update({
         status: 'POSTPONED',
@@ -340,10 +354,17 @@ export async function postponeTask(
         updated_at: nowIso,
       } as any)
       .eq('id', taskId)
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .in('status', ['ACTIVE', 'POSTPONED'] as any)
+      .is('postponed_at', null)
+      .gt('deadline', activeDeadlineCutoffIso)
+      .select('id');
 
     if (updateError) {
       return { success: false, error: updateError.message };
+    }
+    if (!updatedRows || updatedRows.length === 0) {
+      return { success: false, error: 'Task can no longer be postponed. Please refresh.' };
     }
 
     const [reminderRealignment, { error: eventError }] = await Promise.all([

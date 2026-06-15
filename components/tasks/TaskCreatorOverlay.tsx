@@ -312,6 +312,12 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
     return latestCustomDeadlineDateRef.current;
   }
 
+  function applyQuickDeadlineOffset(minutesFromNow: number) {
+    const next = new Date(Date.now() + minutesFromNow * 60 * 1000);
+    next.setSeconds(0, 0);
+    updateCustomDeadlineSelection(next);
+  }
+
   function prepareIconInteraction() {
     if (keyboardVisible) {
       Keyboard.dismiss();
@@ -723,6 +729,20 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                   themeVariant="dark"
                   accentColor={colors.warning}
                 />
+                <View style={styles.deadlineQuickChipsRow}>
+                  {DEADLINE_QUICK_OPTIONS.map((option) => (
+                    <TouchableOpacity
+                      key={option.minutes}
+                      style={styles.deadlineQuickChip}
+                      activeOpacity={0.8}
+                      onPress={() => applyQuickDeadlineOffset(option.minutes)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Set deadline ${option.label.toLowerCase()}`}
+                    >
+                      <Text style={styles.deadlineQuickChipText}>{option.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
                 <View style={styles.deadlineRecurrenceRows}>
                   {(['DAILY', 'WEEKLY', 'MONTHLY', 'CUSTOM'] as const).map((option) => {
                     const isSelected = option === 'CUSTOM'
@@ -891,6 +911,21 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
                       flatListProps={WHEEL_LIST_PROPS}
                     />
                   </View>
+                </View>
+
+                <View style={styles.deadlineQuickChipsRow}>
+                  {DEADLINE_QUICK_OPTIONS.map((option) => (
+                    <TouchableOpacity
+                      key={option.minutes}
+                      style={styles.deadlineQuickChip}
+                      activeOpacity={0.8}
+                      onPress={() => applyQuickDeadlineOffset(option.minutes)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Set deadline ${option.label.toLowerCase()}`}
+                    >
+                      <Text style={styles.deadlineQuickChipText}>{option.label}</Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
 
                 {/* Recurrence buttons */}
@@ -1195,6 +1230,12 @@ function buildWheelOptions(count: number, start = 0) {
 
 const DEADLINE_HOURS = buildWheelOptions(24);
 const DEADLINE_MINUTES = buildWheelOptions(60);
+const DEADLINE_QUICK_OPTIONS = [
+  { label: 'In 5m', minutes: 5 },
+  { label: 'In 10m', minutes: 10 },
+  { label: 'In 30m', minutes: 30 },
+  { label: 'In 1h', minutes: 60 },
+];
 const WHEEL_LIST_PROPS = { windowSize: 3, maxToRenderPerBatch: 5, updateCellsBatchingPeriod: 100, removeClippedSubviews: true };
 
 const androidModalStyles = StyleSheet.create({

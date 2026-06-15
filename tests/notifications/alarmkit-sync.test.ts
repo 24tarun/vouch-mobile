@@ -10,6 +10,12 @@ const mockCancelScheduledNotificationAsync = jest.fn();
 const mockGetPermissionsAsync = jest.fn();
 const mockRequestPermissionsAsync = jest.fn();
 const mockSetNotificationChannelAsync = jest.fn();
+const mockGetExpoPushTokenAsync = jest.fn();
+const mockPushTokenUpsert = jest.fn();
+const mockPushTokenDelete = jest.fn();
+const mockPushTokenDeleteEq = jest.fn();
+const mockPushTokenDeleteIs = jest.fn();
+const mockResolveUserClientInstanceId = jest.fn();
 
 const mockIsAlarmKitAvailableAsync = jest.fn();
 const mockGetAlarmAuthorizationStatusAsync = jest.fn();
@@ -36,7 +42,7 @@ jest.mock('expo-notifications', () => ({
   requestPermissionsAsync: mockRequestPermissionsAsync,
   scheduleNotificationAsync: mockScheduleNotificationAsync,
   cancelScheduledNotificationAsync: mockCancelScheduledNotificationAsync,
-  getExpoPushTokenAsync: jest.fn(),
+  getExpoPushTokenAsync: mockGetExpoPushTokenAsync,
 }));
 
 jest.mock('expo-constants', () => ({
@@ -51,9 +57,20 @@ jest.mock('alarm-kit', () => ({
   cancelTenMinuteAlarmAsync: mockCancelTenMinuteAlarmAsync,
 }));
 
+jest.mock('@/lib/user-client-instance', () => ({
+  resolveUserClientInstanceId: mockResolveUserClientInstanceId,
+}));
+
 jest.mock('@/lib/supabase', () => ({
   supabase: {
     from: jest.fn((table: string) => {
+      if (table === 'expo_push_tokens') {
+        return {
+          upsert: mockPushTokenUpsert,
+          delete: mockPushTokenDelete,
+        };
+      }
+
       if (table === 'profiles') {
         return {
           select: jest.fn(() => ({
@@ -92,8 +109,9 @@ jest.mock('@/lib/supabase', () => ({
 const NOTIFICATION_MAP_KEY = 'vouch_local_reminder_notification_ids_v1';
 const ALARMKIT_MAP_KEY = 'vouch_local_reminder_alarmkit_ids_v1';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { syncLocalReminderNotificationsAsync } = require('@/lib/notifications') as typeof import('@/lib/notifications');
+/* eslint-disable-next-line @typescript-eslint/no-require-imports */
+const notifications = require('@/lib/notifications') as typeof import('@/lib/notifications');
+const { registerForPushNotificationsAsync, syncLocalReminderNotificationsAsync } = notifications;
 
 function futureIso(minutesFromNow: number) {
   return new Date(Date.now() + minutesFromNow * 60 * 1000).toISOString();
@@ -114,6 +132,17 @@ beforeEach(async () => {
   }];
   mockGetPermissionsAsync.mockResolvedValue({ status: 'granted' });
   mockRequestPermissionsAsync.mockResolvedValue({ status: 'granted' });
+  mockGetExpoPushTokenAsync.mockResolvedValue({ data: 'ExponentPushToken[current-token]' });
+  mockResolveUserClientInstanceId.mockResolvedValue('client-instance-1');
+  mockPushTokenUpsert.mockResolvedValue({ error: null });
+  mockPushTokenDeleteIs.mockResolvedValue({ error: null });
+  mockPushTokenDeleteEq.mockImplementation(() => ({
+    eq: mockPushTokenDeleteEq,
+    is: mockPushTokenDeleteIs,
+  }));
+  mockPushTokenDelete.mockImplementation(() => ({
+    eq: mockPushTokenDeleteEq,
+  }));
   mockScheduleNotificationAsync.mockResolvedValue('expo-notification-1');
   mockIsAlarmKitAvailableAsync.mockResolvedValue(false);
   mockGetAlarmAuthorizationStatusAsync.mockResolvedValue('unavailable');
@@ -198,4 +227,69 @@ test('keeps non-10-minute reminders on the Expo notifications path', async () =>
 
   expect(mockScheduleNotificationAsync).toHaveBeenCalledTimes(1);
   expect(mockScheduleTenMinuteAlarmAsync).not.toHaveBeenCalled();
+});
+
+test('schedules DEFAULT_DEADLINE_DUE reminders as final-call Expo notifications', async () => {
+  mockReminders = [{
+    id: 'reminder-due',
+    parent_task_id: 'task-1',
+    reminder_at: futureIso(5),
+    source: 'DEFAULT_DEADLINE_DUE',
+    notified_at: null,
+  }];
+
+  await syncLocalReminderNotificationsAsync('user-1');
+
+  expect(mockScheduleNotificationAsync).toHaveBeenCalledTimes(1);
+  expect(mockScheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
+    content: expect.objectContaining({
+      title: 'Final call',
+      body: 'Mark "Pay rent" complete now or it will be missed.',
+      data: expect.objectContaining({
+        kind: 'DEADLINE_FINAL_CALL',
+        category: 'DEADLINE_REMINDER',
+        reminder_source: 'DEFAULT_DEADLINE_DUE',
+      }),
+    }),
+  }));
+  expect(mockScheduleTenMinuteAlarmAsync).not.toHaveBeenCalled();
+});
+
+test('skips DEFAULT_DEADLINE_DUE reminders when final call is disabled', async () => {
+  mockProfile = {
+    notification_sound_key: 'default',
+    alarm_style_notifications_enabled: true,
+    deadline_due_warning_enabled: false,
+  };
+  mockReminders = [{
+    id: 'reminder-due',
+    parent_task_id: 'task-1',
+    reminder_at: futureIso(5),
+    source: 'DEFAULT_DEADLINE_DUE',
+    notified_at: null,
+  }];
+
+  await syncLocalReminderNotificationsAsync('user-1');
+
+  expect(mockScheduleNotificationAsync).not.toHaveBeenCalled();
+  expect(mockScheduleTenMinuteAlarmAsync).not.toHaveBeenCalled();
+  expect(await AsyncStorage.getItem(NOTIFICATION_MAP_KEY)).toBe(JSON.stringify({}));
+});
+
+test('registers push tokens against the current user client instance', async () => {
+  await registerForPushNotificationsAsync('user-1');
+
+  expect(mockResolveUserClientInstanceId).toHaveBeenCalledWith('user-1');
+  expect(mockPushTokenUpsert).toHaveBeenCalledWith(
+    {
+      user_id: 'user-1',
+      user_client_instance_id: 'client-instance-1',
+      token: 'ExponentPushToken[current-token]',
+      updated_at: expect.any(String),
+    },
+    { onConflict: 'user_id,user_client_instance_id' },
+  );
+  expect(mockPushTokenDelete).toHaveBeenCalledTimes(1);
+  expect(mockPushTokenDeleteEq).toHaveBeenCalledWith('user_id', 'user-1');
+  expect(mockPushTokenDeleteIs).toHaveBeenCalledWith('user_client_instance_id', null);
 });

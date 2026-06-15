@@ -243,7 +243,7 @@ export async function deleteTask(taskId: string): Promise<TaskMutationResult> {
   }
 
   if (!isTaskWithinDeleteWindow(task.created_at)) {
-    return { success: false, userId, error: 'Delete window expired. Tasks can only be deleted within 10 minutes.' };
+    return { success: false, userId, error: 'Delete window expired. Tasks can only be deleted within 1 hour.' };
   }
 
   const { data: googleLink, error: googleLinkError } = await supabase

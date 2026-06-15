@@ -414,7 +414,7 @@ export default function TasksScreen() {
 
     const isWithinDeleteWindow = isTaskWithinDeleteWindow(task.created_at);
     if (!isWithinDeleteWindow) {
-      Alert.alert('Delete unavailable', 'Tasks can only be deleted within 10 minutes of creation.');
+      Alert.alert('Delete unavailable', 'Tasks can only be deleted within 1 hour of creation.');
       return;
     }
 

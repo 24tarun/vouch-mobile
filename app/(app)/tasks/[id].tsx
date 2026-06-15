@@ -1143,7 +1143,7 @@ export default function TaskDetailScreen() {
   async function handleDeletePress() {
     if (!task || isDeleting) return;
     if (!isTaskWithinDeleteWindow(task.created_at)) {
-      Alert.alert('Delete unavailable', 'Tasks can only be deleted within 10 minutes of creation.');
+      Alert.alert('Delete unavailable', 'Tasks can only be deleted within 1 hour of creation.');
       return;
     }
     const confirmed = await new Promise<boolean>((resolve) => {

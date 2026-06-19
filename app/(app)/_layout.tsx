@@ -3,7 +3,7 @@ import { Tabs } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
 import { type Colors } from '@/lib/theme';
@@ -17,6 +17,7 @@ import { fetchFriendQueue } from '@/lib/hooks/useFriendQueue';
 import { fetchRelationships } from '@/lib/hooks/useRelationships';
 import { fetchBlockedUsers } from '@/lib/hooks/useBlockedUsers';
 import { fetchSettingsStats } from '@/lib/stats/calculate-stats';
+import { countPendingVouchRequests } from '@/lib/friends-badge';
 
 type FeatherName = React.ComponentProps<typeof Feather>['name'];
 
@@ -78,7 +79,15 @@ function AppLayoutContent() {
   const queryClient = useQueryClient();
   const userId = user?.id ?? null;
   const [settingsBadgeCount, setSettingsBadgeCount] = useState(0);
-  const [friendsBadgeCount, setFriendsBadgeCount] = useState(0);
+  const friendQueueQuery = useQuery({
+    queryKey: queryKeys.friendQueue(userId),
+    queryFn: ({ signal }) => fetchFriendQueue(userId!, signal),
+    enabled: Boolean(userId),
+  });
+  const friendsBadgeCount = useMemo(
+    () => countPendingVouchRequests(friendQueueQuery.data ?? []),
+    [friendQueueQuery.data],
+  );
 
   // Prefetch all tab data on app load so navigation is instant
   useEffect(() => {
@@ -112,7 +121,7 @@ function AppLayoutContent() {
         return result.data;
       },
     });
-  }, [userId]);
+  }, [queryClient, userId]);
 
   useEffect(() => {
     if (!userId) {
@@ -165,30 +174,13 @@ function AppLayoutContent() {
   }, [userId]);
 
   useEffect(() => {
-    if (!userId) {
-      setFriendsBadgeCount(0);
-      return;
-    }
+    if (!userId) return;
 
-    let cancelled = false;
-
-    async function refreshFriendsBadgeCount() {
-      const { count, error } = await supabase
-        .from('tasks')
-        .select('id', { count: 'exact', head: true })
-        .eq('voucher_id', userId)
-        .neq('user_id', userId)
-        .in('status', ['AWAITING_VOUCHER', 'MARKED_COMPLETE']);
-
-      if (cancelled || error) return;
-      setFriendsBadgeCount(count ?? 0);
-    }
-
-    void refreshFriendsBadgeCount();
+    const queueKey = queryKeys.friendQueue(userId);
     const rateLimiter = createRealtimeRateLimiter({
       label: `friends-vouch-request-badge:${userId}`,
       callback: () => {
-        void refreshFriendsBadgeCount();
+        void queryClient.invalidateQueries({ queryKey: queueKey });
       },
     });
 
@@ -209,11 +201,10 @@ function AppLayoutContent() {
       .subscribe();
 
     return () => {
-      cancelled = true;
       rateLimiter.dispose();
       void supabase.removeChannel(channel);
     };
-  }, [userId]);
+  }, [queryClient, userId]);
 
   return (
       <Tabs

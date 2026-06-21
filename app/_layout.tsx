@@ -18,6 +18,7 @@ import {
   clearLocalReminderNotificationsAsync,
   getTaskIdFromNotificationResponse,
   getUrlFromNotificationResponse,
+  registerRemoteReminderDeliveryTaskAsync,
   registerForPushNotificationsAsync,
   syncLocalReminderNotificationsAsync,
 } from '@/lib/notifications';
@@ -429,6 +430,7 @@ function AuthGuard() {
     });
 
     void registerForPushNotificationsAsync(userId, notificationAbortController.signal);
+    void registerRemoteReminderDeliveryTaskAsync();
     void runReminderSync();
     void Notifications.getLastNotificationResponseAsync().then(routeFromNotificationResponse);
     void AlarmKit.consumePendingOpenTaskActionsAsync()

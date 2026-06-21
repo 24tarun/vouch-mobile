@@ -1,4 +1,6 @@
 import { supabase } from '@/lib/supabase';
+import type { TaskStatus } from '@/lib/types';
+import { calculateTaskStatusCounts, type TaskStatsCounts } from '@/lib/stats/task-status-counts';
 
 export interface SettingsStats {
   totalTasks: number;
@@ -9,7 +11,7 @@ export interface SettingsStats {
   focusedSeconds: number;
 }
 
-async function calculateTaskStats(userId: string): Promise<{ data: Record<string, number> | null; error: string | null }> {
+async function calculateTaskStats(userId: string): Promise<{ data: TaskStatsCounts | null; error: string | null }> {
   const { data, error } = await supabase
     .from('tasks')
     .select('status')
@@ -20,25 +22,8 @@ async function calculateTaskStats(userId: string): Promise<{ data: Record<string
     return { data: null, error: error.message };
   }
 
-  const tasks = (data ?? []) as { status: string }[];
-  const counts: Record<string, number> = {
-    total: tasks.length,
-    accepted: 0,
-    denied: 0,
-    missed: 0,
-  };
-
-  for (const task of tasks) {
-    if (task.status === 'ACCEPTED' || task.status === 'AUTO_ACCEPTED' || task.status === 'AI_ACCEPTED') {
-      counts.accepted += 1;
-    }
-    if (task.status === 'DENIED' || task.status === 'AI_DENIED') {
-      counts.denied += 1;
-    }
-    if (task.status === 'MISSED') {
-      counts.missed += 1;
-    }
-  }
+  const tasks = (data ?? []) as { status: TaskStatus }[];
+  const counts = calculateTaskStatusCounts(tasks);
 
   return { data: counts, error: null };
 }

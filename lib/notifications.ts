@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as AlarmKit from 'alarm-kit';
+import * as TaskManager from 'expo-task-manager';
 import { supabase } from './supabase';
 import { resolveUserClientInstanceId } from './user-client-instance';
 import {
@@ -17,9 +18,13 @@ const NOTIFICATION_TTL_MS = 30 * 60 * 1000;
 const LOCAL_REMINDER_NOTIFICATION_MAP_KEY = 'vouch_local_reminder_notification_ids_v1';
 const LOCAL_REMINDER_ALARMKIT_MAP_KEY = 'vouch_local_reminder_alarmkit_ids_v1';
 const LOCAL_REMINDER_SOUND_KEY = 'vouch_local_reminder_sound_key_v1';
+const REMOTE_REMINDER_DELIVERY_ACK_KEY = 'vouch_remote_reminder_delivery_acks_v1';
 const ACTIVE_TASK_STATUSES = new Set(['ACTIVE', 'POSTPONED']);
 const DEFAULT_DEADLINE_10M_REMINDER_SOURCE = 'DEFAULT_DEADLINE_10M';
 const DEFAULT_DEADLINE_DUE_REMINDER_SOURCE = 'DEFAULT_DEADLINE_DUE';
+const LOCAL_REMINDER_BACKUP_DELAY_MS = 5 * 1000;
+const REMOTE_REMINDER_ACK_TTL_MS = 24 * 60 * 60 * 1000;
+const REMOTE_REMINDER_DELIVERY_TASK = 'vouch-remote-reminder-delivery';
 
 type ReminderRow = {
   id: string;
@@ -37,6 +42,60 @@ type ReminderGroup = {
   reminderAtMinute: string;
   reminders: ReminderRow[];
 };
+
+type ReminderDeliveryAckMap = Record<string, number>;
+
+function findStringValueDeep(input: unknown, key: string, depth = 0): string | null {
+  if (!input || typeof input !== 'object' || depth > 5) return null;
+  const record = input as Record<string, unknown>;
+  const direct = record[key];
+  if (typeof direct === 'string' && direct.trim().length > 0) {
+    return direct;
+  }
+
+  for (const value of Object.values(record)) {
+    const found = findStringValueDeep(value, key, depth + 1);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function hasBooleanValueDeep(input: unknown, key: string, expected: boolean, depth = 0): boolean {
+  if (!input || typeof input !== 'object' || depth > 5) return false;
+  const record = input as Record<string, unknown>;
+  if (record[key] === expected) return true;
+
+  return Object.values(record).some((value) => hasBooleanValueDeep(value, key, expected, depth + 1));
+}
+
+function getLocalBackupKeyFromData(data: unknown): string | null {
+  return findStringValueDeep(data, 'localBackupKey');
+}
+
+function isLocalReminderBackupData(data: unknown): boolean {
+  return hasBooleanValueDeep(data, 'local_schedule', true);
+}
+
+function isReminderRemoteDeliveryData(data: unknown): boolean {
+  const localBackupKey = getLocalBackupKeyFromData(data);
+  if (!localBackupKey || isLocalReminderBackupData(data)) return false;
+
+  const kind = findStringValueDeep(data, 'kind');
+  const category = findStringValueDeep(data, 'category');
+  return kind === 'TASK_REMINDER_REMOTE_DELIVERED' || category === 'DEADLINE_REMINDER';
+}
+
+if (!TaskManager.isTaskDefined(REMOTE_REMINDER_DELIVERY_TASK)) {
+  TaskManager.defineTask(REMOTE_REMINDER_DELIVERY_TASK, async ({ data, error }) => {
+    if (error) {
+      console.warn('[notifications] remote reminder delivery task failed:', error);
+      return;
+    }
+
+    await recordRemoteReminderDeliveryAsync(data);
+  });
+}
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
@@ -110,6 +169,17 @@ async function getNotificationSoundKeyForUserAsync(userId: string): Promise<Noti
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const data = (notification.request.content.data as Record<string, unknown> | undefined) ?? undefined;
+    if (await shouldSuppressLocalReminderBackupAsync(data)) {
+      return {
+        shouldShowBanner: false,
+        shouldShowList: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+
+    await recordRemoteReminderDeliveryAsync(data);
+
     const sourceTimestampMs = extractNotificationTimestampMs(data);
     const isExpired = sourceTimestampMs !== null && (Date.now() - sourceTimestampMs) > NOTIFICATION_TTL_MS;
 
@@ -294,6 +364,103 @@ async function writeLocalReminderAlarmKitMapAsync(
   await AsyncStorage.setItem(LOCAL_REMINDER_ALARMKIT_MAP_KEY, JSON.stringify(next));
 }
 
+async function readRemoteReminderDeliveryAcksAsync(nowMs = Date.now()): Promise<ReminderDeliveryAckMap> {
+  try {
+    const raw = await AsyncStorage.getItem(REMOTE_REMINDER_DELIVERY_ACK_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+
+    const entries = Object.entries(parsed as Record<string, unknown>)
+      .filter(([key, value]) => (
+        key.length > 0
+        && typeof value === 'number'
+        && Number.isFinite(value)
+        && nowMs - value <= REMOTE_REMINDER_ACK_TTL_MS
+      )) as [string, number][];
+
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
+}
+
+async function writeRemoteReminderDeliveryAcksAsync(next: ReminderDeliveryAckMap): Promise<void> {
+  await AsyncStorage.setItem(REMOTE_REMINDER_DELIVERY_ACK_KEY, JSON.stringify(next));
+}
+
+async function cancelExpoLocalReminderBackupAsync(localBackupKey: string): Promise<boolean> {
+  const map = await readLocalReminderNotificationMapAsync();
+  const notificationId = map[localBackupKey];
+  if (!notificationId) return false;
+
+  try {
+    await Notifications.cancelScheduledNotificationAsync(notificationId);
+  } catch {
+    // Notification may already be delivered or canceled.
+  }
+  try {
+    await Notifications.dismissNotificationAsync(notificationId);
+  } catch {
+    // Notification may not be currently presented.
+  }
+
+  delete map[localBackupKey];
+  await writeLocalReminderNotificationMapAsync(map);
+  return true;
+}
+
+async function cancelAlarmKitLocalReminderBackupAsync(localBackupKey: string): Promise<boolean> {
+  const map = await readLocalReminderAlarmKitMapAsync();
+  const nativeAlarmId = map[localBackupKey];
+  if (!nativeAlarmId) return false;
+
+  try {
+    await AlarmKit.cancelTenMinuteAlarmAsync({ nativeAlarmId });
+  } catch {
+    // Alarm may already be delivered, canceled, or unavailable on this OS.
+  }
+
+  delete map[localBackupKey];
+  await writeLocalReminderAlarmKitMapAsync(map);
+  return true;
+}
+
+export async function cancelLocalReminderBackupAsync(localBackupKey: string): Promise<boolean> {
+  if (!localBackupKey.trim()) return false;
+
+  const [expoCanceled, alarmKitCanceled] = await Promise.all([
+    cancelExpoLocalReminderBackupAsync(localBackupKey),
+    cancelAlarmKitLocalReminderBackupAsync(localBackupKey),
+  ]);
+
+  return expoCanceled || alarmKitCanceled;
+}
+
+export async function recordRemoteReminderDeliveryAsync(data: unknown): Promise<boolean> {
+  if (!isReminderRemoteDeliveryData(data)) return false;
+
+  const localBackupKey = getLocalBackupKeyFromData(data);
+  if (!localBackupKey) return false;
+
+  const nowMs = Date.now();
+  const ackMap = await readRemoteReminderDeliveryAcksAsync(nowMs);
+  ackMap[localBackupKey] = nowMs;
+  await writeRemoteReminderDeliveryAcksAsync(ackMap);
+  await cancelLocalReminderBackupAsync(localBackupKey);
+  return true;
+}
+
+export async function shouldSuppressLocalReminderBackupAsync(data: unknown): Promise<boolean> {
+  if (!isLocalReminderBackupData(data)) return false;
+
+  const localBackupKey = getLocalBackupKeyFromData(data);
+  if (!localBackupKey) return false;
+
+  const ackMap = await readRemoteReminderDeliveryAcksAsync();
+  return Boolean(ackMap[localBackupKey]);
+}
+
 async function readLocalReminderSoundKeyAsync(): Promise<NotificationSoundKey | null> {
   try {
     const raw = await AsyncStorage.getItem(LOCAL_REMINDER_SOUND_KEY);
@@ -408,6 +575,7 @@ function getAggregateReminderData(group: ReminderGroup, tasksById: Map<string, A
 
   return {
     aggregate: true,
+    localBackupKey: getReminderScheduleKey(group),
     kind: group.source === DEFAULT_DEADLINE_DUE_REMINDER_SOURCE
       ? 'DEADLINE_FINAL_CALL'
       : 'DEADLINE_REMINDER',
@@ -445,8 +613,19 @@ export async function clearLocalReminderNotificationsAsync(): Promise<void> {
     await AsyncStorage.removeItem(LOCAL_REMINDER_NOTIFICATION_MAP_KEY);
     await AsyncStorage.removeItem(LOCAL_REMINDER_ALARMKIT_MAP_KEY);
     await AsyncStorage.removeItem(LOCAL_REMINDER_SOUND_KEY);
+    await AsyncStorage.removeItem(REMOTE_REMINDER_DELIVERY_ACK_KEY);
   } catch (err) {
     console.warn('[notifications] failed to clear local reminders:', err);
+  }
+}
+
+export async function registerRemoteReminderDeliveryTaskAsync(): Promise<void> {
+  try {
+    const alreadyRegistered = await TaskManager.isTaskRegisteredAsync(REMOTE_REMINDER_DELIVERY_TASK);
+    if (alreadyRegistered) return;
+    await Notifications.registerTaskAsync(REMOTE_REMINDER_DELIVERY_TASK);
+  } catch (err) {
+    console.warn('[notifications] failed to register remote reminder delivery task:', err);
   }
 }
 
@@ -599,8 +778,10 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       : 'default';
     const lastScheduledSoundKey = await readLocalReminderSoundKeyAsync();
 
-    const expoReminderGroups = groupReminderRows(expoReminderRows);
-    const alarmKitReminderGroups = groupReminderRows(alarmKitReminderRows);
+    const remoteDeliveryAcks = await readRemoteReminderDeliveryAcksAsync(nowMs);
+    const isUnacknowledgedGroup = (group: ReminderGroup) => !remoteDeliveryAcks[getReminderScheduleKey(group)];
+    const expoReminderGroups = groupReminderRows(expoReminderRows).filter(isUnacknowledgedGroup);
+    const alarmKitReminderGroups = groupReminderRows(alarmKitReminderRows).filter(isUnacknowledgedGroup);
     const desiredExpoScheduleKeys = new Set(expoReminderGroups.map(getReminderScheduleKey));
     const desiredAlarmKitScheduleKeys = new Set(alarmKitReminderGroups.map(getReminderScheduleKey));
     let canceledExpoCount = 0;
@@ -663,7 +844,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       const scheduleKey = getReminderScheduleKey(group);
       if (nextExpoMap[scheduleKey]) continue;
 
-      const delayMs = getReminderGroupFireAtMs(group) - nowMs;
+      const delayMs = getReminderGroupFireAtMs(group) + LOCAL_REMINDER_BACKUP_DELAY_MS - nowMs;
       if (!Number.isFinite(delayMs) || delayMs <= 0) {
         skippedPastCount += 1;
         continue;
@@ -694,6 +875,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
                   ? 'DEADLINE_FINAL_CALL'
                   : 'DEADLINE_REMINDER',
                 category: 'DEADLINE_REMINDER',
+                localBackupKey: scheduleKey,
                 task_id: reminder.parent_task_id,
                 reminder_id: reminder.id,
                 reminder_source: reminder.source ?? 'MANUAL',
@@ -719,7 +901,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       const scheduleKey = getReminderScheduleKey(group);
       if (nextAlarmKitMap[scheduleKey]) continue;
 
-      const reminderAtMs = getReminderGroupFireAtMs(group);
+      const reminderAtMs = getReminderGroupFireAtMs(group) + LOCAL_REMINDER_BACKUP_DELAY_MS;
       if (!Number.isFinite(reminderAtMs) || reminderAtMs <= nowMs) {
         skippedPastCount += 1;
         continue;

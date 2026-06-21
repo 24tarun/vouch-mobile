@@ -7,10 +7,15 @@ let mockProfile: any = { notification_sound_key: 'default' };
 
 const mockScheduleNotificationAsync = jest.fn();
 const mockCancelScheduledNotificationAsync = jest.fn();
+const mockDismissNotificationAsync = jest.fn();
 const mockGetPermissionsAsync = jest.fn();
 const mockRequestPermissionsAsync = jest.fn();
 const mockSetNotificationChannelAsync = jest.fn();
 const mockGetExpoPushTokenAsync = jest.fn();
+const mockRegisterTaskAsync = jest.fn();
+const mockDefineTask = jest.fn();
+const mockIsTaskDefined = jest.fn();
+const mockIsTaskRegisteredAsync = jest.fn();
 const mockPushTokenUpsert = jest.fn();
 const mockPushTokenDelete = jest.fn();
 const mockPushTokenDeleteEq = jest.fn();
@@ -42,7 +47,9 @@ jest.mock('expo-notifications', () => ({
   requestPermissionsAsync: mockRequestPermissionsAsync,
   scheduleNotificationAsync: mockScheduleNotificationAsync,
   cancelScheduledNotificationAsync: mockCancelScheduledNotificationAsync,
+  dismissNotificationAsync: mockDismissNotificationAsync,
   getExpoPushTokenAsync: mockGetExpoPushTokenAsync,
+  registerTaskAsync: mockRegisterTaskAsync,
 }));
 
 jest.mock('expo-constants', () => ({
@@ -55,6 +62,12 @@ jest.mock('alarm-kit', () => ({
   requestAlarmAuthorizationAsync: mockRequestAlarmAuthorizationAsync,
   scheduleTenMinuteAlarmAsync: mockScheduleTenMinuteAlarmAsync,
   cancelTenMinuteAlarmAsync: mockCancelTenMinuteAlarmAsync,
+}));
+
+jest.mock('expo-task-manager', () => ({
+  defineTask: mockDefineTask,
+  isTaskDefined: mockIsTaskDefined,
+  isTaskRegisteredAsync: mockIsTaskRegisteredAsync,
 }));
 
 jest.mock('@/lib/user-client-instance', () => ({
@@ -108,12 +121,16 @@ jest.mock('@/lib/supabase', () => ({
 
 const NOTIFICATION_MAP_KEY = 'vouch_local_reminder_notification_ids_v1';
 const ALARMKIT_MAP_KEY = 'vouch_local_reminder_alarmkit_ids_v1';
+const REMOTE_ACK_KEY = 'vouch_remote_reminder_delivery_acks_v1';
 
 /* eslint-disable-next-line @typescript-eslint/no-require-imports */
 const notifications = require('@/lib/notifications') as typeof import('@/lib/notifications');
 const {
   getUrlFromNotificationResponse,
+  recordRemoteReminderDeliveryAsync,
+  registerRemoteReminderDeliveryTaskAsync,
   registerForPushNotificationsAsync,
+  shouldSuppressLocalReminderBackupAsync,
   syncLocalReminderNotificationsAsync,
 } = notifications;
 
@@ -125,6 +142,20 @@ function reminderMinuteKey(reminderAt: string) {
   const date = new Date(reminderAt);
   date.setUTCSeconds(0, 0);
   return date.toISOString();
+}
+
+function plusBackupDelayIso(reminderAt: string) {
+  return new Date(new Date(reminderAt).getTime() + 5 * 1000).toISOString();
+}
+
+function expectScheduledAtBackupDelay(reminderAt: string) {
+  const scheduledCall = mockScheduleNotificationAsync.mock.calls[0]?.[0];
+  const seconds = scheduledCall?.trigger?.seconds;
+  expect(typeof seconds).toBe('number');
+
+  const expectedDelaySeconds = Math.floor((new Date(reminderAt).getTime() + 5 * 1000 - Date.now()) / 1000);
+  expect(seconds).toBeGreaterThanOrEqual(expectedDelaySeconds - 1);
+  expect(seconds).toBeLessThanOrEqual(expectedDelaySeconds + 1);
 }
 
 beforeEach(async () => {
@@ -154,6 +185,10 @@ beforeEach(async () => {
     eq: mockPushTokenDeleteEq,
   }));
   mockScheduleNotificationAsync.mockResolvedValue('expo-notification-1');
+  mockDismissNotificationAsync.mockResolvedValue(undefined);
+  mockRegisterTaskAsync.mockResolvedValue(null);
+  mockIsTaskDefined.mockReturnValue(false);
+  mockIsTaskRegisteredAsync.mockResolvedValue(false);
   mockIsAlarmKitAvailableAsync.mockResolvedValue(false);
   mockGetAlarmAuthorizationStatusAsync.mockResolvedValue('unavailable');
   mockRequestAlarmAuthorizationAsync.mockResolvedValue('authorized');
@@ -170,7 +205,7 @@ test('schedules iOS 26 DEFAULT_DEADLINE_10M reminders with AlarmKit', async () =
     reminderId: 'reminder-1',
     taskId: 'task-1',
     taskTitle: 'Pay rent',
-    fireAtISO: mockReminders[0].reminder_at,
+    fireAtISO: plusBackupDelayIso(mockReminders[0].reminder_at),
     aggregate: false,
     taskCount: 1,
   });
@@ -185,6 +220,7 @@ test('uses normal local notifications for DEFAULT_DEADLINE_10M when AlarmKit is 
 
   expect(mockScheduleNotificationAsync).toHaveBeenCalledTimes(1);
   expect(mockScheduleTenMinuteAlarmAsync).not.toHaveBeenCalled();
+  expectScheduledAtBackupDelay(mockReminders[0].reminder_at);
   expect(await AsyncStorage.getItem(NOTIFICATION_MAP_KEY)).toBe(JSON.stringify({ 'reminder-1': 'expo-notification-1' }));
 });
 
@@ -225,6 +261,7 @@ test('aggregates same-minute Expo local reminders', async () => {
         taskIds: ['task-1', 'task-2'],
         reminderIds: ['reminder-1', 'reminder-2'],
         count: 2,
+        localBackupKey: aggregateKey,
         reminder_source: 'DEFAULT_DEADLINE_1H',
         url: '/tasks',
       }),
@@ -266,6 +303,7 @@ test('aggregates DEFAULT_DEADLINE_DUE local reminders with final-call copy', asy
       data: expect.objectContaining({
         aggregate: true,
         kind: 'DEADLINE_FINAL_CALL',
+        localBackupKey: `aggregate|DEFAULT_DEADLINE_DUE|${reminderMinuteKey(reminderAt)}`,
         url: '/tasks',
       }),
     }),
@@ -304,6 +342,7 @@ test('aggregates manual local reminders when simultaneous', async () => {
       body: '2 tasks need attention.',
       data: expect.objectContaining({
         aggregate: true,
+        localBackupKey: `aggregate|MANUAL|${reminderMinuteKey(reminderAt)}`,
         reminder_source: 'MANUAL',
         url: '/tasks',
       }),
@@ -367,7 +406,7 @@ test('aggregates same-minute iOS 26 AlarmKit reminders', async () => {
     reminderId: aggregateKey,
     taskId: '',
     taskTitle: '2 tasks need attention',
-    fireAtISO: reminderAt,
+    fireAtISO: plusBackupDelayIso(reminderAt),
     aggregate: true,
     taskCount: 2,
   });
@@ -460,6 +499,7 @@ test('schedules DEFAULT_DEADLINE_DUE reminders as final-call Expo notifications'
       data: expect.objectContaining({
         kind: 'DEADLINE_FINAL_CALL',
         category: 'DEADLINE_REMINDER',
+        localBackupKey: 'reminder-due',
         reminder_source: 'DEFAULT_DEADLINE_DUE',
       }),
     }),
@@ -521,4 +561,84 @@ test('reads aggregate notification URL for task-list routing', () => {
   } as any;
 
   expect(getUrlFromNotificationResponse(response)).toBe('/tasks');
+});
+
+test('registers the remote reminder delivery background task once', async () => {
+  await registerRemoteReminderDeliveryTaskAsync();
+
+  expect(mockIsTaskRegisteredAsync).toHaveBeenCalledWith('vouch-remote-reminder-delivery');
+  expect(mockRegisterTaskAsync).toHaveBeenCalledWith('vouch-remote-reminder-delivery');
+});
+
+test('remote reminder delivery cancels matching Expo and AlarmKit backups', async () => {
+  await AsyncStorage.setItem(NOTIFICATION_MAP_KEY, JSON.stringify({ 'reminder-1': 'expo-notification-1' }));
+  await AsyncStorage.setItem(ALARMKIT_MAP_KEY, JSON.stringify({ 'reminder-1': 'native-alarm-1' }));
+
+  const recorded = await recordRemoteReminderDeliveryAsync({
+    kind: 'TASK_REMINDER_REMOTE_DELIVERED',
+    category: 'DEADLINE_REMINDER',
+    localBackupKey: 'reminder-1',
+  });
+
+  expect(recorded).toBe(true);
+  expect(mockCancelScheduledNotificationAsync).toHaveBeenCalledWith('expo-notification-1');
+  expect(mockDismissNotificationAsync).toHaveBeenCalledWith('expo-notification-1');
+  expect(mockCancelTenMinuteAlarmAsync).toHaveBeenCalledWith({ nativeAlarmId: 'native-alarm-1' });
+  expect(await AsyncStorage.getItem(NOTIFICATION_MAP_KEY)).toBe(JSON.stringify({}));
+  expect(await AsyncStorage.getItem(ALARMKIT_MAP_KEY)).toBe(JSON.stringify({}));
+  expect(JSON.parse((await AsyncStorage.getItem(REMOTE_ACK_KEY)) ?? '{}')).toEqual({
+    'reminder-1': expect.any(Number),
+  });
+});
+
+test('remote aggregate reminder delivery cancels matching aggregate backup', async () => {
+  const aggregateKey = 'aggregate|DEFAULT_DEADLINE_1H|2026-03-23T22:00:00.000Z';
+  await AsyncStorage.setItem(NOTIFICATION_MAP_KEY, JSON.stringify({ [aggregateKey]: 'expo-aggregate-1' }));
+
+  const recorded = await recordRemoteReminderDeliveryAsync({
+    category: 'DEADLINE_REMINDER',
+    aggregate: true,
+    localBackupKey: aggregateKey,
+  });
+
+  expect(recorded).toBe(true);
+  expect(mockCancelScheduledNotificationAsync).toHaveBeenCalledWith('expo-aggregate-1');
+  expect(await AsyncStorage.getItem(NOTIFICATION_MAP_KEY)).toBe(JSON.stringify({}));
+  expect(JSON.parse((await AsyncStorage.getItem(REMOTE_ACK_KEY)) ?? '{}')).toEqual({
+    [aggregateKey]: expect.any(Number),
+  });
+});
+
+test('suppresses local backup notifications when remote delivery was already recorded', async () => {
+  await recordRemoteReminderDeliveryAsync({
+    kind: 'TASK_REMINDER_REMOTE_DELIVERED',
+    category: 'DEADLINE_REMINDER',
+    localBackupKey: 'reminder-1',
+  });
+
+  await expect(shouldSuppressLocalReminderBackupAsync({
+    local_schedule: true,
+    localBackupKey: 'reminder-1',
+  })).resolves.toBe(true);
+});
+
+test('does not suppress local backup notifications without a remote delivery ack', async () => {
+  await expect(shouldSuppressLocalReminderBackupAsync({
+    local_schedule: true,
+    localBackupKey: 'reminder-1',
+  })).resolves.toBe(false);
+});
+
+test('skips scheduling local backup when remote delivery was already recorded', async () => {
+  await recordRemoteReminderDeliveryAsync({
+    kind: 'TASK_REMINDER_REMOTE_DELIVERED',
+    category: 'DEADLINE_REMINDER',
+    localBackupKey: 'reminder-1',
+  });
+
+  await syncLocalReminderNotificationsAsync('user-1');
+
+  expect(mockScheduleNotificationAsync).not.toHaveBeenCalled();
+  expect(mockScheduleTenMinuteAlarmAsync).not.toHaveBeenCalled();
+  expect(await AsyncStorage.getItem(NOTIFICATION_MAP_KEY)).toBe(JSON.stringify({}));
 });

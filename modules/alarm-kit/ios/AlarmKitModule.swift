@@ -15,18 +15,21 @@ public struct AlarmKitOpenTaskAction: Codable {
   public let taskId: String
   public let reminderId: String
   public let nativeAlarmId: String
+  public let aggregate: Bool
 
-  public init(taskId: String, reminderId: String, nativeAlarmId: String) {
+  public init(taskId: String, reminderId: String, nativeAlarmId: String, aggregate: Bool = false) {
     self.taskId = taskId
     self.reminderId = reminderId
     self.nativeAlarmId = nativeAlarmId
+    self.aggregate = aggregate
   }
 
-  public var eventBody: [String: String] {
+  public var eventBody: [String: Any] {
     [
       "taskId": taskId,
       "reminderId": reminderId,
-      "nativeAlarmId": nativeAlarmId
+      "nativeAlarmId": nativeAlarmId,
+      "aggregate": aggregate
     ]
   }
 }
@@ -74,9 +77,11 @@ public final class AlarmKitOpenTaskActionStore {
 
 struct ScheduleTenMinuteAlarmInput: Record {
   @Field var reminderId: String
-  @Field var taskId: String
+  @Field var taskId: String?
   @Field var taskTitle: String
   @Field var fireAtISO: String
+  @Field var aggregate: Bool?
+  @Field var taskCount: Int?
 }
 
 struct CancelTenMinuteAlarmInput: Record {
@@ -111,7 +116,7 @@ public class AlarmKitModule: Module {
       try AlarmKitManager.shared.cancelTenMinuteAlarm(nativeAlarmId: input.nativeAlarmId)
     }
 
-    AsyncFunction("consumePendingOpenTaskActionsAsync") { () -> [[String: String]] in
+    AsyncFunction("consumePendingOpenTaskActionsAsync") { () -> [[String: Any]] in
       return AlarmKitOpenTaskActionStore.shared.consumeAll().map { $0.eventBody }
     }
 
@@ -243,8 +248,24 @@ private final class AlarmKitManager {
       )
     }
 
+    let isAggregate = input.aggregate ?? false
+    let taskId = input.taskId ?? ""
+    if !isAggregate && taskId.isEmpty {
+      throw NSError(
+        domain: "VouchAlarmKit",
+        code: 4,
+        userInfo: [NSLocalizedDescriptionKey: "Task id is required for task-specific alarms."]
+      )
+    }
+
     let id = UUID()
-    let alarmTitle = "10 min reminder | \(input.taskTitle)"
+    let taskCount = max(input.taskCount ?? 0, 0)
+    let alarmTitle: String
+    if isAggregate {
+      alarmTitle = "\(taskCount) tasks need attention"
+    } else {
+      alarmTitle = "10 min reminder | \(input.taskTitle)"
+    }
     let presentation = AlarmPresentation(
       alert: AlarmPresentation.Alert(
         title: LocalizedStringResource(String.LocalizationValue(alarmTitle)),
@@ -255,13 +276,14 @@ private final class AlarmKitManager {
     )
     let attributes = AlarmAttributes(
       presentation: presentation,
-      metadata: VouchAlarmMetadata(reminderId: input.reminderId, taskId: input.taskId),
+      metadata: VouchAlarmMetadata(reminderId: input.reminderId, taskId: taskId, aggregate: isAggregate),
       tintColor: .orange
     )
     let intent = VouchOpenTaskAlarmIntent(
-      taskId: input.taskId,
+      taskId: taskId,
       reminderId: input.reminderId,
-      nativeAlarmId: id.uuidString
+      nativeAlarmId: id.uuidString,
+      aggregate: isAggregate
     )
     let configuration = AlarmManager.AlarmConfiguration.alarm(
       schedule: .fixed(fireDate),
@@ -298,10 +320,12 @@ private extension ISO8601DateFormatter {
 public struct VouchAlarmMetadata: AlarmMetadata, Codable, Sendable {
   public let reminderId: String
   public let taskId: String
+  public let aggregate: Bool
 
-  public init(reminderId: String, taskId: String) {
+  public init(reminderId: String, taskId: String, aggregate: Bool = false) {
     self.reminderId = reminderId
     self.taskId = taskId
+    self.aggregate = aggregate
   }
 }
 
@@ -314,17 +338,20 @@ public struct VouchOpenTaskAlarmIntent: LiveActivityIntent {
   @Parameter(title: "Task ID") public var taskId: String
   @Parameter(title: "Reminder ID") public var reminderId: String
   @Parameter(title: "Alarm ID") public var nativeAlarmId: String
+  @Parameter(title: "Aggregate") public var aggregate: Bool
 
   public init() {
     self.taskId = ""
     self.reminderId = ""
     self.nativeAlarmId = ""
+    self.aggregate = false
   }
 
-  public init(taskId: String, reminderId: String, nativeAlarmId: String) {
+  public init(taskId: String, reminderId: String, nativeAlarmId: String, aggregate: Bool = false) {
     self.taskId = taskId
     self.reminderId = reminderId
     self.nativeAlarmId = nativeAlarmId
+    self.aggregate = aggregate
   }
 
   public func perform() async throws -> some IntentResult {
@@ -338,24 +365,26 @@ public struct VouchOpenTaskAlarmIntent: LiveActivityIntent {
       AlarmKitOpenTaskAction(
         taskId: taskId,
         reminderId: reminderId,
-        nativeAlarmId: nativeAlarmId
+        nativeAlarmId: nativeAlarmId,
+        aggregate: aggregate
       )
     )
 
-    if let url = Self.openTaskURL(taskId: taskId, reminderId: reminderId, nativeAlarmId: nativeAlarmId) {
+    if let url = Self.openTaskURL(taskId: taskId, reminderId: reminderId, nativeAlarmId: nativeAlarmId, aggregate: aggregate) {
       await UIApplication.shared.open(url)
     }
 
     return .result()
   }
 
-  private static func openTaskURL(taskId: String, reminderId: String, nativeAlarmId: String) -> URL? {
+  private static func openTaskURL(taskId: String, reminderId: String, nativeAlarmId: String, aggregate: Bool) -> URL? {
     var components = URLComponents()
     components.scheme = "vouch"
-    components.path = "/tasks/\(taskId)"
+    components.path = aggregate ? "/tasks" : "/tasks/\(taskId)"
     components.queryItems = [
       URLQueryItem(name: "alarmReminderId", value: reminderId),
-      URLQueryItem(name: "alarmId", value: nativeAlarmId)
+      URLQueryItem(name: "alarmId", value: nativeAlarmId),
+      URLQueryItem(name: "aggregate", value: aggregate ? "true" : "false")
     ]
     return components.url
   }

@@ -4,9 +4,11 @@ export type AlarmKitAuthorizationStatus = 'authorized' | 'denied' | 'not_determi
 
 export type ScheduleTenMinuteAlarmInput = {
   reminderId: string;
-  taskId: string;
+  taskId?: string | null;
   taskTitle: string;
   fireAtISO: string;
+  aggregate?: boolean;
+  taskCount?: number;
 };
 
 export type ScheduleTenMinuteAlarmResult = {
@@ -17,6 +19,7 @@ export type OpenTaskAlarmAction = {
   taskId: string;
   reminderId: string;
   nativeAlarmId: string;
+  aggregate?: boolean;
 };
 
 type NativeAlarmKitModule = {

@@ -21,6 +21,23 @@ const ACTIVE_TASK_STATUSES = new Set(['ACTIVE', 'POSTPONED']);
 const DEFAULT_DEADLINE_10M_REMINDER_SOURCE = 'DEFAULT_DEADLINE_10M';
 const DEFAULT_DEADLINE_DUE_REMINDER_SOURCE = 'DEFAULT_DEADLINE_DUE';
 
+type ReminderRow = {
+  id: string;
+  parent_task_id: string;
+  reminder_at: string;
+  source: string | null;
+  notified_at: string | null;
+};
+
+type ActiveTaskRow = { id: string; title: string; status: string };
+
+type ReminderGroup = {
+  key: string;
+  source: string | null;
+  reminderAtMinute: string;
+  reminders: ReminderRow[];
+};
+
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     const err = new Error('Aborted');
@@ -219,6 +236,13 @@ export function getTaskIdFromNotificationResponse(
   return typeof taskId === 'string' && taskId.trim().length > 0 ? taskId : null;
 }
 
+export function getUrlFromNotificationResponse(
+  response: Notifications.NotificationResponse | null | undefined,
+): string | null {
+  const url = response?.notification.request.content.data?.url;
+  return typeof url === 'string' && url.trim().length > 0 ? url : null;
+}
+
 async function hasGrantedNotificationPermissionAsync(signal?: AbortSignal): Promise<boolean> {
   const { status } = await Notifications.getPermissionsAsync();
   if (status === 'granted') return true;
@@ -311,6 +335,95 @@ function createReminderContent(input: {
   };
 }
 
+function createAggregateReminderContent(input: {
+  count: number;
+  source: string | null;
+  notificationSoundKey: NotificationSoundKey;
+}): Notifications.NotificationContentInput {
+  const isDue = input.source === DEFAULT_DEADLINE_DUE_REMINDER_SOURCE;
+
+  return {
+    title: isDue ? 'Final call' : 'Task reminders',
+    body: isDue
+      ? `Last call for ${input.count} tasks.`
+      : `${input.count} tasks need attention.`,
+    sound: resolveNotificationSoundName(input.notificationSoundKey),
+  };
+}
+
+function getReminderAtMinuteKey(reminderAt: string): string {
+  const reminderDate = new Date(reminderAt);
+  const reminderMs = reminderDate.getTime();
+  if (!Number.isFinite(reminderMs)) return reminderAt;
+
+  reminderDate.setUTCSeconds(0, 0);
+  return reminderDate.toISOString();
+}
+
+function getReminderGroupKey(source: string | null, reminderAtMinute: string): string {
+  return `aggregate|${source ?? 'MANUAL'}|${reminderAtMinute}`;
+}
+
+function getReminderScheduleKey(group: ReminderGroup): string {
+  return group.reminders.length === 1
+    ? group.reminders[0].id
+    : group.key;
+}
+
+function groupReminderRows(reminders: ReminderRow[]): ReminderGroup[] {
+  const groupsByKey = new Map<string, ReminderGroup>();
+
+  for (const reminder of reminders) {
+    const reminderAtMinute = getReminderAtMinuteKey(reminder.reminder_at);
+    const key = getReminderGroupKey(reminder.source, reminderAtMinute);
+    const existingGroup = groupsByKey.get(key);
+    if (existingGroup) {
+      existingGroup.reminders.push(reminder);
+      continue;
+    }
+
+    groupsByKey.set(key, {
+      key,
+      source: reminder.source,
+      reminderAtMinute,
+      reminders: [reminder],
+    });
+  }
+
+  return Array.from(groupsByKey.values());
+}
+
+function getReminderGroupFireAtMs(group: ReminderGroup): number {
+  return group.reminders.reduce((earliest, reminder) => {
+    const reminderAtMs = new Date(reminder.reminder_at).getTime();
+    if (!Number.isFinite(reminderAtMs)) return earliest;
+    return Math.min(earliest, reminderAtMs);
+  }, Number.POSITIVE_INFINITY);
+}
+
+function getAggregateReminderData(group: ReminderGroup, tasksById: Map<string, ActiveTaskRow>) {
+  const taskIds = group.reminders
+    .map((reminder) => tasksById.get(reminder.parent_task_id)?.id)
+    .filter((taskId): taskId is string => Boolean(taskId));
+
+  return {
+    aggregate: true,
+    kind: group.source === DEFAULT_DEADLINE_DUE_REMINDER_SOURCE
+      ? 'DEADLINE_FINAL_CALL'
+      : 'DEADLINE_REMINDER',
+    category: 'DEADLINE_REMINDER',
+    taskIds,
+    reminderIds: group.reminders.map((reminder) => reminder.id),
+    count: group.reminders.length,
+    reminder_source: group.source ?? 'MANUAL',
+    source: group.source ?? 'MANUAL',
+    reminder_at: group.reminderAtMinute,
+    reminderAt: group.reminderAtMinute,
+    url: '/tasks',
+    local_schedule: true,
+  };
+}
+
 export async function clearLocalReminderNotificationsAsync(): Promise<void> {
   try {
     const map = await readLocalReminderNotificationMapAsync();
@@ -378,13 +491,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     } | null)
       ?.deadline_due_warning_enabled ?? true;
 
-    const reminderRows = (reminders as {
-      id: string;
-      parent_task_id: string;
-      reminder_at: string;
-      source: string | null;
-      notified_at: string | null;
-    }[] | null) ?? [];
+    const reminderRows = (reminders as ReminderRow[] | null) ?? [];
 
     const pendingReminderRows = reminderRows.filter((row) => !row.notified_at);
     if (pendingReminderRows.length === 0) {
@@ -417,8 +524,8 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       return;
     }
 
-    const tasksById = new Map(
-      ((tasks as { id: string; title: string; status: string }[] | null) ?? [])
+    const tasksById = new Map<string, ActiveTaskRow>(
+      ((tasks as ActiveTaskRow[] | null) ?? [])
         .filter((task) => ACTIVE_TASK_STATUSES.has(task.status))
         .map((task) => [task.id, task]),
     );
@@ -492,8 +599,10 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       : 'default';
     const lastScheduledSoundKey = await readLocalReminderSoundKeyAsync();
 
-    const desiredExpoReminderIds = new Set(expoReminderRows.map((row) => row.id));
-    const desiredAlarmKitReminderIds = new Set(alarmKitReminderRows.map((row) => row.id));
+    const expoReminderGroups = groupReminderRows(expoReminderRows);
+    const alarmKitReminderGroups = groupReminderRows(alarmKitReminderRows);
+    const desiredExpoScheduleKeys = new Set(expoReminderGroups.map(getReminderScheduleKey));
+    const desiredAlarmKitScheduleKeys = new Set(alarmKitReminderGroups.map(getReminderScheduleKey));
     let canceledExpoCount = 0;
     let canceledAlarmKitCount = 0;
     let scheduledExpoCount = 0;
@@ -522,9 +631,9 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     const nextExpoMap: Record<string, string> = {};
     const nextAlarmKitMap: Record<string, string> = {};
 
-    for (const [reminderId, notificationId] of Object.entries(persistedExpoMap)) {
-      if (desiredExpoReminderIds.has(reminderId)) {
-        nextExpoMap[reminderId] = notificationId;
+    for (const [scheduleKey, notificationId] of Object.entries(persistedExpoMap)) {
+      if (desiredExpoScheduleKeys.has(scheduleKey)) {
+        nextExpoMap[scheduleKey] = notificationId;
         reusedExpoCount += 1;
       } else {
         try {
@@ -536,9 +645,9 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       }
     }
 
-    for (const [reminderId, nativeAlarmId] of Object.entries(persistedAlarmKitMap)) {
-      if (desiredAlarmKitReminderIds.has(reminderId)) {
-        nextAlarmKitMap[reminderId] = nativeAlarmId;
+    for (const [scheduleKey, nativeAlarmId] of Object.entries(persistedAlarmKitMap)) {
+      if (desiredAlarmKitScheduleKeys.has(scheduleKey)) {
+        nextAlarmKitMap[scheduleKey] = nativeAlarmId;
         reusedAlarmKitCount += 1;
       } else {
         try {
@@ -550,36 +659,47 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       }
     }
 
-    for (const reminder of expoReminderRows) {
-      if (nextExpoMap[reminder.id]) continue;
+    for (const group of expoReminderGroups) {
+      const scheduleKey = getReminderScheduleKey(group);
+      if (nextExpoMap[scheduleKey]) continue;
 
-      const task = tasksById.get(reminder.parent_task_id);
-      if (!task) continue;
-
-      const delayMs = new Date(reminder.reminder_at).getTime() - nowMs;
+      const delayMs = getReminderGroupFireAtMs(group) - nowMs;
       if (!Number.isFinite(delayMs) || delayMs <= 0) {
         skippedPastCount += 1;
         continue;
       }
 
+      const isAggregate = group.reminders.length > 1;
+      const reminder = group.reminders[0];
+      const task = tasksById.get(reminder.parent_task_id);
+      if (!isAggregate && !task) continue;
+
       const notificationId = await Notifications.scheduleNotificationAsync({
         content: {
-          ...createReminderContent({
-            taskTitle: task.title,
-            source: reminder.source,
-            notificationSoundKey,
-          }),
-          data: {
-            kind: reminder.source === DEFAULT_DEADLINE_DUE_REMINDER_SOURCE
-              ? 'DEADLINE_FINAL_CALL'
-              : 'DEADLINE_REMINDER',
-            category: 'DEADLINE_REMINDER',
-            task_id: reminder.parent_task_id,
-            reminder_id: reminder.id,
-            reminder_source: reminder.source ?? 'MANUAL',
-            reminder_at: reminder.reminder_at,
-            local_schedule: true,
-          },
+          ...(isAggregate
+            ? createAggregateReminderContent({
+                count: group.reminders.length,
+                source: group.source,
+                notificationSoundKey,
+              })
+            : createReminderContent({
+                taskTitle: task?.title ?? '',
+                source: reminder.source,
+                notificationSoundKey,
+              })),
+          data: isAggregate
+            ? getAggregateReminderData(group, tasksById)
+            : {
+                kind: reminder.source === DEFAULT_DEADLINE_DUE_REMINDER_SOURCE
+                  ? 'DEADLINE_FINAL_CALL'
+                  : 'DEADLINE_REMINDER',
+                category: 'DEADLINE_REMINDER',
+                task_id: reminder.parent_task_id,
+                reminder_id: reminder.id,
+                reminder_source: reminder.source ?? 'MANUAL',
+                reminder_at: reminder.reminder_at,
+                local_schedule: true,
+              },
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
@@ -591,35 +711,40 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
         },
       });
 
-      nextExpoMap[reminder.id] = notificationId;
+      nextExpoMap[scheduleKey] = notificationId;
       scheduledExpoCount += 1;
     }
 
-    for (const reminder of alarmKitReminderRows) {
-      if (nextAlarmKitMap[reminder.id]) continue;
+    for (const group of alarmKitReminderGroups) {
+      const scheduleKey = getReminderScheduleKey(group);
+      if (nextAlarmKitMap[scheduleKey]) continue;
 
-      const task = tasksById.get(reminder.parent_task_id);
-      if (!task) continue;
-
-      const reminderAtMs = new Date(reminder.reminder_at).getTime();
+      const reminderAtMs = getReminderGroupFireAtMs(group);
       if (!Number.isFinite(reminderAtMs) || reminderAtMs <= nowMs) {
         skippedPastCount += 1;
         continue;
       }
 
+      const isAggregate = group.reminders.length > 1;
+      const reminder = group.reminders[0];
+      const task = tasksById.get(reminder.parent_task_id);
+      if (!isAggregate && !task) continue;
+
       try {
         const result = await AlarmKit.scheduleTenMinuteAlarmAsync({
-          reminderId: reminder.id,
-          taskId: reminder.parent_task_id,
-          taskTitle: task.title,
-          fireAtISO: reminder.reminder_at,
+          reminderId: isAggregate ? scheduleKey : reminder.id,
+          taskId: isAggregate ? '' : reminder.parent_task_id,
+          taskTitle: isAggregate ? `${group.reminders.length} tasks need attention` : task?.title ?? '',
+          fireAtISO: new Date(reminderAtMs).toISOString(),
+          aggregate: isAggregate,
+          taskCount: group.reminders.length,
         });
-        nextAlarmKitMap[reminder.id] = result.nativeAlarmId;
+        nextAlarmKitMap[scheduleKey] = result.nativeAlarmId;
         scheduledAlarmKitCount += 1;
       } catch (err) {
         console.warn('[notifications] failed to schedule AlarmKit reminder; skipping serious alarm:', {
-          reminderId: reminder.id,
-          taskId: reminder.parent_task_id,
+          scheduleKey,
+          reminderIds: group.reminders.map((row) => row.id),
           error: err,
         });
       }

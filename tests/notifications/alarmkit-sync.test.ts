@@ -111,10 +111,20 @@ const ALARMKIT_MAP_KEY = 'vouch_local_reminder_alarmkit_ids_v1';
 
 /* eslint-disable-next-line @typescript-eslint/no-require-imports */
 const notifications = require('@/lib/notifications') as typeof import('@/lib/notifications');
-const { registerForPushNotificationsAsync, syncLocalReminderNotificationsAsync } = notifications;
+const {
+  getUrlFromNotificationResponse,
+  registerForPushNotificationsAsync,
+  syncLocalReminderNotificationsAsync,
+} = notifications;
 
 function futureIso(minutesFromNow: number) {
   return new Date(Date.now() + minutesFromNow * 60 * 1000).toISOString();
+}
+
+function reminderMinuteKey(reminderAt: string) {
+  const date = new Date(reminderAt);
+  date.setUTCSeconds(0, 0);
+  return date.toISOString();
 }
 
 beforeEach(async () => {
@@ -161,6 +171,8 @@ test('schedules iOS 26 DEFAULT_DEADLINE_10M reminders with AlarmKit', async () =
     taskId: 'task-1',
     taskTitle: 'Pay rent',
     fireAtISO: mockReminders[0].reminder_at,
+    aggregate: false,
+    taskCount: 1,
   });
   expect(mockScheduleNotificationAsync).not.toHaveBeenCalled();
   expect(await AsyncStorage.getItem(ALARMKIT_MAP_KEY)).toBe(JSON.stringify({ 'reminder-1': 'native-alarm-1' }));
@@ -174,6 +186,129 @@ test('uses normal local notifications for DEFAULT_DEADLINE_10M when AlarmKit is 
   expect(mockScheduleNotificationAsync).toHaveBeenCalledTimes(1);
   expect(mockScheduleTenMinuteAlarmAsync).not.toHaveBeenCalled();
   expect(await AsyncStorage.getItem(NOTIFICATION_MAP_KEY)).toBe(JSON.stringify({ 'reminder-1': 'expo-notification-1' }));
+});
+
+test('aggregates same-minute Expo local reminders', async () => {
+  mockIsAlarmKitAvailableAsync.mockResolvedValue(false);
+  const reminderAt = futureIso(20);
+  mockTasks = [
+    { id: 'task-1', title: 'Pay rent', status: 'ACTIVE' },
+    { id: 'task-2', title: 'Clean kitchen', status: 'ACTIVE' },
+  ];
+  mockReminders = [
+    {
+      id: 'reminder-1',
+      parent_task_id: 'task-1',
+      reminder_at: reminderAt,
+      source: 'DEFAULT_DEADLINE_1H',
+      notified_at: null,
+    },
+    {
+      id: 'reminder-2',
+      parent_task_id: 'task-2',
+      reminder_at: reminderAt,
+      source: 'DEFAULT_DEADLINE_1H',
+      notified_at: null,
+    },
+  ];
+
+  await syncLocalReminderNotificationsAsync('user-1');
+
+  const aggregateKey = `aggregate|DEFAULT_DEADLINE_1H|${reminderMinuteKey(reminderAt)}`;
+  expect(mockScheduleNotificationAsync).toHaveBeenCalledTimes(1);
+  expect(mockScheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
+    content: expect.objectContaining({
+      title: 'Task reminders',
+      body: '2 tasks need attention.',
+      data: expect.objectContaining({
+        aggregate: true,
+        taskIds: ['task-1', 'task-2'],
+        reminderIds: ['reminder-1', 'reminder-2'],
+        count: 2,
+        reminder_source: 'DEFAULT_DEADLINE_1H',
+        url: '/tasks',
+      }),
+    }),
+  }));
+  expect(await AsyncStorage.getItem(NOTIFICATION_MAP_KEY)).toBe(JSON.stringify({ [aggregateKey]: 'expo-notification-1' }));
+});
+
+test('aggregates DEFAULT_DEADLINE_DUE local reminders with final-call copy', async () => {
+  const reminderAt = futureIso(5);
+  mockTasks = [
+    { id: 'task-1', title: 'Pay rent', status: 'ACTIVE' },
+    { id: 'task-2', title: 'Clean kitchen', status: 'ACTIVE' },
+  ];
+  mockReminders = [
+    {
+      id: 'reminder-due-1',
+      parent_task_id: 'task-1',
+      reminder_at: reminderAt,
+      source: 'DEFAULT_DEADLINE_DUE',
+      notified_at: null,
+    },
+    {
+      id: 'reminder-due-2',
+      parent_task_id: 'task-2',
+      reminder_at: reminderAt,
+      source: 'DEFAULT_DEADLINE_DUE',
+      notified_at: null,
+    },
+  ];
+
+  await syncLocalReminderNotificationsAsync('user-1');
+
+  expect(mockScheduleNotificationAsync).toHaveBeenCalledTimes(1);
+  expect(mockScheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
+    content: expect.objectContaining({
+      title: 'Final call',
+      body: 'Last call for 2 tasks.',
+      data: expect.objectContaining({
+        aggregate: true,
+        kind: 'DEADLINE_FINAL_CALL',
+        url: '/tasks',
+      }),
+    }),
+  }));
+});
+
+test('aggregates manual local reminders when simultaneous', async () => {
+  const reminderAt = futureIso(15);
+  mockTasks = [
+    { id: 'task-1', title: 'Pay rent', status: 'ACTIVE' },
+    { id: 'task-2', title: 'Clean kitchen', status: 'ACTIVE' },
+  ];
+  mockReminders = [
+    {
+      id: 'manual-1',
+      parent_task_id: 'task-1',
+      reminder_at: reminderAt,
+      source: 'MANUAL',
+      notified_at: null,
+    },
+    {
+      id: 'manual-2',
+      parent_task_id: 'task-2',
+      reminder_at: reminderAt,
+      source: 'MANUAL',
+      notified_at: null,
+    },
+  ];
+
+  await syncLocalReminderNotificationsAsync('user-1');
+
+  expect(mockScheduleNotificationAsync).toHaveBeenCalledTimes(1);
+  expect(mockScheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
+    content: expect.objectContaining({
+      title: 'Task reminders',
+      body: '2 tasks need attention.',
+      data: expect.objectContaining({
+        aggregate: true,
+        reminder_source: 'MANUAL',
+        url: '/tasks',
+      }),
+    }),
+  }));
 });
 
 test('skips iOS 26 DEFAULT_DEADLINE_10M reminders when AlarmKit is denied', async () => {
@@ -197,6 +332,83 @@ test('reuses an existing valid AlarmKit mapping', async () => {
   expect(mockScheduleTenMinuteAlarmAsync).not.toHaveBeenCalled();
   expect(mockCancelTenMinuteAlarmAsync).not.toHaveBeenCalled();
   expect(await AsyncStorage.getItem(ALARMKIT_MAP_KEY)).toBe(JSON.stringify({ 'reminder-1': 'native-alarm-existing' }));
+});
+
+test('aggregates same-minute iOS 26 AlarmKit reminders', async () => {
+  mockIsAlarmKitAvailableAsync.mockResolvedValue(true);
+  mockGetAlarmAuthorizationStatusAsync.mockResolvedValue('authorized');
+  const reminderAt = futureIso(20);
+  mockTasks = [
+    { id: 'task-1', title: 'Pay rent', status: 'ACTIVE' },
+    { id: 'task-2', title: 'Clean kitchen', status: 'ACTIVE' },
+  ];
+  mockReminders = [
+    {
+      id: 'reminder-1',
+      parent_task_id: 'task-1',
+      reminder_at: reminderAt,
+      source: 'DEFAULT_DEADLINE_10M',
+      notified_at: null,
+    },
+    {
+      id: 'reminder-2',
+      parent_task_id: 'task-2',
+      reminder_at: reminderAt,
+      source: 'DEFAULT_DEADLINE_10M',
+      notified_at: null,
+    },
+  ];
+
+  await syncLocalReminderNotificationsAsync('user-1');
+
+  const aggregateKey = `aggregate|DEFAULT_DEADLINE_10M|${reminderMinuteKey(reminderAt)}`;
+  expect(mockScheduleTenMinuteAlarmAsync).toHaveBeenCalledTimes(1);
+  expect(mockScheduleTenMinuteAlarmAsync).toHaveBeenCalledWith({
+    reminderId: aggregateKey,
+    taskId: '',
+    taskTitle: '2 tasks need attention',
+    fireAtISO: reminderAt,
+    aggregate: true,
+    taskCount: 2,
+  });
+  expect(mockScheduleNotificationAsync).not.toHaveBeenCalled();
+  expect(await AsyncStorage.getItem(ALARMKIT_MAP_KEY)).toBe(JSON.stringify({ [aggregateKey]: 'native-alarm-1' }));
+});
+
+test('cancels old per-reminder schedules when replacing them with an aggregate notification', async () => {
+  mockIsAlarmKitAvailableAsync.mockResolvedValue(false);
+  const reminderAt = futureIso(20);
+  mockTasks = [
+    { id: 'task-1', title: 'Pay rent', status: 'ACTIVE' },
+    { id: 'task-2', title: 'Clean kitchen', status: 'ACTIVE' },
+  ];
+  mockReminders = [
+    {
+      id: 'reminder-1',
+      parent_task_id: 'task-1',
+      reminder_at: reminderAt,
+      source: 'DEFAULT_DEADLINE_1H',
+      notified_at: null,
+    },
+    {
+      id: 'reminder-2',
+      parent_task_id: 'task-2',
+      reminder_at: reminderAt,
+      source: 'DEFAULT_DEADLINE_1H',
+      notified_at: null,
+    },
+  ];
+  await AsyncStorage.setItem(NOTIFICATION_MAP_KEY, JSON.stringify({
+    'reminder-1': 'old-notification-1',
+    'reminder-2': 'old-notification-2',
+  }));
+
+  await syncLocalReminderNotificationsAsync('user-1');
+
+  const aggregateKey = `aggregate|DEFAULT_DEADLINE_1H|${reminderMinuteKey(reminderAt)}`;
+  expect(mockCancelScheduledNotificationAsync).toHaveBeenCalledWith('old-notification-1');
+  expect(mockCancelScheduledNotificationAsync).toHaveBeenCalledWith('old-notification-2');
+  expect(await AsyncStorage.getItem(NOTIFICATION_MAP_KEY)).toBe(JSON.stringify({ [aggregateKey]: 'expo-notification-1' }));
 });
 
 test('cancels stale AlarmKit mappings when reminders are no longer valid', async () => {
@@ -292,4 +504,21 @@ test('registers push tokens against the current user client instance', async () 
   expect(mockPushTokenDelete).toHaveBeenCalledTimes(1);
   expect(mockPushTokenDeleteEq).toHaveBeenCalledWith('user_id', 'user-1');
   expect(mockPushTokenDeleteIs).toHaveBeenCalledWith('user_client_instance_id', null);
+});
+
+test('reads aggregate notification URL for task-list routing', () => {
+  const response = {
+    notification: {
+      request: {
+        content: {
+          data: {
+            aggregate: true,
+            url: '/tasks',
+          },
+        },
+      },
+    },
+  } as any;
+
+  expect(getUrlFromNotificationResponse(response)).toBe('/tasks');
 });

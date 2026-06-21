@@ -17,6 +17,7 @@ import { ThemeProvider, useTheme } from '@/lib/ThemeContext';
 import {
   clearLocalReminderNotificationsAsync,
   getTaskIdFromNotificationResponse,
+  getUrlFromNotificationResponse,
   registerForPushNotificationsAsync,
   syncLocalReminderNotificationsAsync,
 } from '@/lib/notifications';
@@ -176,6 +177,13 @@ function AuthGuard() {
       return;
     }
 
+    const targetUrl = getUrlFromNotificationResponse(response);
+    if (targetUrl === '/tasks') {
+      lastHandledNotificationId.current = notificationId;
+      router.push('/(app)/tasks');
+      return;
+    }
+
     const taskId = getTaskIdFromNotificationResponse(response);
     if (!taskId) return;
 
@@ -186,19 +194,26 @@ function AuthGuard() {
   const routeFromAlarmKitOpenTask = useCallback((
     payload: AlarmKit.OpenTaskAlarmAction | null | undefined,
   ) => {
+    const isAggregate = payload?.aggregate === true;
     const taskId = typeof payload?.taskId === 'string' ? payload.taskId.trim() : '';
-    if (!taskId) return;
+    if (!isAggregate && !taskId) return;
 
     const actionId =
       (typeof payload?.nativeAlarmId === 'string' && payload.nativeAlarmId.trim())
       || (typeof payload?.reminderId === 'string' && payload.reminderId.trim())
-      || taskId;
+      || taskId
+      || 'aggregate';
 
     if (lastHandledAlarmKitActionId.current === actionId) {
       return;
     }
 
     lastHandledAlarmKitActionId.current = actionId;
+    if (isAggregate) {
+      router.push('/(app)/tasks');
+      return;
+    }
+
     router.push(`/(app)/tasks/${taskId}`);
   }, [router]);
 
@@ -207,6 +222,22 @@ function AuthGuard() {
 
     const parsed = Linking.parse(url);
     const path = typeof parsed.path === 'string' ? parsed.path : '';
+    if (path === 'tasks') {
+      const alarmId = typeof parsed.queryParams?.alarmId === 'string'
+        ? parsed.queryParams.alarmId
+        : '';
+      const reminderId = typeof parsed.queryParams?.alarmReminderId === 'string'
+        ? parsed.queryParams.alarmReminderId
+        : '';
+      routeFromAlarmKitOpenTask({
+        taskId: '',
+        reminderId,
+        nativeAlarmId: alarmId,
+        aggregate: true,
+      });
+      return;
+    }
+
     const match = path.match(/^tasks\/([^/?#]+)/);
     if (!match?.[1]) return;
 

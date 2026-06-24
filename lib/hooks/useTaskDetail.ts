@@ -142,6 +142,7 @@ export function useTaskDetail(taskId: string | null | undefined) {
       return false;
     },
   });
+  const recurrenceRuleId = query.data?.task?.recurrence_rule_id ?? null;
 
   const subscriptions = useMemo(
     () => queryTaskId
@@ -151,9 +152,12 @@ export function useTaskDetail(taskId: string | null | undefined) {
           { table: 'task_events', filter: `task_id=eq.${queryTaskId}` },
           { table: 'task_completion_proofs', filter: `task_id=eq.${queryTaskId}` },
           { table: 'pomo_sessions', filter: `task_id=eq.${queryTaskId}` },
+          ...(recurrenceRuleId
+            ? [{ table: 'recurrence_rules', filter: `id=eq.${recurrenceRuleId}` }]
+            : []),
         ]
       : [],
-    [queryTaskId],
+    [queryTaskId, recurrenceRuleId],
   );
 
   useRealtimeInvalidation({

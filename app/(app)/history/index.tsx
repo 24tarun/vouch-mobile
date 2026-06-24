@@ -141,6 +141,12 @@ export default function HistoryScreen() {
             {task.title}
           </Text>
           <View style={styles.searchResultMeta}>
+            {task.recurrence_rule_id ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 1 }}>
+                <Feather name="repeat" size={15} color="#C084FC" />
+                {task.recurrence_paused_at ? <Feather name="pause" size={14} color="#C084FC" /> : null}
+              </View>
+            ) : null}
             {task.status ? <StatusPill status={task.status} /> : null}
             <Feather name="external-link" size={14} color={colors.textMuted} />
           </View>

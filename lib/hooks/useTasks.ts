@@ -29,6 +29,7 @@ type RawTask = {
   updated_at?: string;
   postponed_at?: string | null;
   recurrence_rule_id?: string | null;
+  recurrence_rule?: { paused_at?: string | null } | null;
 };
 
 type TaskRealtimePayload = {
@@ -84,6 +85,7 @@ function toPastRowData(row: RawTask): TaskRowData {
     requires_proof: Boolean(row.requires_proof),
     postponed_at: row.postponed_at ?? null,
     recurrence_rule_id: row.recurrence_rule_id ?? null,
+    recurrence_paused_at: row.recurrence_rule?.paused_at ?? null,
   };
 }
 
@@ -113,13 +115,13 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
   const [activeRes, pastRes] = await Promise.all([
     supabase
       .from('tasks')
-      .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id')
+      .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id, recurrence_rule:recurrence_rules(paused_at)')
       .eq('user_id', userId)
       .in('status', TASK_ACTIVE_STATUSES)
       .order('deadline', { ascending: true }),
     supabase
       .from('tasks')
-      .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id')
+      .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id, recurrence_rule:recurrence_rules(paused_at)')
       .eq('user_id', userId)
       .in('status', TASK_PAST_STATUSES)
       .order('updated_at', { ascending: false })
@@ -162,6 +164,7 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
       requires_proof: Boolean(row.requires_proof),
       postponed_at: row.postponed_at ?? null,
       recurrence_rule_id: row.recurrence_rule_id ?? null,
+      recurrence_paused_at: row.recurrence_rule?.paused_at ?? null,
       subtasks: subs,
       subtaskTotal: subs?.length,
       subtaskCompleted: subs?.filter((s) => s.is_completed).length,
@@ -224,7 +227,7 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
     try {
       const { data, error } = await supabase
         .from('tasks')
-        .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id')
+        .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id, recurrence_rule:recurrence_rules(paused_at)')
         .eq('user_id', user.id)
         .in('status', TASK_PAST_STATUSES)
         .order('updated_at', { ascending: false })
@@ -261,6 +264,7 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
       ? [
           { table: 'tasks', filter: `user_id=eq.${user.id}` },
           { table: 'task_subtasks', filter: `user_id=eq.${user.id}` },
+          { table: 'recurrence_rules', filter: `user_id=eq.${user.id}` },
         ]
       : [],
     [user?.id],
@@ -309,6 +313,7 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
         const requiresProof = Boolean(row.requires_proof ?? existing?.requires_proof);
         const postponedAt = row.postponed_at ?? existing?.postponed_at ?? null;
         const recurrenceRuleId = row.recurrence_rule_id ?? existing?.recurrence_rule_id ?? null;
+        const recurrencePausedAt = existing?.recurrence_paused_at ?? null;
         const createdAt = row.created_at ?? existing?.created_at;
 
         if (!deadline || !title) {
@@ -325,6 +330,7 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
             requires_proof: requiresProof,
             postponed_at: postponedAt,
             recurrence_rule_id: recurrenceRuleId,
+            recurrence_paused_at: recurrencePausedAt,
             created_at: createdAt,
             subtaskTotal: existing?.subtaskTotal,
             subtaskCompleted: existing?.subtaskCompleted,
@@ -358,6 +364,7 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
             requires_proof: requiresProof,
             postponed_at: postponedAt,
             recurrence_rule_id: recurrenceRuleId,
+            recurrence_paused_at: recurrencePausedAt,
           };
 
           return {

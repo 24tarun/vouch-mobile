@@ -29,18 +29,19 @@ import Toast from 'react-native-toast-message';
 import { DEFAULT_REMINDER_OFFSET_MS, normalizePomoDurationMinutes } from '@/lib/constants/timings';
 import { supabase } from '@/lib/supabase';
 import { purgeTaskProofForFinalState, queueAiEvalForTask, removeTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
-import { completeTask, stopTaskRepetitions, undoCompleteTask, deleteTask, postponeTaskDeadline, isTaskWithinDeleteWindow } from '@/lib/tasks/task-actions';
+import { completeTask, setTaskRepetitionsPaused, stopTaskRepetitions, undoCompleteTask, deleteTask, postponeTaskDeadline, isTaskWithinDeleteWindow } from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import { StatusPill } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
-import type { RecurrenceRule, Task, TaskEvent, TaskReminder } from '@/lib/types';
+import type { RecurrenceRule, Task, TaskReminder } from '@/lib/types';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { AI_PROFILE_ID, AI_PROFILE_USERNAME } from '@/lib/constants/ai-profile';
 import { useAuth } from '@/hooks/useAuth';
 import { useTaskDetail } from '@/lib/hooks/useTaskDetail';
 import { queryKeys } from '@/lib/query/keys';
+import { getLatestAiDenialReason } from '@/lib/tasks/ai-denial';
 import { isOptimisticTaskId } from '@/lib/tasks/task-id';
 import { getDefaultDeadline } from '@/lib/task-title-parser';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
@@ -56,6 +57,7 @@ const BTN = {
   complete:      { bg: '#22C55E1A', border: '#22C55E59', text: '#22C55E' },
   pomo:          { bg: '#22D3EE1A', border: '#22D3EE4D', text: '#22D3EE' },
   proof:         { bg: '#F472B61A', border: '#F472B659', text: '#F472B6' },
+  pauseRepeating:{ bg: '#C084FC1A', border: '#C084FC59', text: '#C084FC' },
   stopRepeating: { bg: '#C084FC1A', border: '#C084FC59', text: '#C084FC' },
   override:      { bg: '#A21CAF33', border: '#A21CAFB3', text: '#F0ABFC' },
   reminders:     { bg: '#FBBF2426', border: '#FBBF2459', text: '#FBBF24' },
@@ -83,13 +85,6 @@ function formatFullDeadline(iso: string): string {
   const dayName = d.toLocaleDateString('en-GB', { weekday: 'long' });
   const month = d.toLocaleDateString('en-GB', { month: 'long' });
   return `${dayName} ${getOrdinal(d.getDate())} ${month} · ${time}`;
-}
-
-function getEventReason(event: TaskEvent): string | null {
-  const rawReason = event.metadata?.reason;
-  if (typeof rawReason !== 'string') return null;
-  const trimmed = rawReason.trim();
-  return trimmed.length > 0 ? trimmed : null;
 }
 
 function formatFocusedTime(totalSeconds: number): string {
@@ -370,6 +365,7 @@ export default function TaskDetailScreen() {
   const [proofRemoving, setProofRemoving] = useState(false);
   const [isOverriding, setIsOverriding] = useState(false);
   const [isUndoingComplete, setIsUndoingComplete] = useState(false);
+  const [isTogglingRepetitions, setIsTogglingRepetitions] = useState(false);
   const [isStoppingRepetitions, setIsStoppingRepetitions] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
@@ -399,7 +395,7 @@ export default function TaskDetailScreen() {
   }
   const [escalationPickerOpen, setEscalationPickerOpen] = useState(false);
   const [escalationFriendsLoading, setEscalationFriendsLoading] = useState(false);
-  const [escalationFriends, setEscalationFriends] = useState<Array<{ id: string; username: string; email: string }>>([]);
+  const [escalationFriends, setEscalationFriends] = useState<{ id: string; username: string; email: string }[]>([]);
   const {
     session: activePomoSession,
     isLoading: pomoLoading,
@@ -414,6 +410,7 @@ export default function TaskDetailScreen() {
   const reminders = detail.data?.reminders ?? [];
   const events = detail.data?.events ?? [];
   const totalFocusedSeconds = detail.data?.totalFocusedSeconds ?? 0;
+  const aiVouches = detail.data?.aiVouches ?? [];
   const proof = detail.data?.proof ?? null;
   const hasUploadedProof = Boolean(proof);
   const recurrenceRule = detail.data?.recurrenceRule ?? null;
@@ -465,6 +462,65 @@ export default function TaskDetailScreen() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.ledger(user.id) });
   }
 
+  async function submitAiReviewForCurrentTask(options?: {
+    requireUploadedProof?: boolean;
+    successMessage?: string;
+  }): Promise<boolean> {
+    if (!task || !user?.id || isSubmittingAiReview) return false;
+    if (task.user_id !== user.id || task.status !== 'AWAITING_USER' || task.voucher_id !== AI_PROFILE_ID) {
+      Alert.alert('Cannot submit', 'Task is no longer awaiting AI appeal submission.');
+      return false;
+    }
+    if ((options?.requireUploadedProof ?? true) && !hasUploadedProof) {
+      Alert.alert('Missing proof', 'Upload proof before submitting to AI.');
+      return false;
+    }
+
+    setIsSubmittingAiReview(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const { data: updatedRows, error: statusUpdateError } = await supabase
+        .from('tasks')
+        .update({
+          status: 'AWAITING_AI',
+          updated_at: nowIso,
+        } as any)
+        .eq('id', task.id)
+        .eq('user_id', user.id)
+        .eq('status', 'AWAITING_USER')
+        .eq('voucher_id', AI_PROFILE_ID)
+        .select('id');
+
+      if (statusUpdateError) {
+        Alert.alert('Could not submit', statusUpdateError.message);
+        return false;
+      }
+      if (!updatedRows || updatedRows.length === 0) {
+        Alert.alert('Could not submit', 'Task changed before submission.');
+        return false;
+      }
+
+      const queueResult = await queueAiEvalForTask(task.id);
+      if (!queueResult.success) {
+        Alert.alert('Submission failed', queueResult.error);
+        return false;
+      }
+
+      await Promise.resolve(detail.refetch());
+      invalidateDerivedTaskViews();
+      Toast.show({
+        type: 'proofSuccess',
+        text1: options?.successMessage ?? 'Submitted to AI',
+        position: 'bottom',
+        bottomOffset: 84,
+        visibilityTime: 2200,
+      });
+      return true;
+    } finally {
+      setIsSubmittingAiReview(false);
+    }
+  }
+
   async function uploadSelectedProof(asset: ImagePickerAsset) {
     if (!task || proofUploadLockRef.current) return;
 
@@ -511,14 +567,22 @@ export default function TaskDetailScreen() {
         await Promise.resolve(detail.refetch());
       }
       if (shouldQueueAiAfterUpload) {
-        Toast.show({
-          type: 'proofSuccess',
-          text1: 'Proof uploaded',
-          text2: 'Tap Submit to send this to AI review.',
-          position: 'bottom',
-          bottomOffset: 84,
-          visibilityTime: 2600,
-        });
+        if (autoSubmitAfterProofUpload) {
+          const submitted = await submitAiReviewForCurrentTask({
+            requireUploadedProof: false,
+            successMessage: 'Proof uploaded. Submitted to AI',
+          });
+          if (!submitted) return;
+        } else {
+          Toast.show({
+            type: 'proofSuccess',
+            text1: 'Proof uploaded',
+            text2: 'Tap Submit to send this to AI review.',
+            position: 'bottom',
+            bottomOffset: 84,
+            visibilityTime: 2600,
+          });
+        }
       }
       invalidateDerivedTaskViews();
       if (isReplacingProof) {
@@ -667,33 +731,39 @@ export default function TaskDetailScreen() {
         Alert.alert('Cannot escalate', 'Please choose a friend.');
         return;
       }
-      if (!hasUploadedProof) {
-        Alert.alert('Missing proof', 'Upload proof before escalating to a friend.');
+      const { data: friendship, error: friendshipError } = await (supabase.from('friendships') as any)
+        .select('friend_id')
+        .eq('user_id', user.id)
+        .eq('friend_id', friendId)
+        .maybeSingle();
+      if (friendshipError) {
+        Alert.alert('Cannot escalate', friendshipError.message);
         return;
       }
-
+      if (!friendship) {
+        Alert.alert('Cannot escalate', 'Please choose one of your friends.');
+        return;
+      }
       const nowIso = new Date().toISOString();
       const actorUserClientInstanceId = await resolveUserClientInstanceId(user.id);
 
-      const { data: reassignedProofRows, error: reassignProofError } = await supabase
-        .from('task_completion_proofs')
-        .update({
-          voucher_id: friendId,
-          updated_at: nowIso,
-        } as any)
-        .eq('task_id', task.id)
-        .eq('owner_id', user.id)
-        .eq('upload_state', 'UPLOADED')
-        .not('object_path', 'is', null)
-        .select('id');
+      if (hasUploadedProof) {
+        const { error: reassignProofError } = await supabase
+          .from('task_completion_proofs')
+          .update({
+            voucher_id: friendId,
+            updated_at: nowIso,
+          } as any)
+          .eq('task_id', task.id)
+          .eq('owner_id', user.id)
+          .eq('upload_state', 'UPLOADED')
+          .not('object_path', 'is', null)
+          .select('id');
 
-      if (reassignProofError) {
-        Alert.alert('Escalation failed', `Could not attach proof for the selected friend: ${reassignProofError.message}`);
-        return;
-      }
-      if (!reassignedProofRows || reassignedProofRows.length === 0) {
-        Alert.alert('Escalation failed', 'No uploaded proof was found to send to your friend.');
-        return;
+        if (reassignProofError) {
+          Alert.alert('Escalation failed', `Could not attach proof for the selected friend: ${reassignProofError.message}`);
+          return;
+        }
       }
 
       const { data: updatedRows, error: updateError } = await supabase
@@ -825,58 +895,7 @@ export default function TaskDetailScreen() {
   }
 
   async function handleSubmitAiReview() {
-    if (!task || !user?.id || isSubmittingAiReview) return;
-    if (task.user_id !== user.id || task.status !== 'AWAITING_USER' || task.voucher_id !== AI_PROFILE_ID) {
-      Alert.alert('Cannot submit', 'Task is no longer awaiting AI appeal submission.');
-      return;
-    }
-    if (!hasUploadedProof) {
-      Alert.alert('Missing proof', 'Upload proof before submitting to AI.');
-      return;
-    }
-
-    setIsSubmittingAiReview(true);
-    try {
-      const nowIso = new Date().toISOString();
-      const { data: updatedRows, error: statusUpdateError } = await supabase
-        .from('tasks')
-        .update({
-          status: 'AWAITING_AI',
-          updated_at: nowIso,
-        } as any)
-        .eq('id', task.id)
-        .eq('user_id', user.id)
-        .eq('status', 'AWAITING_USER')
-        .eq('voucher_id', AI_PROFILE_ID)
-        .select('id');
-
-      if (statusUpdateError) {
-        Alert.alert('Could not submit', statusUpdateError.message);
-        return;
-      }
-      if (!updatedRows || updatedRows.length === 0) {
-        Alert.alert('Could not submit', 'Task changed before submission.');
-        return;
-      }
-
-      const queueResult = await queueAiEvalForTask(task.id);
-      if (!queueResult.success) {
-        Alert.alert('Submission failed', queueResult.error);
-        return;
-      }
-
-      await Promise.resolve(detail.refetch());
-      invalidateDerivedTaskViews();
-      Toast.show({
-        type: 'proofSuccess',
-        text1: 'Submitted to AI',
-        position: 'bottom',
-        bottomOffset: 84,
-        visibilityTime: 2200,
-      });
-    } finally {
-      setIsSubmittingAiReview(false);
-    }
+    await submitAiReviewForCurrentTask({ requireUploadedProof: true });
   }
 
   // ── Override ───────────────────────────────────────────────────────────────
@@ -1063,6 +1082,7 @@ export default function TaskDetailScreen() {
         Alert.alert('Could not complete task', result.error ?? 'Unknown error');
         return;
       }
+      if (result.userId) void syncLocalReminderNotificationsAsync(result.userId);
       await Promise.resolve(detail.refetch());
       invalidateDerivedTaskViews();
     } finally {
@@ -1108,6 +1128,46 @@ export default function TaskDetailScreen() {
       invalidateDerivedTaskViews();
     } finally {
       setIsStoppingRepetitions(false);
+    }
+  }
+
+  async function handleToggleRepetitionsPaused() {
+    if (!task || !recurrenceRule || isTogglingRepetitions) return;
+
+    const nextPaused = !Boolean(recurrenceRule.paused_at);
+    const optimisticPausedAt = nextPaused ? new Date().toISOString() : null;
+    const previousDetail = queryClient.getQueryData(queryKeys.taskDetail(routeTaskId));
+
+    setIsTogglingRepetitions(true);
+    queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
+      ...previous,
+      recurrenceRule: previous.recurrenceRule
+        ? { ...previous.recurrenceRule, paused_at: optimisticPausedAt }
+        : previous.recurrenceRule,
+    } : previous);
+
+    try {
+      const result = await setTaskRepetitionsPaused(task.id, nextPaused);
+      if (!result.success) {
+        queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), previousDetail);
+        Alert.alert(
+          nextPaused ? 'Could not pause repetitions' : 'Could not resume repetitions',
+          result.error ?? 'Please try again.',
+        );
+        return;
+      }
+
+      invalidateDerivedTaskViews();
+      await Promise.resolve(detail.refetch());
+      Toast.show({
+        type: 'proofSuccess',
+        text1: nextPaused ? 'Repetitions paused' : 'Repetitions resumed',
+        position: 'bottom',
+        bottomOffset: 84,
+        visibilityTime: 2200,
+      });
+    } finally {
+      setIsTogglingRepetitions(false);
     }
   }
 
@@ -1164,6 +1224,7 @@ export default function TaskDetailScreen() {
         Alert.alert('Could not delete task', result.error ?? 'Unknown error');
         return;
       }
+      if (result.userId) void syncLocalReminderNotificationsAsync(result.userId);
       invalidateDerivedTaskViews();
       router.back();
     } finally {
@@ -1375,20 +1436,13 @@ export default function TaskDetailScreen() {
   const aiResubmitCount = Number(task.resubmit_count ?? 0);
   const canResubmitAi = isAwaitingUserAi && aiResubmitCount < MAX_AI_RESUBMITS && !proofUploading;
   const canSubmitAiReview = isAwaitingUserAi && hasUploadedProof && !isSubmittingAiReview;
-  const canEscalateAiToFriend = isAwaitingUserAi && hasUploadedProof && !isEscalating;
-  const latestAiDenialReason = (() => {
-    const aiDenials = events.filter((event) => event.event_type === 'AI_DENIED');
-    for (let i = aiDenials.length - 1; i >= 0; i -= 1) {
-      const reason = getEventReason(aiDenials[i]);
-      if (reason) return reason;
-    }
-    return null;
-  })();
+  const canEscalateAiToFriend = isAwaitingUserAi && !isEscalating;
+  const latestAiDenialReason = getLatestAiDenialReason(aiVouches, events);
 
   const canPomo          = isOwnTask && isActiveOrPostponed;
   const canComplete      = isOwnTask && isActiveOrPostponed && !isCompleting;
   const canProof         = isOwnTask && (isActiveOrPostponed || s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI' || s === 'MARKED_COMPLETE');
-  const canStopRepeating = isOwnTask && isActiveOrPostponed && !!task.recurrence_rule_id;
+  const canManageRepetitions = isOwnTask && !!task.recurrence_rule_id && !!recurrenceRule;
   const canOverride      = isOwnTask && isMissedOrDenied && !isOverriding;
   const canUndoComplete  = isOwnTask && (s === 'MARKED_COMPLETE' || s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI') && !isUndoingComplete;
   const canPostpone      = isOwnTask && s === 'ACTIVE' && !task.postponed_at && !isPostponing;
@@ -1398,6 +1452,7 @@ export default function TaskDetailScreen() {
   const isCurrentTaskPomo = activePomoSession?.task_id === task.id;
   const currentTaskPomoStatus = isCurrentTaskPomo ? activePomoSession?.status : null;
   const recurrenceSummary = buildRecurrenceSummary(task, recurrenceRule);
+  const isRepetitionPaused = Boolean(recurrenceRule?.paused_at);
 
   const handlePomoPress = () => {
     if (isCurrentTaskPomo) {
@@ -1435,7 +1490,12 @@ export default function TaskDetailScreen() {
         {recurrenceSummary ? (
           <View style={styles.recurrenceSummaryRow}>
             <Feather name="repeat" size={16} color="#C084FC" style={styles.recurrenceSummaryIconInline} />
-            <Text style={styles.recurrenceSummaryText}>{recurrenceSummary}</Text>
+            {isRepetitionPaused ? (
+              <Feather name="pause" size={15} color="#C084FC" style={styles.recurrencePausedIconInline} />
+            ) : null}
+            <Text style={styles.recurrenceSummaryText}>
+              {recurrenceSummary}{isRepetitionPaused ? ' · Repetitions paused' : ''}
+            </Text>
           </View>
         ) : null}
 
@@ -1572,11 +1632,7 @@ export default function TaskDetailScreen() {
                   label={isEscalating ? 'Escalating…' : 'Escalate to Friend'}
                   icon="users"
                   onPress={() => { void loadEscalationFriends(); }}
-                  onDeny={() => {
-                    if (!hasUploadedProof) {
-                      Alert.alert('Missing proof', 'Upload proof first, then you can escalate to a friend.');
-                    }
-                  }}
+                  onDeny={() => {}}
                   containerStyle={{ flex: 1 }}
                 />
               </View>
@@ -1698,31 +1754,42 @@ export default function TaskDetailScreen() {
             </View>
           )}
 
-          {/* Stop repetitions + Override row — only rendered when at least one is available */}
-          {(canStopRepeating || canOverride) && (
+          {/* Repetition controls remain available from active and historical iterations. */}
+          {canManageRepetitions && (
             <View style={styles.pomoCameraRow}>
-              {canStopRepeating && (
-                <ActionBtn
-                  allowed
-                  token={BTN.stopRepeating}
-                  label={isStoppingRepetitions ? 'Stopping…' : 'Stop repetitions'}
-                  icon="repeat"
-                  onPress={() => { void handleStopRepetitions(); }}
-                  onDeny={() => {}}
-                  containerStyle={{ flex: 1 }}
-                />
-              )}
-              {canOverride && (
-                <ActionBtn
-                  allowed
-                  token={BTN.override}
-                  label={isOverriding ? 'Overriding…' : 'Override'}
-                  icon="zap"
-                  onPress={() => { void handleOverride(); }}
-                  onDeny={() => {}}
-                  containerStyle={{ flex: 1 }}
-                />
-              )}
+              <ActionBtn
+                allowed={!isTogglingRepetitions && !isStoppingRepetitions}
+                token={BTN.pauseRepeating}
+                label={isTogglingRepetitions
+                  ? (isRepetitionPaused ? 'Pausing…' : 'Resuming…')
+                  : (isRepetitionPaused ? 'Resume' : 'Pause')}
+                icon={isRepetitionPaused ? 'play' : 'pause'}
+                onPress={() => { void handleToggleRepetitionsPaused(); }}
+                onDeny={() => {}}
+                containerStyle={{ flex: 1 }}
+              />
+              <ActionBtn
+                allowed={!isStoppingRepetitions && !isTogglingRepetitions}
+                token={BTN.stopRepeating}
+                label={isStoppingRepetitions ? 'Stopping…' : 'Stop'}
+                icon="repeat"
+                onPress={() => { void handleStopRepetitions(); }}
+                onDeny={() => {}}
+                containerStyle={{ flex: 1 }}
+              />
+            </View>
+          )}
+          {canOverride && (
+            <View style={styles.pomoCameraRow}>
+              <ActionBtn
+                allowed
+                token={BTN.override}
+                label={isOverriding ? 'Overriding…' : 'Override'}
+                icon="zap"
+                onPress={() => { void handleOverride(); }}
+                onDeny={() => {}}
+                containerStyle={{ flex: 1 }}
+              />
             </View>
           )}
 
@@ -2018,7 +2085,7 @@ export default function TaskDetailScreen() {
         ) : null}
 
         {/* Event timeline */}
-        <TaskTimeline task={task} events={events} aiVouches={detail.data?.aiVouches ?? []} />
+        <TaskTimeline task={task} events={events} aiVouches={aiVouches} reminders={reminders} />
 
       </ScrollView>
 
@@ -2239,6 +2306,7 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   iterationInline: { color: '#C084FC' },
   recurrenceSummaryRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: spacing.xs },
   recurrenceSummaryIconInline: { marginRight: spacing.xs, transform: [{ translateY: 1 }] },
+  recurrencePausedIconInline: { marginRight: spacing.xs, marginLeft: -4, transform: [{ translateY: 1 }] },
   recurrenceSummaryText: { fontSize: typography.sm, color: '#C084FC', fontWeight: typography.semibold, letterSpacing: 0.2, lineHeight: 19, flex: 1 },
   infoBlock: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, overflow: 'hidden' },
   infoRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: 13, gap: spacing.sm },

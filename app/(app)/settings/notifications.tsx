@@ -319,7 +319,6 @@ export default function SettingsNotificationsScreen() {
               <View style={styles.toggleRow}>
                 <View style={styles.toggleTextWrap}>
                   <Text style={styles.toggleTitle}>Final call at deadline</Text>
-                  <Text style={styles.toggleSub}>Last chance to mark a task complete before it is missed.</Text>
                 </View>
                 <View style={styles.toggleSwitchWrap}>
                   <Switch

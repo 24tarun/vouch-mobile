@@ -284,6 +284,7 @@ export interface RecurrenceRule {
   manual_reminder_offsets_ms: number[] | null;
   last_generated_date: string | null; // YYYY-MM-DD
   latest_iteration: number;
+  paused_at?: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { StatusPill, STATUS_COLOR } from '@/components/StatusPill';
-import type { AiVouch, Task, TaskEvent } from '@/lib/types';
+import type { AiVouch, Task, TaskEvent, TaskReminder } from '@/lib/types';
 import { type Colors, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 
@@ -24,9 +24,14 @@ const EVENT_LABEL: Record<string, string> = {
   DEADLINE_WARNING_1H: '1h left',
   DEADLINE_WARNING_5M: '5m left',
   DEADLINE_WARNING_10M: '10m left',
+  DEADLINE_WARNING_DUE: 'Final call reminder sent',
   GOOGLE_EVENT_CANCELLED: 'Google event cancelled',
   POSTPONE: 'Postponed',
+  REPETITION_STOPPED: 'Repetitions stopped',
+  REPETITION_PAUSED: 'Repetitions paused',
+  REPETITION_RESUMED: 'Repetitions resumed',
   AI_APPROVE: 'AI accepted',
+  AI_DENY: 'AI denied',
   AI_DENIED: 'AI denied',
   AI_DENIED_AUTO_HOP: 'Moved to awaiting user',
   ESCALATE: 'Escalated',
@@ -90,7 +95,7 @@ function resolveAiDecisionDetail(
   if (fromEvent) return fromEvent;
 
   const targetDecision =
-    event.event_type === 'AI_DENIED' ? 'denied' :
+    (event.event_type === 'AI_DENY' || event.event_type === 'AI_DENIED') ? 'denied' :
     (event.event_type === 'VOUCHER_ACCEPT' || event.event_type === 'AI_APPROVE') ? 'approved' : null;
   if (!targetDecision) return null;
 
@@ -130,6 +135,7 @@ function getEventSortPriority(event: TaskEvent): number {
       return 10;
     case 'PROOF_UPLOADED':
       return 20;
+    case 'AI_DENY':
     case 'AI_DENIED':
       return 30;
     case 'AI_DENIED_AUTO_HOP':
@@ -154,7 +160,7 @@ function compareTimelineEvents(a: TaskEvent, b: TaskEvent): number {
   return a.id.localeCompare(b.id);
 }
 
-function getTimelineTone(event: TaskEvent): 'SUCCESS' | 'DANGER' | 'WARNING' | 'INFO' | 'PROOF' | 'NEUTRAL' {
+function getTimelineTone(event: TaskEvent): 'SUCCESS' | 'DANGER' | 'WARNING' | 'INFO' | 'PROOF' | 'REPETITION' | 'NEUTRAL' {
   switch (event.event_type) {
     case 'MARK_COMPLETE':
     case 'VOUCHER_ACCEPT':
@@ -162,6 +168,7 @@ function getTimelineTone(event: TaskEvent): 'SUCCESS' | 'DANGER' | 'WARNING' | '
     case 'POMO_COMPLETED':
       return 'SUCCESS';
     case 'VOUCHER_DENY':
+    case 'AI_DENY':
     case 'AI_DENIED':
     case 'AI_DENIED_AUTO_HOP':
     case 'DEADLINE_MISSED':
@@ -171,12 +178,17 @@ function getTimelineTone(event: TaskEvent): 'SUCCESS' | 'DANGER' | 'WARNING' | '
     case 'DEADLINE_WARNING_1H':
     case 'DEADLINE_WARNING_10M':
     case 'DEADLINE_WARNING_5M':
+    case 'DEADLINE_WARNING_DUE':
     case 'VOUCHER_TIMEOUT':
     case 'PROOF_REQUESTED':
       return 'WARNING';
     case 'PROOF_UPLOADED':
     case 'PROOF_REMOVED':
       return 'PROOF';
+    case 'REPETITION_STOPPED':
+    case 'REPETITION_PAUSED':
+    case 'REPETITION_RESUMED':
+      return 'REPETITION';
     case 'ACTIVE':
     case 'UNDO_COMPLETE':
     case 'RECTIFY':
@@ -207,6 +219,8 @@ function getReminderTimelineLabel(eventType: string): string | null {
       return '10m Reminder Sent';
     case 'DEADLINE_WARNING_5M':
       return '5m Reminder Sent';
+    case 'DEADLINE_WARNING_DUE':
+      return 'Final Call Reminder Sent';
     default:
       return null;
   }
@@ -259,6 +273,7 @@ function buildTimelineEntries(event: TaskEvent, aiVouches: AiVouch[], usedAiVouc
     }
     case 'VOUCHER_DENY':
       return statusTransition;
+    case 'AI_DENY':
     case 'AI_DENIED':
       return [
         makeTimelineEntry(event, 'action', {
@@ -319,15 +334,33 @@ type TaskTimelineProps = {
   task: Task;
   events: TaskEvent[];
   aiVouches?: AiVouch[];
+  reminders?: TaskReminder[];
+  referenceNowMs?: number;
 };
 
-export function TaskTimeline({ task, events, aiVouches = [] }: TaskTimelineProps) {
+export function TaskTimeline({
+  task,
+  events,
+  aiVouches = [],
+  reminders = [],
+  referenceNowMs,
+}: TaskTimelineProps) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (referenceNowMs !== undefined) return;
+    const timer = setInterval(() => setCurrentTimeMs(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, [referenceNowMs]);
+
+  const timelineNowMs = referenceNowMs ?? currentTimeMs;
 
   const timelineEntries = useMemo(() => {
     const hasActiveEvent = events.some((e) => e.event_type === 'ACTIVE');
     const hasMarkCompleteEvent = events.some((e) => e.event_type === 'MARK_COMPLETE');
+    const hasFinalCallEvent = events.some((e) => e.event_type === 'DEADLINE_WARNING_DUE');
     const synthetic: TaskEvent[] = [];
 
     if (!hasActiveEvent) {
@@ -356,10 +389,36 @@ export function TaskTimeline({ task, events, aiVouches = [] }: TaskTimelineProps
       });
     }
 
+    if (!hasFinalCallEvent) {
+      const dueReminder = reminders.find((reminder) => {
+        if (reminder.source !== 'DEFAULT_DEADLINE_DUE') return false;
+        const reminderMs = new Date(reminder.reminder_at).getTime();
+        return Number.isFinite(reminderMs) && reminderMs <= timelineNowMs;
+      });
+
+      if (dueReminder) {
+        synthetic.push({
+          id: `reminder:${dueReminder.id}:deadline-warning-due`,
+          task_id: dueReminder.parent_task_id,
+          event_type: 'DEADLINE_WARNING_DUE',
+          actor_id: null,
+          from_status: 'ACTIVE',
+          to_status: 'ACTIVE',
+          metadata: {
+            reminder_id: dueReminder.id,
+            reminder_at: dueReminder.reminder_at,
+            source: dueReminder.source,
+            synthetic_from_reminder: true,
+          },
+          created_at: dueReminder.reminder_at,
+        });
+      }
+    }
+
     const displayEvents = [...synthetic, ...events].sort(compareTimelineEvents);
     const usedAiVouchIds = new Set<string>();
     return displayEvents.flatMap((event) => buildTimelineEntries(event, aiVouches, usedAiVouchIds));
-  }, [aiVouches, events, task.created_at, task.id, task.marked_completed_at]);
+  }, [aiVouches, events, reminders, task.created_at, task.id, task.marked_completed_at, timelineNowMs]);
 
   if (timelineEntries.length === 0) return null;
 

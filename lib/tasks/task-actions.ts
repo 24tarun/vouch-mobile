@@ -13,6 +13,9 @@ interface TaskMutationResult {
   userId?: string;
   error?: string;
   warningMessage?: string;
+  recurrenceRuleId?: string;
+  pausedAt?: string | null;
+  stateChanged?: boolean;
 }
 
 const DEADLINE_INCLUSIVE_MINUTE_MS = 60 * 1000;
@@ -344,6 +347,29 @@ export async function stopTaskRepetitions(taskId: string): Promise<TaskMutationR
   if (stopEventError) console.warn('[task-actions] REPETITION_STOPPED event insert failed:', stopEventError.message);
 
   return { success: true, userId };
+}
+
+export async function setTaskRepetitionsPaused(taskId: string, paused: boolean): Promise<TaskMutationResult> {
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { success: false, error: 'Please sign in again and retry.' };
+
+  const actorUserClientInstanceId = await resolveUserClientInstanceId(userId);
+  const { data, error } = await supabase.rpc('set_recurrence_paused' as any, {
+    p_task_id: taskId,
+    p_paused: paused,
+    p_actor_user_client_instance_id: actorUserClientInstanceId,
+  } as any);
+
+  if (error) return { success: false, userId, error: error.message };
+
+  const result = Array.isArray(data) ? data[0] : data;
+  return {
+    success: true,
+    userId,
+    recurrenceRuleId: (result as any)?.recurrence_rule_id,
+    pausedAt: (result as any)?.paused_at ?? null,
+    stateChanged: Boolean((result as any)?.state_changed),
+  };
 }
 
 export async function postponeTaskDeadline(taskId: string, nextDeadlineIso: string): Promise<TaskMutationResult> {

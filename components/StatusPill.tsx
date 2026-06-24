@@ -136,6 +136,11 @@ const STATUS_STYLE: Record<string, StatusStyle> = {
     bg: '#F472B61A',
     border: '#F472B659',
   },
+  REPETITION: {
+    text: '#C084FC',
+    bg: '#C084FC1A',
+    border: '#C084FC4D',
+  },
   NEUTRAL: {
     text: '#CBD5E1',
     bg: '#47556933',

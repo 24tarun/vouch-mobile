@@ -47,7 +47,7 @@ export function useTaskSearch(searchQuery: string, enabled = true): UseTaskSearc
 
         const { data, error } = await supabase
           .from('tasks')
-          .select('id, title, deadline, status, has_proof')
+          .select('id, title, deadline, status, has_proof, recurrence_rule_id, recurrence_rule:recurrence_rules(paused_at)')
           .eq('user_id', user.id)
           .neq('status', 'DELETED')
           .ilike('title', `%${trimmedQuery}%`)
@@ -62,7 +62,10 @@ export function useTaskSearch(searchQuery: string, enabled = true): UseTaskSearc
           return;
         }
 
-        setSearchResults((data as TaskRowData[]) ?? []);
+        setSearchResults(((data ?? []) as any[]).map((task) => ({
+          ...task,
+          recurrence_paused_at: task.recurrence_rule?.paused_at ?? null,
+        })) as TaskRowData[]);
         setSearchError(null);
         setSearchLoading(false);
       } catch (error: any) {

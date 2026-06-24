@@ -61,6 +61,24 @@ function findStringValueDeep(input: unknown, key: string, depth = 0): string | n
   return null;
 }
 
+function findStringArrayValueDeep(input: unknown, key: string, depth = 0): string[] {
+  if (!input || typeof input !== 'object' || depth > 5) return [];
+  const record = input as Record<string, unknown>;
+  const direct = record[key];
+  if (Array.isArray(direct)) {
+    return direct.filter((value): value is string => (
+      typeof value === 'string' && value.trim().length > 0
+    ));
+  }
+
+  for (const value of Object.values(record)) {
+    const found = findStringArrayValueDeep(value, key, depth + 1);
+    if (found.length > 0) return found;
+  }
+
+  return [];
+}
+
 function hasBooleanValueDeep(input: unknown, key: string, expected: boolean, depth = 0): boolean {
   if (!input || typeof input !== 'object' || depth > 5) return false;
   const record = input as Record<string, unknown>;
@@ -71,6 +89,10 @@ function hasBooleanValueDeep(input: unknown, key: string, expected: boolean, dep
 
 function getLocalBackupKeyFromData(data: unknown): string | null {
   return findStringValueDeep(data, 'localBackupKey');
+}
+
+function getReminderIdsFromData(data: unknown): string[] {
+  return findStringArrayValueDeep(data, 'reminderIds');
 }
 
 function isLocalReminderBackupData(data: unknown): boolean {
@@ -389,11 +411,7 @@ async function writeRemoteReminderDeliveryAcksAsync(next: ReminderDeliveryAckMap
   await AsyncStorage.setItem(REMOTE_REMINDER_DELIVERY_ACK_KEY, JSON.stringify(next));
 }
 
-async function cancelExpoLocalReminderBackupAsync(localBackupKey: string): Promise<boolean> {
-  const map = await readLocalReminderNotificationMapAsync();
-  const notificationId = map[localBackupKey];
-  if (!notificationId) return false;
-
+async function cancelAndDismissExpoNotificationAsync(notificationId: string): Promise<void> {
   try {
     await Notifications.cancelScheduledNotificationAsync(notificationId);
   } catch {
@@ -404,37 +422,47 @@ async function cancelExpoLocalReminderBackupAsync(localBackupKey: string): Promi
   } catch {
     // Notification may not be currently presented.
   }
-
-  delete map[localBackupKey];
-  await writeLocalReminderNotificationMapAsync(map);
-  return true;
 }
 
-async function cancelAlarmKitLocalReminderBackupAsync(localBackupKey: string): Promise<boolean> {
-  const map = await readLocalReminderAlarmKitMapAsync();
-  const nativeAlarmId = map[localBackupKey];
-  if (!nativeAlarmId) return false;
+async function cancelLocalReminderBackupsAsync(localBackupKeys: string[]): Promise<boolean> {
+  const keys = Array.from(new Set(localBackupKeys.map((key) => key.trim()).filter(Boolean)));
+  if (keys.length === 0) return false;
 
-  try {
-    await AlarmKit.cancelTenMinuteAlarmAsync({ nativeAlarmId });
-  } catch {
-    // Alarm may already be delivered, canceled, or unavailable on this OS.
+  const [expoMap, alarmKitMap] = await Promise.all([
+    readLocalReminderNotificationMapAsync(),
+    readLocalReminderAlarmKitMapAsync(),
+  ]);
+  let canceled = false;
+
+  for (const key of keys) {
+    const notificationId = expoMap[key];
+    if (notificationId) {
+      await cancelAndDismissExpoNotificationAsync(notificationId);
+      delete expoMap[key];
+      canceled = true;
+    }
+
+    const nativeAlarmId = alarmKitMap[key];
+    if (nativeAlarmId) {
+      try {
+        await AlarmKit.cancelTenMinuteAlarmAsync({ nativeAlarmId });
+      } catch {
+        // Alarm may already be delivered, canceled, or unavailable on this OS.
+      }
+      delete alarmKitMap[key];
+      canceled = true;
+    }
   }
 
-  delete map[localBackupKey];
-  await writeLocalReminderAlarmKitMapAsync(map);
-  return true;
+  await Promise.all([
+    writeLocalReminderNotificationMapAsync(expoMap),
+    writeLocalReminderAlarmKitMapAsync(alarmKitMap),
+  ]);
+  return canceled;
 }
 
 export async function cancelLocalReminderBackupAsync(localBackupKey: string): Promise<boolean> {
-  if (!localBackupKey.trim()) return false;
-
-  const [expoCanceled, alarmKitCanceled] = await Promise.all([
-    cancelExpoLocalReminderBackupAsync(localBackupKey),
-    cancelAlarmKitLocalReminderBackupAsync(localBackupKey),
-  ]);
-
-  return expoCanceled || alarmKitCanceled;
+  return cancelLocalReminderBackupsAsync([localBackupKey]);
 }
 
 export async function recordRemoteReminderDeliveryAsync(data: unknown): Promise<boolean> {
@@ -443,11 +471,17 @@ export async function recordRemoteReminderDeliveryAsync(data: unknown): Promise<
   const localBackupKey = getLocalBackupKeyFromData(data);
   if (!localBackupKey) return false;
 
+  const backupKeys = Array.from(new Set([
+    localBackupKey,
+    ...getReminderIdsFromData(data),
+  ]));
   const nowMs = Date.now();
   const ackMap = await readRemoteReminderDeliveryAcksAsync(nowMs);
-  ackMap[localBackupKey] = nowMs;
+  for (const backupKey of backupKeys) {
+    ackMap[backupKey] = nowMs;
+  }
   await writeRemoteReminderDeliveryAcksAsync(ackMap);
-  await cancelLocalReminderBackupAsync(localBackupKey);
+  await cancelLocalReminderBackupsAsync(backupKeys);
   return true;
 }
 
@@ -597,11 +631,7 @@ export async function clearLocalReminderNotificationsAsync(): Promise<void> {
     const map = await readLocalReminderNotificationMapAsync();
     const alarmKitMap = await readLocalReminderAlarmKitMapAsync();
     for (const notificationId of Object.values(map)) {
-      try {
-        await Notifications.cancelScheduledNotificationAsync(notificationId);
-      } catch {
-        // Notification may already be delivered or canceled.
-      }
+      await cancelAndDismissExpoNotificationAsync(notificationId);
     }
     for (const nativeAlarmId of Object.values(alarmKitMap)) {
       try {
@@ -800,12 +830,8 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       && lastScheduledSoundKey !== notificationSoundKey
     ) {
       for (const notificationId of Object.values(persistedExpoMap)) {
-        try {
-          await Notifications.cancelScheduledNotificationAsync(notificationId);
-          canceledExpoCount += 1;
-        } catch {
-          // Notification may already be delivered or canceled.
-        }
+        await cancelAndDismissExpoNotificationAsync(notificationId);
+        canceledExpoCount += 1;
       }
       persistedExpoMap = {};
     }
@@ -817,12 +843,8 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
         nextExpoMap[scheduleKey] = notificationId;
         reusedExpoCount += 1;
       } else {
-        try {
-          await Notifications.cancelScheduledNotificationAsync(notificationId);
-          canceledExpoCount += 1;
-        } catch {
-          // Notification may already be delivered or canceled.
-        }
+        await cancelAndDismissExpoNotificationAsync(notificationId);
+        canceledExpoCount += 1;
       }
     }
 

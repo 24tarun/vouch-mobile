@@ -49,6 +49,7 @@ export interface TaskRowData {
   requires_proof?: boolean;
   postponed_at?: string | null;
   recurrence_rule_id?: string | null;
+  recurrence_paused_at?: string | null;
   created_at?: string;
   subtaskTotal?: number;
   subtaskCompleted?: number;
@@ -104,6 +105,7 @@ export const TaskRow = memo(function TaskRow({
     ? TASK_COMPLETED_LIKE_STATUSES.has(task.status as TaskStatus)
     : (task.completed ?? false);
   const isRepeatingTask = Boolean(task.recurrence_rule_id);
+  const isRepetitionPaused = isRepeatingTask && Boolean(task.recurrence_paused_at);
   const canOpenDetail = !isOptimisticTaskId(task.id);
   const { width: screenWidth } = useWindowDimensions();
   const [expanded, setExpanded] = useState(false);
@@ -539,7 +541,12 @@ export const TaskRow = memo(function TaskRow({
           <View style={styles.completedTitleRow}>
             <Text style={styles.completedTitle} numberOfLines={1}>{task.title}</Text>
             {isRepeatingTask ? (
-              <Feather name="repeat" size={16} color="#C084FC" style={styles.repeatIcon} />
+              <>
+                <Feather name="repeat" size={16} color="#C084FC" style={styles.repeatIcon} />
+                {isRepetitionPaused ? (
+                  <Feather name="pause" size={15} color="#C084FC" style={styles.pausedRepeatIcon} />
+                ) : null}
+              </>
             ) : null}
           </View>
         </View>
@@ -576,7 +583,12 @@ export const TaskRow = memo(function TaskRow({
             {task.title}
           </Text>
           {isRepeatingTask ? (
-            <Feather name="repeat" size={16} color="#C084FC" style={styles.repeatIcon} />
+            <>
+              <Feather name="repeat" size={16} color="#C084FC" style={styles.repeatIcon} />
+              {isRepetitionPaused ? (
+                <Feather name="pause" size={15} color="#C084FC" style={styles.pausedRepeatIcon} />
+              ) : null}
+            </>
           ) : null}
           {hasSubtasks && (
             <Text style={styles.subtaskBadge}>
@@ -820,6 +832,10 @@ const makeStyles = (colors: Colors, isDark: boolean) => StyleSheet.create({
   },
   repeatIcon: {
     flexShrink: 0,
+  },
+  pausedRepeatIcon: {
+    flexShrink: 0,
+    marginLeft: -4,
   },
   subtaskBadge: {
     fontSize: typography.xs,

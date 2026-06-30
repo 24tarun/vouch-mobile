@@ -30,6 +30,7 @@ interface LedgerEntry {
   title: string;
   amountCents: number;
   createdAt: string;
+  deadline: string | null;
   kind: LedgerEntryKind;
 }
 
@@ -109,6 +110,17 @@ function formatMonthNet(totalCents: number, currency: CurrencyCode): string {
   return formatCurrency(0, currency);
 }
 
+function formatDeadlineDate(deadline: string | null): string | null {
+  if (!deadline) return null;
+  const date = new Date(deadline);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
 function emptyCurrentMonth(periodId: string): LedgerMonth {
   return {
     id: periodId,
@@ -153,6 +165,7 @@ function LedgerEntryRow({
   const router = useRouter();
   const badge = badgeForKind(entry.kind, colors);
   const reversal = isReversal(entry.kind, entry.amountCents);
+  const deadlineDate = formatDeadlineDate(entry.deadline);
 
   function handlePress() {
     if (entry.taskId) {
@@ -170,7 +183,7 @@ function LedgerEntryRow({
           <View style={[styles.entryBadge, { backgroundColor: badge.bg }]}>
             <Text style={[styles.entryBadgeText, { color: badge.fg }]}>{badge.label}</Text>
           </View>
-          {entry.taskId && <Feather name="external-link" size={14} color={colors.textMuted} />}
+          {deadlineDate && <Text style={styles.entryDeadline}>{deadlineDate}</Text>}
         </View>
       </View>
 
@@ -563,6 +576,11 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     fontWeight: typography.bold,
     letterSpacing: 0.4,
     textTransform: 'uppercase',
+  },
+  entryDeadline: {
+    color: colors.textMuted,
+    fontSize: 12,
+    lineHeight: 16,
   },
   entryAmountWrap: {
     alignItems: 'flex-end',

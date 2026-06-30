@@ -1281,6 +1281,11 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     fontSize: typography.sm,
     color: colors.text,
   },
+  voucherQuota: {
+    fontSize: typography.xs,
+    color: colors.textMuted,
+    fontWeight: typography.semibold,
+  },
   voucherSub: {
     fontSize: typography.xs,
     color: colors.textMuted,

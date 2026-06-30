@@ -23,6 +23,18 @@ export type TaskStatus =
 
 export type Currency = 'EUR' | 'USD' | 'INR';
 
+export type AccountTier = 'free' | 'paid';
+
+export interface AiVoucherQuota {
+  accountTier: AccountTier;
+  used: number;
+  pending: number;
+  limit: number | null;
+  remaining: number | null;
+  resetsAt: string;
+  canStartReview: boolean;
+}
+
 export type LedgerEntryType =
   | 'failure'
   | 'rectified'

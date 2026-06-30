@@ -8,6 +8,7 @@ module.exports = [
       'ios/**',
       'node_modules/**',
       '.expo/**',
+      'supabase/functions/**',
       '*.aab',
     ],
   },

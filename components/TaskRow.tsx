@@ -376,7 +376,7 @@ export const TaskRow = memo(function TaskRow({
   } else if (isToday) {
     deadlineColor = '#10B981'; // emerald green — due today
   } else if (isTomorrow) {
-    deadlineColor = '#EC4899'; // hot pink — due tomorrow
+    deadlineColor = colors.warning; // traffic-light amber — due tomorrow
   }
 
   const deadlineLabel = formatDeadline(task.deadline, isFuture);

@@ -13,4 +13,5 @@ export const queryKeys = {
   commitmentLinks: (commitmentId: string | null | undefined): QueryKey => ['commitment-links', commitmentId ?? null],
   ledger: (userId: string | null | undefined): QueryKey => ['ledger', userId ?? null],
   reputationScore: (userId: string | null | undefined): QueryKey => ['reputation-score', userId ?? null],
+  aiVoucherQuota: (userId: string | null | undefined): QueryKey => ['ai-voucher-quota', userId ?? null],
 } as const;

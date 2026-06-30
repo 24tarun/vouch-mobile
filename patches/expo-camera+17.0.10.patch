@@ -1,0 +1,27 @@
+diff --git a/node_modules/expo-camera/ios/Common/DeviceDiscovery.swift b/node_modules/expo-camera/ios/Common/DeviceDiscovery.swift
+index 193297a..af8d88e 100644
+--- a/node_modules/expo-camera/ios/Common/DeviceDiscovery.swift
++++ b/node_modules/expo-camera/ios/Common/DeviceDiscovery.swift
+@@ -75,13 +75,15 @@ class DeviceDiscovery {
+   }
+ 
+   var defaultBackCamera: AVCaptureDevice? {
+-    // iOS 17+: Check system preferred camera
+-    if #available(iOS 17.0, *) {
+-      if let preferred = AVCaptureDevice.systemPreferredCamera, preferred.position == .back {
+-        if self.backCameraLenses.contains(preferred) {
+-          return preferred
+-        }
+-      }
++    // Always use the physical wide-angle camera for the standard 1x field of view.
++    // The system-preferred camera can be a virtual multi-camera device whose
++    // minimum zoom factor starts at the ultra-wide 0.5x lens.
++    if let wideAngleCamera = AVCaptureDevice.default(
++      .builtInWideAngleCamera,
++      for: .video,
++      position: .back
++    ) {
++      return wideAngleCamera
+     }
+ 
+     // Check standard default video device

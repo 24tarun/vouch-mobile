@@ -17,12 +17,14 @@ import {
 const NOTIFICATION_TTL_MS = 30 * 60 * 1000;
 const LOCAL_REMINDER_NOTIFICATION_MAP_KEY = 'vouch_local_reminder_notification_ids_v1';
 const LOCAL_REMINDER_ALARMKIT_MAP_KEY = 'vouch_local_reminder_alarmkit_ids_v1';
+const LOCAL_REMINDER_FINGERPRINT_MAP_KEY = 'vouch_local_reminder_fingerprints_v1';
 const LOCAL_REMINDER_SOUND_KEY = 'vouch_local_reminder_sound_key_v1';
 const REMOTE_REMINDER_DELIVERY_ACK_KEY = 'vouch_remote_reminder_delivery_acks_v1';
+const REMOTE_PUSH_REGISTERED_USER_KEY = 'vouch_remote_push_registered_user_v1';
 const ACTIVE_TASK_STATUSES = new Set(['ACTIVE', 'POSTPONED']);
 const DEFAULT_DEADLINE_10M_REMINDER_SOURCE = 'DEFAULT_DEADLINE_10M';
 const DEFAULT_DEADLINE_DUE_REMINDER_SOURCE = 'DEFAULT_DEADLINE_DUE';
-const LOCAL_REMINDER_BACKUP_DELAY_MS = 5 * 1000;
+const LOCAL_REMINDER_BACKUP_DELAY_MS = 30 * 1000;
 const REMOTE_REMINDER_ACK_TTL_MS = 24 * 60 * 60 * 1000;
 const REMOTE_REMINDER_DELIVERY_TASK = 'vouch-remote-reminder-delivery';
 
@@ -44,6 +46,8 @@ type ReminderGroup = {
 };
 
 type ReminderDeliveryAckMap = Record<string, number>;
+
+type ReminderFingerprintMap = Record<string, string>;
 
 function findStringValueDeep(input: unknown, key: string, depth = 0): string | null {
   if (!input || typeof input !== 'object' || depth > 5) return null;
@@ -251,7 +255,7 @@ async function upsertLegacyPushTokenAsync(
   userId: string,
   token: string,
   updatedAt: string,
-): Promise<void> {
+): Promise<boolean> {
   const { error } = await supabase
     .from('expo_push_tokens')
     .upsert(
@@ -261,7 +265,24 @@ async function upsertLegacyPushTokenAsync(
 
   if (error) {
     console.warn('[notifications] registration failed:', error.message);
+    return false;
   }
+  return true;
+}
+
+async function hasRemotePushRegistrationAsync(userId: string): Promise<boolean> {
+  try {
+    return await AsyncStorage.getItem(REMOTE_PUSH_REGISTERED_USER_KEY) === userId;
+  } catch {
+    return false;
+  }
+}
+
+async function markRemotePushRegisteredAsync(userId: string): Promise<void> {
+  await AsyncStorage.setItem(REMOTE_PUSH_REGISTERED_USER_KEY, userId);
+  // Remote delivery is the primary channel. Remove any local backups that may
+  // have been scheduled while registration was still in flight.
+  await clearLocalReminderNotificationsAsync();
 }
 
 async function upsertClientInstancePushTokenAsync(input: {
@@ -312,13 +333,13 @@ async function upsertClientInstancePushTokenAsync(input: {
 
     if (isPushTokenClientInstanceSchemaError(retryError)) return false;
     console.warn('[notifications] registration failed:', retryError.message);
-    return true;
+    return false;
   }
 
   if (isPushTokenClientInstanceSchemaError(error)) return false;
 
   console.warn('[notifications] registration failed:', error.message);
-  return true;
+  return false;
 }
 
 export function getTaskIdFromNotificationResponse(
@@ -386,6 +407,25 @@ async function writeLocalReminderAlarmKitMapAsync(
   await AsyncStorage.setItem(LOCAL_REMINDER_ALARMKIT_MAP_KEY, JSON.stringify(next));
 }
 
+async function readLocalReminderFingerprintMapAsync(): Promise<ReminderFingerprintMap> {
+  try {
+    const raw = await AsyncStorage.getItem(LOCAL_REMINDER_FINGERPRINT_MAP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>)
+        .filter(([, value]) => typeof value === 'string' && value.length > 0),
+    ) as ReminderFingerprintMap;
+  } catch {
+    return {};
+  }
+}
+
+async function writeLocalReminderFingerprintMapAsync(next: ReminderFingerprintMap): Promise<void> {
+  await AsyncStorage.setItem(LOCAL_REMINDER_FINGERPRINT_MAP_KEY, JSON.stringify(next));
+}
+
 async function readRemoteReminderDeliveryAcksAsync(nowMs = Date.now()): Promise<ReminderDeliveryAckMap> {
   try {
     const raw = await AsyncStorage.getItem(REMOTE_REMINDER_DELIVERY_ACK_KEY);
@@ -428,9 +468,10 @@ async function cancelLocalReminderBackupsAsync(localBackupKeys: string[]): Promi
   const keys = Array.from(new Set(localBackupKeys.map((key) => key.trim()).filter(Boolean)));
   if (keys.length === 0) return false;
 
-  const [expoMap, alarmKitMap] = await Promise.all([
+  const [expoMap, alarmKitMap, fingerprintMap] = await Promise.all([
     readLocalReminderNotificationMapAsync(),
     readLocalReminderAlarmKitMapAsync(),
+    readLocalReminderFingerprintMapAsync(),
   ]);
   let canceled = false;
 
@@ -452,11 +493,14 @@ async function cancelLocalReminderBackupsAsync(localBackupKeys: string[]): Promi
       delete alarmKitMap[key];
       canceled = true;
     }
+
+    delete fingerprintMap[key];
   }
 
   await Promise.all([
     writeLocalReminderNotificationMapAsync(expoMap),
     writeLocalReminderAlarmKitMapAsync(alarmKitMap),
+    writeLocalReminderFingerprintMapAsync(fingerprintMap),
   ]);
   return canceled;
 }
@@ -571,6 +615,19 @@ function getReminderScheduleKey(group: ReminderGroup): string {
     : group.key;
 }
 
+function getReminderGroupFingerprint(group: ReminderGroup): string {
+  return JSON.stringify({
+    source: group.source ?? 'MANUAL',
+    reminders: group.reminders
+      .map((reminder) => ({
+        id: reminder.id,
+        taskId: reminder.parent_task_id,
+        reminderAt: reminder.reminder_at,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  });
+}
+
 function groupReminderRows(reminders: ReminderRow[]): ReminderGroup[] {
   const groupsByKey = new Map<string, ReminderGroup>();
 
@@ -642,6 +699,7 @@ export async function clearLocalReminderNotificationsAsync(): Promise<void> {
     }
     await AsyncStorage.removeItem(LOCAL_REMINDER_NOTIFICATION_MAP_KEY);
     await AsyncStorage.removeItem(LOCAL_REMINDER_ALARMKIT_MAP_KEY);
+    await AsyncStorage.removeItem(LOCAL_REMINDER_FINGERPRINT_MAP_KEY);
     await AsyncStorage.removeItem(LOCAL_REMINDER_SOUND_KEY);
     await AsyncStorage.removeItem(REMOTE_REMINDER_DELIVERY_ACK_KEY);
   } catch (err) {
@@ -667,6 +725,15 @@ export async function registerRemoteReminderDeliveryTaskAsync(): Promise<void> {
 export async function syncLocalReminderNotificationsAsync(userId: string): Promise<void> {
   try {
     if (!userId) return;
+
+    // Scheduling both channels cannot be made duplicate-proof on iOS because
+    // background delivery markers are best-effort while the app is suspended.
+    // A registered device therefore uses remote push only; local copy remains
+    // a fallback for devices where remote registration is unavailable.
+    if (await hasRemotePushRegistrationAsync(userId)) {
+      await clearLocalReminderNotificationsAsync();
+      return;
+    }
 
     await ensureAndroidNotificationChannelsAsync();
 
@@ -814,6 +881,10 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     const alarmKitReminderGroups = groupReminderRows(alarmKitReminderRows).filter(isUnacknowledgedGroup);
     const desiredExpoScheduleKeys = new Set(expoReminderGroups.map(getReminderScheduleKey));
     const desiredAlarmKitScheduleKeys = new Set(alarmKitReminderGroups.map(getReminderScheduleKey));
+    const desiredFingerprints = new Map(
+      [...expoReminderGroups, ...alarmKitReminderGroups]
+        .map((group) => [getReminderScheduleKey(group), getReminderGroupFingerprint(group)]),
+    );
     let canceledExpoCount = 0;
     let canceledAlarmKitCount = 0;
     let scheduledExpoCount = 0;
@@ -823,6 +894,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     let skippedPastCount = 0;
     let persistedExpoMap = await readLocalReminderNotificationMapAsync();
     const persistedAlarmKitMap = await readLocalReminderAlarmKitMapAsync();
+    const persistedFingerprintMap = await readLocalReminderFingerprintMapAsync();
 
     if (
       expoReminderRows.length > 0
@@ -837,10 +909,17 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     }
     const nextExpoMap: Record<string, string> = {};
     const nextAlarmKitMap: Record<string, string> = {};
+    const nextFingerprintMap: ReminderFingerprintMap = {};
 
     for (const [scheduleKey, notificationId] of Object.entries(persistedExpoMap)) {
-      if (desiredExpoScheduleKeys.has(scheduleKey)) {
+      const desiredFingerprint = desiredFingerprints.get(scheduleKey);
+      if (
+        desiredExpoScheduleKeys.has(scheduleKey)
+        && desiredFingerprint !== undefined
+        && persistedFingerprintMap[scheduleKey] === desiredFingerprint
+      ) {
         nextExpoMap[scheduleKey] = notificationId;
+        nextFingerprintMap[scheduleKey] = desiredFingerprint;
         reusedExpoCount += 1;
       } else {
         await cancelAndDismissExpoNotificationAsync(notificationId);
@@ -849,8 +928,14 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     }
 
     for (const [scheduleKey, nativeAlarmId] of Object.entries(persistedAlarmKitMap)) {
-      if (desiredAlarmKitScheduleKeys.has(scheduleKey)) {
+      const desiredFingerprint = desiredFingerprints.get(scheduleKey);
+      if (
+        desiredAlarmKitScheduleKeys.has(scheduleKey)
+        && desiredFingerprint !== undefined
+        && persistedFingerprintMap[scheduleKey] === desiredFingerprint
+      ) {
         nextAlarmKitMap[scheduleKey] = nativeAlarmId;
+        nextFingerprintMap[scheduleKey] = desiredFingerprint;
         reusedAlarmKitCount += 1;
       } else {
         try {
@@ -916,6 +1001,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       });
 
       nextExpoMap[scheduleKey] = notificationId;
+      nextFingerprintMap[scheduleKey] = getReminderGroupFingerprint(group);
       scheduledExpoCount += 1;
     }
 
@@ -944,6 +1030,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
           taskCount: group.reminders.length,
         });
         nextAlarmKitMap[scheduleKey] = result.nativeAlarmId;
+        nextFingerprintMap[scheduleKey] = getReminderGroupFingerprint(group);
         scheduledAlarmKitCount += 1;
       } catch (err) {
         console.warn('[notifications] failed to schedule AlarmKit reminder; skipping serious alarm:', {
@@ -956,6 +1043,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
 
     await writeLocalReminderNotificationMapAsync(nextExpoMap);
     await writeLocalReminderAlarmKitMapAsync(nextAlarmKitMap);
+    await writeLocalReminderFingerprintMapAsync(nextFingerprintMap);
     if (expoReminderRows.length > 0) {
       await writeLocalReminderSoundKeyAsync(notificationSoundKey);
     }
@@ -1018,10 +1106,15 @@ export async function registerForPushNotificationsAsync(
         userClientInstanceId,
         updatedAt,
       });
-      if (handled) return;
+      if (handled) {
+        await markRemotePushRegisteredAsync(userId);
+        return;
+      }
     }
 
-    await upsertLegacyPushTokenAsync(userId, token, updatedAt);
+    if (await upsertLegacyPushTokenAsync(userId, token, updatedAt)) {
+      await markRemotePushRegisteredAsync(userId);
+    }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return;
     console.warn('[notifications] registration failed:', err);
@@ -1041,7 +1134,9 @@ export async function unregisterForPushNotificationsAsync(userId: string): Promi
 
     if (error) {
       console.warn('[notifications] deregistration failed:', error.message);
+      return;
     }
+    await AsyncStorage.removeItem(REMOTE_PUSH_REGISTERED_USER_KEY);
   } catch (err) {
     console.warn('[notifications] deregistration failed:', err);
   }

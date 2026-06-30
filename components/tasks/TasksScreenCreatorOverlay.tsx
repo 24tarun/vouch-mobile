@@ -37,7 +37,8 @@ import type { FriendOption } from '@/lib/hooks/useFriends';
 import type { TaskRowData } from '@/components/TaskRow';
 import type { Currency } from '@/lib/types';
 import { AI_PROFILE_ID, normalizeAiUsername } from '@/lib/constants/ai-profile';
-import { useAiVoucherLimit } from '@/lib/hooks/useAiVoucherLimit';
+import { useAiVoucherQuota } from '@/lib/hooks/useAiVoucherQuota';
+import { formatAiVoucherQuotaExhaustedMessage } from '@/lib/ai-voucher-quota';
 
 interface CreatorAnchor {
   x: number;
@@ -249,7 +250,12 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   const [voucherAnchor, setVoucherAnchor] = useState<{ pageX: number; pageY: number; width: number; buttonHeight: number } | null>(null);
   const [voucherDropdownHeight, setVoucherDropdownHeight] = useState(300);
 
-  const aiVoucherLimitReached = useAiVoucherLimit(currentUserId ?? null);
+  const {
+    quota: aiVoucherQuota,
+    loading: aiVoucherQuotaLoading,
+    error: aiVoucherQuotaError,
+    refetch: refetchAiVoucherQuota,
+  } = useAiVoucherQuota(currentUserId ?? null);
 
   const currencySymbol = friendProfile?.currency === 'EUR' ? '\u20AC'
     : friendProfile?.currency === 'INR' ? '\u20B9'
@@ -647,6 +653,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   }
 
   function openVoucherPicker() {
+    void refetchAiVoucherQuota();
     voucherButtonRef.current?.measureInWindow((x, y, width, height) => {
       setVoucherAnchor({ pageX: x, pageY: y, width, buttonHeight: height });
       setVoucherPickerOpen(true);
@@ -716,6 +723,21 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     if (!effectiveVoucherId) {
       Alert.alert('Missing voucher', 'Please select a voucher.');
       return;
+    }
+
+    if (effectiveVoucherId === AI_PROFILE_ID) {
+      if (aiVoucherQuotaLoading) {
+        Alert.alert('Checking AI credits', 'Your AI voucher balance is still loading. Please try again in a moment.');
+        return;
+      }
+      if (aiVoucherQuotaError || !aiVoucherQuota) {
+        Alert.alert('AI credits unavailable', 'Could not load your AI voucher balance. Please try again.');
+        return;
+      }
+      if (aiVoucherQuota.accountTier === 'free' && !aiVoucherQuota.canStartReview) {
+        Alert.alert('AI credits used', formatAiVoucherQuotaExhaustedMessage(aiVoucherQuota));
+        return;
+      }
     }
 
     const parsedEventToken = EVENT_TOKEN_REGEX.test(rawTitle);
@@ -1111,7 +1133,9 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
         friendsLoading={friendsLoading}
         friendsError={friendsError}
         filteredFriends={filteredFriends}
-        aiLimitReached={aiVoucherLimitReached}
+        aiQuota={aiVoucherQuota}
+        aiQuotaLoading={aiVoucherQuotaLoading}
+        aiQuotaError={aiVoucherQuotaError}
       />
     </>
   );

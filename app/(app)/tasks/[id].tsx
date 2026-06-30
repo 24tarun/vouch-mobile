@@ -460,6 +460,7 @@ export default function TaskDetailScreen() {
     void queryClient.invalidateQueries({ queryKey: ['task-lists', user.id] });
     void queryClient.invalidateQueries({ queryKey: queryKeys.settingsStats(user.id) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.ledger(user.id) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.aiVoucherQuota(user.id) });
   }
 
   async function submitAiReviewForCurrentTask(options?: {

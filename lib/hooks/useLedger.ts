@@ -16,6 +16,7 @@ export interface LedgerEntryRowData {
   title: string;
   amountCents: number;
   createdAt: string;
+  deadline: string | null;
   kind: LedgerEntryKind;
 }
 
@@ -125,7 +126,7 @@ export async function fetchLedger(userId: string): Promise<LedgerData> {
         amount_cents,
         entry_type,
         created_at,
-        task:tasks(id, title, status)
+        task:tasks(id, title, status, deadline)
       `)
       .eq('user_id', userId)
       .order('created_at', { ascending: false }),
@@ -161,6 +162,7 @@ export async function fetchLedger(userId: string): Promise<LedgerData> {
       title: (task?.title as string | undefined)?.trim() || fallbackTitle(kind),
       amountCents: Number(row.amount_cents ?? 0),
       createdAt: typeof row.created_at === 'string' ? row.created_at : new Date().toISOString(),
+      deadline: typeof task?.deadline === 'string' ? task.deadline : null,
       kind,
     };
   });

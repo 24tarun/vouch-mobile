@@ -159,6 +159,7 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
     const queueResult = await queueAiEvalForTask(taskId);
     if (!queueResult.success) {
       console.warn('[task-actions] AI eval queue failed:', queueResult.error);
+      return { success: false, userId, error: queueResult.error };
     }
   }
 

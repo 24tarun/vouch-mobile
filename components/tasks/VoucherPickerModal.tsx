@@ -1,9 +1,11 @@
-import { Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useMemo } from 'react';
 import { AI_PROFILE_ID } from '@/lib/constants/ai-profile';
 
 import { Feather } from '@expo/vector-icons';
 import type { FriendOption } from '@/lib/hooks/useFriends';
+import type { AiVoucherQuota } from '@/lib/types';
+import { formatAiVoucherQuotaExhaustedMessage } from '@/lib/ai-voucher-quota';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
 
@@ -28,7 +30,9 @@ interface VoucherPickerModalProps {
   friendsLoading: boolean;
   friendsError: string | null;
   filteredFriends: FriendOption[];
-  aiLimitReached?: boolean;
+  aiQuota: AiVoucherQuota | null;
+  aiQuotaLoading: boolean;
+  aiQuotaError: string | null;
 }
 
 export function VoucherPickerModal({
@@ -45,7 +49,9 @@ export function VoucherPickerModal({
   friendsLoading,
   friendsError,
   filteredFriends,
-  aiLimitReached = false,
+  aiQuota,
+  aiQuotaLoading,
+  aiQuotaError,
 }: VoucherPickerModalProps) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
@@ -129,22 +135,50 @@ export function VoucherPickerModal({
                 </Text>
               ) : (
                 filteredFriends.map((friend) => {
-                  const isAiDisabled = friend.id === AI_PROFILE_ID && aiLimitReached;
+                  const isAi = friend.id === AI_PROFILE_ID;
+                  const isAiDisabled = isAi && (
+                    aiQuotaLoading
+                    || Boolean(aiQuotaError)
+                    || !aiQuota
+                    || (aiQuota.accountTier === 'free' && !aiQuota.canStartReview)
+                  );
+                  const aiQuotaLabel = !isAi
+                    ? null
+                    : aiQuotaLoading
+                      ? '…/5'
+                      : aiQuotaError || !aiQuota
+                        ? 'Unavailable'
+                        : aiQuota.accountTier === 'paid'
+                          ? '∞'
+                          : `${aiQuota.used}/${aiQuota.limit ?? 5}${aiQuota.pending > 0 ? ` · ${aiQuota.pending} pending` : ''}`;
                   return (
                   <TouchableOpacity
                     key={friend.id}
                     style={[styles.voucherRow, voucherValue === friend.id && styles.voucherRowSelected, isAiDisabled && { opacity: 0.4 }]}
                     onPress={() => {
-                      if (isAiDisabled) return;
+                      if (isAiDisabled) {
+                        if (aiQuotaLoading) {
+                          Alert.alert('Checking AI credits', 'Your AI voucher balance is still loading. Please try again in a moment.');
+                        } else if (aiQuotaError || !aiQuota) {
+                          Alert.alert('AI credits unavailable', 'Could not load your AI voucher balance. Please close the picker and try again.');
+                        } else {
+                          Alert.alert('AI credits used', formatAiVoucherQuotaExhaustedMessage(aiQuota));
+                        }
+                        return;
+                      }
                       setVoucherValue(friend.id);
                       closeVoucherPicker();
                     }}
                     activeOpacity={isAiDisabled ? 1 : 0.75}
+                    accessibilityState={{ selected: voucherValue === friend.id }}
+                    accessibilityLabel={isAi && aiQuotaLabel ? `${friend.username}, ${aiQuotaLabel}` : friend.username}
+                    accessibilityHint={isAiDisabled ? 'Shows why AI voucher is unavailable' : 'Selects this voucher'}
                   >
                     <View style={styles.avatar}>
                       <Text style={styles.avatarText}>{friend.initial}</Text>
                     </View>
                     <Text style={styles.voucherName}>{friend.username}</Text>
+                    {aiQuotaLabel ? <Text style={styles.voucherQuota}>{aiQuotaLabel}</Text> : null}
                     {voucherValue === friend.id && (
                       <Feather name="check" size={16} color={colors.text} />
                     )}

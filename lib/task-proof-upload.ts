@@ -2,6 +2,8 @@ import type { ImagePickerAsset } from 'expo-image-picker';
 import { File } from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
 import { deriveProofTimestampText } from '@/lib/proof-timestamp-mobile';
+import type { AiVoucherQuota } from '@/lib/types';
+import { formatAiVoucherQuotaExhaustedMessage } from '@/lib/ai-voucher-quota';
 
 const MAX_TASK_PROOF_VIDEO_DURATION_MS = 15_000;
 
@@ -54,11 +56,16 @@ interface TaskProofInitResponse {
 interface TaskProofSimpleResponse {
   success: boolean;
   error?: string;
+  code?: string;
+  quota?: AiVoucherQuota;
 }
 
 export type TaskProofUploadResult = ProofUploadSuccess | ProofUploadFailure;
 export type TaskProofRemoveResult = { success: true } | { success: false; error: string };
 export type TaskProofPurgeResult = { success: true } | { success: false; error: string };
+export type QueueAiEvalResult =
+  | { success: true }
+  | { success: false; error: string; code?: string; quota?: AiVoucherQuota };
 
 async function invokeTaskProofFunction<TResponse>(body: Record<string, unknown>) {
   const { data: sessionData } = await supabase.auth.getSession();
@@ -186,6 +193,13 @@ async function invokeErrorMessage(error: unknown): Promise<string> {
   return 'Please try again.';
 }
 
+function invokeErrorPayload(error: unknown): TaskProofSimpleResponse | null {
+  if (!error || typeof error !== 'object') return null;
+  const payload = (error as { payload?: unknown }).payload;
+  if (!payload || typeof payload !== 'object') return null;
+  return payload as TaskProofSimpleResponse;
+}
+
 async function initProofUpload(taskId: string, proofIntent: TaskProofIntent): Promise<{ success: true; target: TaskProofUploadTarget } | { success: false; error: string }> {
   const { data, error } = await invokeTaskProofFunction<TaskProofInitResponse>({
     action: 'init',
@@ -271,14 +285,28 @@ export async function purgeTaskProofForFinalState(taskId: string): Promise<TaskP
   return { success: true };
 }
 
-export async function queueAiEvalForTask(taskId: string): Promise<{ success: true } | { success: false; error: string }> {
+export async function queueAiEvalForTask(taskId: string): Promise<QueueAiEvalResult> {
   const { data, error } = await invokeTaskProofFunction<TaskProofSimpleResponse>({
     action: 'queue-ai-eval',
     taskId,
   });
 
   if (error) {
-    return { success: false, error: await invokeErrorMessage(error) };
+    const payload = invokeErrorPayload(error);
+    if (payload?.code === 'AI_QUOTA_EXHAUSTED' && payload.quota) {
+      return {
+        success: false,
+        code: payload.code,
+        quota: payload.quota,
+        error: formatAiVoucherQuotaExhaustedMessage(payload.quota),
+      };
+    }
+    return {
+      success: false,
+      error: await invokeErrorMessage(error),
+      code: payload?.code,
+      quota: payload?.quota,
+    };
   }
 
   if (!data?.success) {

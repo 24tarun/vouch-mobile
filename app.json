@@ -79,6 +79,7 @@
       "expo-web-browser",
       "expo-apple-authentication",
       "expo-audio",
+      "react-native-compressor",
       "./plugins/withAlarmKit"
     ],
     "extra": {

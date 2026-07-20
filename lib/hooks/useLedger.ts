@@ -18,6 +18,7 @@ export interface LedgerEntryRowData {
   createdAt: string;
   deadline: string | null;
   kind: LedgerEntryKind;
+  taskStatus: string | null;
 }
 
 export interface LedgerMonth {
@@ -164,6 +165,7 @@ export async function fetchLedger(userId: string): Promise<LedgerData> {
       createdAt: typeof row.created_at === 'string' ? row.created_at : new Date().toISOString(),
       deadline: typeof task?.deadline === 'string' ? task.deadline : null,
       kind,
+      taskStatus: typeof task?.status === 'string' ? task.status : null,
     };
   });
 

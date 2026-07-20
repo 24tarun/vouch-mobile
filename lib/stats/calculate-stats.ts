@@ -7,6 +7,7 @@ export interface SettingsStats {
   accepted: number;
   denied: number;
   missed: number;
+  surrendered: number;
   totalVouched: number;
   focusedSeconds: number;
 }
@@ -82,6 +83,7 @@ export async function fetchSettingsStats(userId: string): Promise<{ data: Settin
       accepted: taskStatsRes.data?.accepted ?? 0,
       denied: taskStatsRes.data?.denied ?? 0,
       missed: taskStatsRes.data?.missed ?? 0,
+      surrendered: taskStatsRes.data?.surrendered ?? 0,
       totalVouched: vouchedRes.data ?? 0,
       focusedSeconds: focusedTimeRes.data ?? 0,
     },

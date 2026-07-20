@@ -764,6 +764,7 @@ test.each([
   'AWAITING_AI',
   'ACCEPTED',
   'MISSED',
+  'SURRENDERED',
   'DELETED',
 ])('reconciliation cancels and dismisses stale Expo schedules for %s tasks', async (status) => {
   mockTasks = [{ id: 'task-1', title: 'Pay rent', status }];

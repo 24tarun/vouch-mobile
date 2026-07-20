@@ -2,11 +2,12 @@ import type { ImagePickerAsset } from 'expo-image-picker';
 import { supabase } from '@/lib/supabase';
 import { postponeTask } from '@/lib/task-postpone';
 import { purgeTaskProofForFinalState, queueAiEvalForTask, removeCurrentTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
-import { syncGoogleCalendarTaskAfterDelete } from '@/lib/google-calendar-mobile-sync';
+import { syncGoogleCalendarTaskAfterDelete, syncGoogleCalendarTaskAfterSurrender } from '@/lib/google-calendar-mobile-sync';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { AI_PROFILE_ID } from '@/lib/constants/ai-profile';
 import { TASK_DELETE_WINDOW_MS } from '@/lib/constants/timings';
 import { isValidTimeZone, getDatePartsInTimeZone } from '@/lib/utils/timezone';
+import { getTaskDeadlineCutoffIso, isTaskCompletionLocked } from '@/lib/tasks/task-completion-lock';
 
 interface TaskMutationResult {
   success: boolean;
@@ -17,8 +18,6 @@ interface TaskMutationResult {
   pausedAt?: string | null;
   stateChanged?: boolean;
 }
-
-const DEADLINE_INCLUSIVE_MINUTE_MS = 60 * 1000;
 
 function getOffsetIsoForTimeZone(date: Date, timeZone: string): string {
   const offsetPart = new Intl.DateTimeFormat('en-US', {
@@ -49,14 +48,14 @@ function getVoucherResponseDeadlineUtc(baseDate: Date = new Date(), userTimeZone
   const month = String(targetLocal.month).padStart(2, '0');
   const day = String(targetLocal.day).padStart(2, '0');
   const tzSuffix = offsetIso === 'Z' ? 'Z' : offsetIso;
-  const targetIso = `${targetLocal.year}-${month}-${day}T23:00:00.000${tzSuffix}`;
+  const targetIso = `${targetLocal.year}-${month}-${day}T23:59:59.999${tzSuffix}`;
 
   return new Date(targetIso);
 }
 
-export function isTaskWithinDeleteWindow(createdAt: string | null | undefined): boolean {
+export function isTaskWithinDeleteWindow(createdAt: string | null | undefined, nowMs: number = Date.now()): boolean {
   const createdAtMs = createdAt ? new Date(createdAt).getTime() : NaN;
-  return Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) <= TASK_DELETE_WINDOW_MS;
+  return Number.isFinite(createdAtMs) && (nowMs - createdAtMs) < TASK_DELETE_WINDOW_MS;
 }
 
 async function getAuthenticatedUserId(): Promise<string | null> {
@@ -72,7 +71,7 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const completionDeadlineCutoffIso = new Date(now.getTime() - DEADLINE_INCLUSIVE_MINUTE_MS).toISOString();
+  const completionDeadlineCutoffIso = getTaskDeadlineCutoffIso(now);
   const actorUserClientInstanceId = await resolveUserClientInstanceId(userId);
   const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -177,11 +176,13 @@ export async function undoCompleteTask(taskId: string, fromStatus: string): Prom
   const userId = await getAuthenticatedUserId();
   if (!userId) return { success: false, error: 'Please sign in again and retry.' };
 
-  const now = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const completionDeadlineCutoffIso = getTaskDeadlineCutoffIso(now);
   const actorUserClientInstanceId = await resolveUserClientInstanceId(userId);
   const { data: taskSnapshot, error: taskSnapshotError } = await supabase
     .from('tasks')
-    .select('id, voucher_id, ai_escalated_from')
+    .select('id, voucher_id, ai_escalated_from, status, deadline, postponed_at')
     .eq('id', taskId)
     .eq('user_id', userId)
     .single();
@@ -190,31 +191,45 @@ export async function undoCompleteTask(taskId: string, fromStatus: string): Prom
     return { success: false, userId, error: taskSnapshotError?.message ?? 'Task not found.' };
   }
 
-  const shouldRestoreAiVoucher = taskSnapshot.ai_escalated_from && taskSnapshot.voucher_id !== AI_PROFILE_ID;
+  if (isTaskCompletionLocked(taskSnapshot.status, taskSnapshot.deadline, now.getTime())) {
+    return { success: false, userId, error: 'The task deadline has passed. Proof and completion can no longer be changed.' };
+  }
 
-  const { error } = await supabase
+  if (!['MARKED_COMPLETE', 'AWAITING_VOUCHER', 'AWAITING_AI'].includes(taskSnapshot.status)) {
+    return { success: false, userId, error: `Cannot undo completion from ${taskSnapshot.status} status.` };
+  }
+
+  const shouldRestoreAiVoucher = taskSnapshot.ai_escalated_from && taskSnapshot.voucher_id !== AI_PROFILE_ID;
+  const restoredStatus = taskSnapshot.postponed_at ? 'POSTPONED' : 'ACTIVE';
+
+  const { data: updatedRows, error } = await supabase
     .from('tasks')
     .update({
-      status: 'ACTIVE',
+      status: restoredStatus,
       marked_completed_at: null,
       voucher_response_deadline: null,
       voucher_id: shouldRestoreAiVoucher ? AI_PROFILE_ID : taskSnapshot.voucher_id,
       ai_escalated_from: shouldRestoreAiVoucher ? false : taskSnapshot.ai_escalated_from,
-      updated_at: now,
+      updated_at: nowIso,
     })
     .eq('id', taskId)
     .eq('user_id', userId)
-    .in('status', ['MARKED_COMPLETE', 'AWAITING_VOUCHER', 'AWAITING_AI']);
+    .eq('status', taskSnapshot.status)
+    .gt('deadline', completionDeadlineCutoffIso)
+    .select('id');
 
   if (error) return { success: false, userId, error: error.message };
+  if (!updatedRows || updatedRows.length === 0) {
+    return { success: false, userId, error: 'Task can no longer be reverted. Please refresh.' };
+  }
 
   const { error: undoEventError } = await supabase.from('task_events').insert({
     task_id: taskId,
     event_type: 'UNDO_COMPLETE',
     actor_id: userId,
     actor_user_client_instance_id: actorUserClientInstanceId,
-    from_status: fromStatus,
-    to_status: 'ACTIVE',
+    from_status: taskSnapshot.status || fromStatus,
+    to_status: restoredStatus,
     metadata: shouldRestoreAiVoucher
       ? {
           restored_ai_voucher: true,
@@ -304,6 +319,28 @@ export async function deleteTask(taskId: string): Promise<TaskMutationResult> {
     success: true,
     userId,
     warningMessage,
+  };
+}
+
+export async function surrenderTask(taskId: string): Promise<TaskMutationResult> {
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { success: false, error: 'Please sign in again and retry.' };
+
+  const actorUserClientInstanceId = await resolveUserClientInstanceId(userId);
+  const { data, error } = await supabase.rpc('surrender_task_atomic', {
+    p_task_id: taskId,
+    p_actor_user_client_instance_id: actorUserClientInstanceId,
+  }).single();
+
+  if (error || !data) {
+    return { success: false, userId, error: error?.message ?? 'Task could not be surrendered.' };
+  }
+
+  const googleSync = await syncGoogleCalendarTaskAfterSurrender(taskId);
+  return {
+    success: true,
+    userId,
+    warningMessage: googleSync.message ?? undefined,
   };
 }
 

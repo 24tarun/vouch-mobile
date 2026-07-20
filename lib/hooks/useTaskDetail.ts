@@ -27,6 +27,41 @@ export interface TaskDetailData {
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+interface CachedProofUrl {
+  revision: string;
+  signedUrl: string;
+  expiresAt: number;
+}
+
+const proofUrlCache = new Map<string, CachedProofUrl>();
+const SIGNED_URL_REFRESH_BUFFER_MS = 60_000;
+
+async function getProofSignedUrl(bucket: string, objectPath: string, revision: string): Promise<string | null> {
+  const cacheKey = `${bucket}:${objectPath}`;
+  const cached = proofUrlCache.get(cacheKey);
+
+  if (
+    cached?.revision === revision &&
+    cached.expiresAt - SIGNED_URL_REFRESH_BUFFER_MS > Date.now()
+  ) {
+    return cached.signedUrl;
+  }
+
+  const { data, error } = await supabase.storage
+    .from(bucket)
+    .createSignedUrl(objectPath, SIGNED_URL_EXPIRY_SECONDS);
+
+  if (error || !data?.signedUrl) return null;
+
+  proofUrlCache.set(cacheKey, {
+    revision,
+    signedUrl: data.signedUrl,
+    expiresAt: Date.now() + SIGNED_URL_EXPIRY_SECONDS * 1_000,
+  });
+
+  return data.signedUrl;
+}
+
 async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<TaskDetailData> {
   const { data: taskData, error: taskError } = await supabase
     .from('tasks')
@@ -58,7 +93,7 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
 
   const { data: proofRows, error: proofError } = await supabase
     .from('task_completion_proofs')
-    .select('bucket, object_path, media_kind, overlay_timestamp_text, upload_state')
+    .select('bucket, object_path, media_kind, overlay_timestamp_text, upload_state, updated_at')
     .eq('task_id', taskId)
     .eq('upload_state', 'UPLOADED')
     .order('updated_at', { ascending: false })
@@ -89,15 +124,16 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
     object_path?: string | null;
     media_kind?: string | null;
     overlay_timestamp_text?: string | null;
+    updated_at?: string | null;
   } | null;
 
   if (proofRow?.object_path) {
     const bucket = proofRow.bucket || 'task-proofs';
-    const { data: signedData, error: signedError } = await supabase.storage
-      .from(bucket)
-      .createSignedUrl(proofRow.object_path, SIGNED_URL_EXPIRY_SECONDS);
-
-    const proofUrl = (!signedError && signedData?.signedUrl) ? signedData.signedUrl : null;
+    const proofUrl = await getProofSignedUrl(
+      bucket,
+      proofRow.object_path,
+      proofRow.updated_at ?? '',
+    );
 
     if (proofUrl) {
       proof = {

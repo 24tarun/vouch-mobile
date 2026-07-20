@@ -2,6 +2,8 @@ import type { ImagePickerAsset } from 'expo-image-picker';
 import { File } from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
 import { deriveProofTimestampText } from '@/lib/proof-timestamp-mobile';
+import { prepareTaskProofMedia, type PreparedTaskProofMedia } from '@/lib/proof-media-preparation';
+import { maxTaskProofBytes, taskProofSizeLabel } from '@/lib/proof-media-limits';
 import type { AiVoucherQuota } from '@/lib/types';
 import { formatAiVoucherQuotaExhaustedMessage } from '@/lib/ai-voucher-quota';
 
@@ -334,14 +336,15 @@ export async function removeCurrentTaskProofAsset(taskId: string): Promise<TaskP
 }
 
 export async function uploadTaskProofAsset(taskId: string, asset: ImagePickerAsset): Promise<TaskProofUploadResult> {
+  let preparedMedia: PreparedTaskProofMedia | null = null;
   try {
     if (!asset.uri) {
       return { success: false, error: 'Selected media is missing a file path.' };
     }
 
     const mediaKind: 'image' | 'video' = asset.type === 'video' ? 'video' : 'image';
-    const mimeType = (asset.mimeType || inferMimeTypeFromUri(asset.uri, mediaKind)).toLowerCase();
-    if (!ALLOWED_PROOF_MIME_TYPES.has(mimeType)) {
+    const originalMimeType = (asset.mimeType || inferMimeTypeFromUri(asset.uri, mediaKind)).toLowerCase();
+    if (!ALLOWED_PROOF_MIME_TYPES.has(originalMimeType)) {
       return { success: false, error: 'Please use JPG, PNG, WEBP, HEIC, MP4, MOV, or WEBM.' };
     }
 
@@ -357,17 +360,6 @@ export async function uploadTaskProofAsset(taskId: string, asset: ImagePickerAss
       return { success: false, error: 'Video proof must be 15 seconds or less.' };
     }
 
-    const fileResponse = await fetch(asset.uri);
-    if (!fileResponse.ok) {
-      return { success: false, error: 'Could not read selected media.' };
-    }
-
-    const fileBytes = await fileResponse.arrayBuffer();
-    const sizeBytes = Number(asset.fileSize ?? fileBytes.byteLength);
-    if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
-      return { success: false, error: 'Selected media size is invalid.' };
-    }
-
     let fileModificationTimeMs: number | null = null;
     let fileCreationTimeMs: number | null = null;
     try {
@@ -376,6 +368,32 @@ export async function uploadTaskProofAsset(taskId: string, asset: ImagePickerAss
       fileCreationTimeMs = file.creationTime ?? null;
     } catch {
       // keep null timestamps; helper will fall back safely
+    }
+
+    preparedMedia = await prepareTaskProofMedia({
+      asset,
+      mediaKind,
+      mimeType: originalMimeType,
+      durationMs,
+    });
+
+    const mimeType = preparedMedia.mimeType;
+    const fileResponse = await fetch(preparedMedia.uri);
+    if (!fileResponse.ok) {
+      return { success: false, error: 'Could not read selected media.' };
+    }
+
+    const fileBytes = await fileResponse.arrayBuffer();
+    const sizeBytes = fileBytes.byteLength;
+    if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+      return { success: false, error: 'Selected media size is invalid.' };
+    }
+
+    if (sizeBytes > maxTaskProofBytes(mediaKind)) {
+      return {
+        success: false,
+        error: `Could not reduce this ${mediaKind} below ${taskProofSizeLabel(mediaKind)}.`,
+      };
     }
 
     const overlayTimestampText = deriveProofTimestampText({
@@ -426,5 +444,7 @@ export async function uploadTaskProofAsset(taskId: string, asset: ImagePickerAss
     return { success: true, mediaKind };
   } catch (error: unknown) {
     return { success: false, error: await invokeErrorMessage(error) };
+  } finally {
+    preparedMedia?.cleanup();
   }
 }

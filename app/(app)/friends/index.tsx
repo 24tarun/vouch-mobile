@@ -1140,7 +1140,7 @@ export default function FriendsScreen() {
               <View style={styles.historyList}>
                 {historyTasks.map((task) => {
                   const failedPeriod = new Date(task.updated_at).toISOString().slice(0, 7);
-                  const canRectify = (task.status === 'DENIED' || task.status === 'MISSED') && failedPeriod === currentPeriod;
+                  const canRectify = (task.status === 'DENIED' || task.status === 'MISSED' || task.status === 'SURRENDERED') && failedPeriod === currentPeriod;
                   return (
                     <HistoryRow
                       key={task.id}

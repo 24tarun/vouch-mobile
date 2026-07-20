@@ -32,6 +32,7 @@ interface LedgerEntry {
   createdAt: string;
   deadline: string | null;
   kind: LedgerEntryKind;
+  taskStatus: string | null;
 }
 
 interface LedgerMonth {
@@ -83,9 +84,12 @@ function formatCurrency(cents: number, currency: CurrencyCode): string {
   return `${currencySymbol(currency)}${(Math.abs(cents) / 100).toFixed(2)}`;
 }
 
-function badgeForKind(kind: LedgerEntryKind, colors: Colors): { label: string; fg: string; bg: string } {
+function badgeForKind(kind: LedgerEntryKind, colors: Colors, taskStatus?: string | null): { label: string; fg: string; bg: string } {
   switch (kind) {
     case 'failure':
+      if (taskStatus === 'SURRENDERED') {
+        return { label: 'SURRENDERED', fg: '#FB7185', bg: 'rgba(244,63,94,0.18)' };
+      }
       return { label: 'MISSED', fg: '#EF4444', bg: 'rgba(239,68,68,0.18)' };
     case 'rectified':
       return { label: 'RECTIFIED', fg: '#22C55E', bg: 'rgba(34,197,94,0.18)' };
@@ -163,7 +167,7 @@ function LedgerEntryRow({
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const router = useRouter();
-  const badge = badgeForKind(entry.kind, colors);
+  const badge = badgeForKind(entry.kind, colors, entry.taskStatus);
   const reversal = isReversal(entry.kind, entry.amountCents);
   const deadlineDate = formatDeadlineDate(entry.deadline);
 

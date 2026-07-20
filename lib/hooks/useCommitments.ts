@@ -55,7 +55,7 @@ const PENDING_STATUSES = new Set([
   'MARKED_COMPLETE', 'AWAITING_USER', 'ESCALATED', 'AI_DENIED',
 ]);
 const PASSING_STATUSES = new Set(['ACCEPTED', 'AUTO_ACCEPTED', 'AI_ACCEPTED', 'RECTIFIED', 'SETTLED']);
-const FAILING_STATUSES = new Set(['DENIED', 'MISSED']);
+const FAILING_STATUSES = new Set(['DENIED', 'MISSED', 'SURRENDERED']);
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 

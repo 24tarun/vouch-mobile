@@ -20,6 +20,7 @@ interface TaskContentProps {
   onProofRemoved: (taskId: string) => Promise<void>;
   onPostpone: (task: TaskRowData) => void;
   onDelete: (task: TaskRowData) => Promise<void>;
+  onSurrender: (task: TaskRowData) => Promise<void>;
   defaultPomoDurationMinutes: number;
   scrollRef?: RefObject<ScrollView | null>;
   onScrollOffsetChange?: (offsetY: number) => void;
@@ -43,6 +44,7 @@ export function TaskContent({
   onProofRemoved,
   onPostpone,
   onDelete,
+  onSurrender,
   defaultPomoDurationMinutes,
   scrollRef,
   onScrollOffsetChange,
@@ -103,6 +105,7 @@ export function TaskContent({
               onProofRemoved={onProofRemoved}
               onPostpone={onPostpone}
               onDelete={onDelete}
+              onSurrender={onSurrender}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}
               onSubtaskComposerFocus={onSubtaskComposerFocus}
               proofActionInProgress={proofUploadTaskId === task.id}
@@ -118,6 +121,7 @@ export function TaskContent({
                 onProofRemoved={onProofRemoved}
                 onPostpone={onPostpone}
                 onDelete={onDelete}
+                onSurrender={onSurrender}
                 defaultPomoDurationMinutes={defaultPomoDurationMinutes}
                 onSubtaskComposerFocus={onSubtaskComposerFocus}
                 proofActionInProgress={proofUploadTaskId === task.id}
@@ -132,6 +136,7 @@ export function TaskContent({
               onProofRemoved={onProofRemoved}
               onPostpone={onPostpone}
               onDelete={onDelete}
+              onSurrender={onSurrender}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}
               onSubtaskComposerFocus={onSubtaskComposerFocus}
               proofUploadTaskId={proofUploadTaskId}

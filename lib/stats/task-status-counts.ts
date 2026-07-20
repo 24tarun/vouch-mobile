@@ -5,6 +5,7 @@ export interface TaskStatsCounts {
   accepted: number;
   denied: number;
   missed: number;
+  surrendered: number;
 }
 
 const ACCEPTED_STATUSES = new Set<TaskStatus>(['ACCEPTED', 'AUTO_ACCEPTED', 'AI_ACCEPTED']);
@@ -15,6 +16,7 @@ export function calculateTaskStatusCounts(tasks: readonly { status: TaskStatus }
     accepted: 0,
     denied: 0,
     missed: 0,
+    surrendered: 0,
   };
 
   for (const task of tasks) {
@@ -27,9 +29,12 @@ export function calculateTaskStatusCounts(tasks: readonly { status: TaskStatus }
     if (task.status === 'MISSED') {
       counts.missed += 1;
     }
+    if (task.status === 'SURRENDERED') {
+      counts.surrendered += 1;
+    }
   }
 
-  counts.total = counts.accepted + counts.denied + counts.missed;
+  counts.total = counts.accepted + counts.denied + counts.missed + counts.surrendered;
 
   return counts;
 }

@@ -13,6 +13,7 @@ export const TASK_PAST_STATUSES: TaskStatus[] = [
   'AI_ACCEPTED',
   'DENIED',
   'MISSED',
+  'SURRENDERED',
   'RECTIFIED',
   'SETTLED',
 ];
@@ -28,6 +29,7 @@ export const TASK_COMPLETED_LIKE_STATUSES = new Set<TaskStatus>([
   'AI_ACCEPTED',
   'DENIED',
   'MISSED',
+  'SURRENDERED',
   'RECTIFIED',
   'SETTLED',
   'DELETED',
@@ -56,6 +58,7 @@ export const VOUCHER_HISTORY_STATUSES: TaskStatus[] = [
   'AI_ACCEPTED',
   'DENIED',
   'MISSED',
+  'SURRENDERED',
   'RECTIFIED',
   'SETTLED',
 ];

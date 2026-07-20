@@ -37,6 +37,7 @@ import {
   completeTask,
   deleteTask,
   isTaskWithinDeleteWindow,
+  surrenderTask,
   removeTaskProof,
   uploadTaskProof,
 } from '@/lib/tasks/task-actions';
@@ -443,6 +444,38 @@ export default function TasksScreen() {
     return handleDeleteTaskRef.current!(task);
   }, []);
 
+  const handleSurrenderTaskRef = useRef<(task: TaskRowData) => Promise<void>>(undefined);
+  handleSurrenderTaskRef.current = async (task: TaskRowData) => {
+    if (task.id.startsWith('optimistic-')) {
+      Alert.alert('Please wait', 'Task is still being created.');
+      return;
+    }
+
+    const result = await surrenderTask(task.id);
+    if (!result.success) {
+      Alert.alert('Could not surrender task', result.error ?? 'Unknown error');
+      refetchTasks();
+      return;
+    }
+
+    if (result.warningMessage) {
+      Toast.show({
+        type: 'proofError',
+        text1: result.warningMessage,
+        position: 'bottom',
+        bottomOffset: 84,
+        visibilityTime: 3200,
+      });
+    }
+
+    void queryClient.invalidateQueries({ queryKey: queryKeys.taskDetail(task.id) });
+    refetchTasks();
+    if (result.userId) void syncLocalReminderNotificationsAsync(result.userId);
+  };
+  const handleSurrenderTask = useCallback((task: TaskRowData) => {
+    return handleSurrenderTaskRef.current!(task);
+  }, []);
+
   const handlePostponeTask = useCallback((task: TaskRowData) => {
     if (task.id.startsWith('optimistic-')) {
       Alert.alert('Please wait', 'Task is still being created.');
@@ -536,6 +569,7 @@ export default function TasksScreen() {
         onProofRemoved={handleProofRemoved}
         onPostpone={handlePostponeTask}
         onDelete={handleDeleteTask}
+        onSurrender={handleSurrenderTask}
         defaultPomoDurationMinutes={defaultPomoDurationMinutes}
         scrollRef={taskListScrollRef}
         onScrollOffsetChange={handleScrollOffsetChange}

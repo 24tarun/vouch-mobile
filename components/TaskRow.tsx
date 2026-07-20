@@ -22,6 +22,7 @@ import { supabase } from '@/lib/supabase';
 import { TASK_COMPLETED_LIKE_STATUSES } from '@/lib/constants/task-status';
 import { isOptimisticTaskId } from '@/lib/tasks/task-id';
 import type { TaskStatus } from '@/lib/types';
+import { TASK_DELETE_WINDOW_MS } from '@/lib/constants/timings';
 
 interface Subtask {
   id: string;
@@ -31,8 +32,6 @@ interface Subtask {
 }
 
 const MAX_SUBTASKS = 20;
-const DELETE_WINDOW_MS = 10 * 60 * 1000;
-
 export interface SubtaskRowData {
   id: string;
   title: string;
@@ -64,6 +63,7 @@ interface TaskRowProps {
   onProofRemoved?: (taskId: string) => void | Promise<void>;
   onPostpone?: (task: TaskRowData) => void | Promise<void>;
   onDelete?: (task: TaskRowData) => void | Promise<void>;
+  onSurrender?: (task: TaskRowData) => void | Promise<void>;
   defaultPomoDurationMinutes?: number;
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
   proofActionInProgress?: boolean;
@@ -87,6 +87,7 @@ export const TaskRow = memo(function TaskRow({
   onProofRemoved,
   onPostpone,
   onDelete,
+  onSurrender,
   defaultPomoDurationMinutes = 25,
   onSubtaskComposerFocus,
   proofActionInProgress = false,
@@ -109,6 +110,13 @@ export const TaskRow = memo(function TaskRow({
   const canOpenDetail = !isOptimisticTaskId(task.id);
   const { width: screenWidth } = useWindowDimensions();
   const [expanded, setExpanded] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!onDelete && !onSurrender) return;
+    const intervalId = setInterval(() => setNowMs(Date.now()), 15000);
+    return () => clearInterval(intervalId);
+  }, [onDelete, onSurrender]);
 
   // ── Swipe gesture ──────────────────────────────────────────────────────────
   const translateX = useSharedValue(0);
@@ -381,7 +389,9 @@ export const TaskRow = memo(function TaskRow({
 
   const deadlineLabel = formatDeadline(task.deadline, isFuture);
   const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : NaN;
-  const canDeleteByAge = Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) <= DELETE_WINDOW_MS;
+  const hasValidCreatedAt = Number.isFinite(createdAtMs);
+  const canDeleteByAge = hasValidCreatedAt && (nowMs - createdAtMs) < TASK_DELETE_WINDOW_MS;
+  const canSurrenderByAge = hasValidCreatedAt && !canDeleteByAge;
   const canPostpone = Boolean(onPostpone) && !task.postponed_at && !isPostponing;
   const isCurrentTaskPomo = activePomoSession?.task_id === task.id;
   const currentTaskPomoStatus = isCurrentTaskPomo ? activePomoSession?.status : null;
@@ -499,20 +509,37 @@ export const TaskRow = memo(function TaskRow({
     });
   }
 
+  function confirmSurrender(): Promise<boolean> {
+    const recurrenceNote = task.recurrence_rule_id ? ' Future repetitions will continue.' : '';
+    return new Promise((resolve) => {
+      Alert.alert(
+        'Surrender task',
+        `This immediately ends the task, applies its full failure cost, and affects your reputation and commitments.${recurrenceNote}`,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Surrender', style: 'destructive', onPress: () => resolve(true) },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    });
+  }
+
   async function handleDeletePress() {
     if (isDeleting) return;
-    if (!canDeleteByAge) return;
-    if (!onDelete) {
-      Alert.alert('Delete unavailable', 'Delete is not available right now.');
+    if (!canDeleteByAge && !canSurrenderByAge) return;
+    const isSurrender = canSurrenderByAge;
+    const action = isSurrender ? onSurrender : onDelete;
+    if (!action) {
+      Alert.alert(isSurrender ? 'Surrender unavailable' : 'Delete unavailable', 'This action is not available right now.');
       return;
     }
 
-    const confirmed = await confirmDelete();
+    const confirmed = await (isSurrender ? confirmSurrender() : confirmDelete());
     if (!confirmed) return;
 
     setIsDeleting(true);
     try {
-      await onDelete(task);
+      await action(task);
     } finally {
       setIsDeleting(false);
     }
@@ -660,16 +687,20 @@ export const TaskRow = memo(function TaskRow({
               ) : null}
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.actionBtn, !canDeleteByAge && styles.actionBtnDisabled]}
+              style={[styles.actionBtn, (!canDeleteByAge && !canSurrenderByAge) && styles.actionBtnDisabled]}
               activeOpacity={0.65}
-              accessibilityLabel="Delete"
+              accessibilityLabel={canSurrenderByAge ? 'Surrender task' : 'Delete task'}
               onPress={() => { void handleDeletePress(); }}
-              disabled={!canDeleteByAge}
+              disabled={!canDeleteByAge && !canSurrenderByAge}
             >
               {isDeleting ? (
                 <ActivityIndicator size="small" color={colors.destructive} />
               ) : (
-                <Feather name="trash-2" size={20} color={canDeleteByAge ? colors.destructive : colors.textMuted} />
+                <Feather
+                  name={canSurrenderByAge ? 'x-circle' : 'trash-2'}
+                  size={20}
+                  color={(canDeleteByAge || canSurrenderByAge) ? colors.destructive : colors.textMuted}
+                />
               )}
             </TouchableOpacity>
             <TouchableOpacity

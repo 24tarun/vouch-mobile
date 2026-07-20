@@ -102,7 +102,7 @@ export function ProofCaptureModal({
     if (mode === 'photo') {
       try {
         const photo = await cameraRef.current.takePictureAsync({
-          quality: 0.9,
+          quality: 1,
           exif: true,
         });
 
@@ -181,7 +181,7 @@ export function ProofCaptureModal({
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],
         allowsMultipleSelection: false,
-        quality: 0.9,
+        quality: 1,
         videoMaxDuration: MAX_VIDEO_SECONDS,
         exif: true,
         ...(Platform.OS === 'ios'

@@ -17,6 +17,7 @@ const STATUS_LABEL: Record<string, string> = {
   AI_ACCEPTED: 'AI Accepted',
   DENIED: 'Denied',
   MISSED: 'Missed',
+  SURRENDERED: 'Surrendered',
   RECTIFIED: 'Rectified',
   SETTLED: 'Override',   // vouch-web renders SETTLED as "OVERRIDE"
   DELETED: 'Deleted',
@@ -95,6 +96,11 @@ const STATUS_STYLE: Record<string, StatusStyle> = {
     text: '#EF4444',
     bg: '#EF44441A',
     border: '#EF44444D',
+  },
+  SURRENDERED: {
+    text: '#FB7185',
+    bg: '#F43F5E1A',
+    border: '#F43F5E4D',
   },
   RECTIFIED: {
     text: '#FDBA74',        // orange-300

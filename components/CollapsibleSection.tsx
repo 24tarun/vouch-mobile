@@ -20,6 +20,7 @@ interface CollapsibleSectionProps {
   onProofRemoved?: (taskId: string) => void | Promise<void>;
   onPostpone?: (task: TaskRowData) => void | Promise<void>;
   onDelete?: (task: TaskRowData) => void | Promise<void>;
+  onSurrender?: (task: TaskRowData) => void | Promise<void>;
   defaultPomoDurationMinutes?: number;
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
   proofUploadTaskId?: string | null;
@@ -38,6 +39,7 @@ export function CollapsibleSection({
   onProofRemoved,
   onPostpone,
   onDelete,
+  onSurrender,
   defaultPomoDurationMinutes = 25,
   onSubtaskComposerFocus,
   proofUploadTaskId = null,
@@ -77,6 +79,7 @@ export function CollapsibleSection({
               onProofRemoved={onProofRemoved}
               onPostpone={onPostpone}
               onDelete={onDelete}
+              onSurrender={onSurrender}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}
               onSubtaskComposerFocus={onSubtaskComposerFocus}
               proofActionInProgress={proofUploadTaskId === task.id}

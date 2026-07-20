@@ -6,7 +6,7 @@ function task(status: TaskStatus) {
 }
 
 describe('calculateTaskStatusCounts', () => {
-  it('keeps total tasks equal to accepted + denied + missed', () => {
+  it('keeps total tasks equal to accepted + denied + missed + surrendered', () => {
     const counts = calculateTaskStatusCounts([
       task('ACTIVE'),
       task('POSTPONED'),
@@ -20,16 +20,18 @@ describe('calculateTaskStatusCounts', () => {
       task('AI_ACCEPTED'),
       task('DENIED'),
       task('MISSED'),
+      task('SURRENDERED'),
       task('RECTIFIED'),
       task('SETTLED'),
       task('DELETED'),
     ]);
 
     expect(counts).toEqual({
-      total: 5,
+      total: 6,
       accepted: 3,
       denied: 1,
       missed: 1,
+      surrendered: 1,
     });
   });
 
@@ -44,6 +46,7 @@ describe('calculateTaskStatusCounts', () => {
       accepted: 0,
       denied: 0,
       missed: 0,
+      surrendered: 0,
     });
   });
 });

@@ -121,7 +121,11 @@ async function dispatchGoogleCalendarOutbox(outboxId: number): Promise<GoogleCal
   }
 }
 
-export async function syncGoogleCalendarTaskAfterCreate(taskId: string): Promise<GoogleCalendarMobileSyncResult> {
+async function syncGoogleCalendarTaskAfterUpsert(
+  taskId: string,
+  actionLabel: 'created' | 'surrendered',
+): Promise<GoogleCalendarMobileSyncResult> {
+  const actionSentence = actionLabel === 'created' ? 'Task created' : 'Task surrendered';
   try {
     const { data, error } = await ((supabase.rpc('enqueue_google_calendar_task_upsert', {
       p_task_id: taskId,
@@ -134,7 +138,7 @@ export async function syncGoogleCalendarTaskAfterCreate(taskId: string): Promise
       });
       return {
         status: 'warning',
-        message: 'Task created, but Google sync could not be queued.',
+        message: `${actionSentence}, but Google sync could not be queued.`,
       };
     }
 
@@ -143,7 +147,7 @@ export async function syncGoogleCalendarTaskAfterCreate(taskId: string): Promise
       console.warn('[google-calendar-mobile-sync] enqueue RPC returned no row', { taskId });
       return {
         status: 'warning',
-        message: 'Task created, but Google sync could not be queued.',
+        message: `${actionSentence}, but Google sync could not be queued.`,
       };
     }
 
@@ -155,7 +159,7 @@ export async function syncGoogleCalendarTaskAfterCreate(taskId: string): Promise
       return {
         status: 'skipped',
         reason: row.reason ?? 'task_not_event',
-        message: row.reason ? messageForSkipReason(row.reason) : null,
+        message: actionLabel === 'created' && row.reason ? messageForSkipReason(row.reason) : null,
       };
     }
 
@@ -163,7 +167,7 @@ export async function syncGoogleCalendarTaskAfterCreate(taskId: string): Promise
       console.warn('[google-calendar-mobile-sync] enqueue returned no outbox id', { taskId, row });
       return {
         status: 'warning',
-        message: 'Task created, but Google sync could not be started.',
+        message: `${actionSentence}, but Google sync could not be started.`,
       };
     }
 
@@ -176,7 +180,7 @@ export async function syncGoogleCalendarTaskAfterCreate(taskId: string): Promise
       });
       return {
         status: 'warning',
-        message: 'Task created. Google sync will retry in the background.',
+        message: `${actionSentence}. Google sync will retry in the background.`,
       };
     }
 
@@ -188,9 +192,17 @@ export async function syncGoogleCalendarTaskAfterCreate(taskId: string): Promise
     });
     return {
       status: 'warning',
-      message: 'Task created, but Google sync could not be started.',
+      message: `${actionSentence}, but Google sync could not be started.`,
     };
   }
+}
+
+export function syncGoogleCalendarTaskAfterCreate(taskId: string): Promise<GoogleCalendarMobileSyncResult> {
+  return syncGoogleCalendarTaskAfterUpsert(taskId, 'created');
+}
+
+export function syncGoogleCalendarTaskAfterSurrender(taskId: string): Promise<GoogleCalendarMobileSyncResult> {
+  return syncGoogleCalendarTaskAfterUpsert(taskId, 'surrendered');
 }
 
 export async function syncGoogleCalendarTaskAfterDelete(

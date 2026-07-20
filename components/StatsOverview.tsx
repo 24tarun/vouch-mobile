@@ -45,6 +45,7 @@ export interface StatsOverviewProps {
   accepted?: number;
   denied?: number;
   missed?: number;
+  surrendered?: number;
   totalVouched?: number;
   focusedSeconds?: number;
   loading?: boolean;
@@ -56,6 +57,7 @@ export function StatsOverview({
   accepted,
   denied,
   missed,
+  surrendered,
   totalVouched,
   focusedSeconds = 0,
   loading = false,
@@ -91,6 +93,12 @@ export function StatsOverview({
         glowColor: 'rgba(251,113,133,0.45)',
       },
       {
+        label: 'Surrendered',
+        value: loading ? '—' : String(surrendered ?? 0),
+        valueColor: isDark ? '#FB7185' : '#E11D48',
+        glowColor: 'rgba(251,113,133,0.45)',
+      },
+      {
         label: 'Total Vouched',
         value: loading ? '—' : String(totalVouched ?? 0),
         valueColor: isDark ? '#C084FC' : '#7C3AED',
@@ -103,7 +111,7 @@ export function StatsOverview({
         glowColor: 'rgba(34,211,238,0.45)',
       },
     ],
-    [loading, totalTasks, accepted, denied, missed, totalVouched, focusedSeconds, isDark],
+    [loading, totalTasks, accepted, denied, missed, surrendered, totalVouched, focusedSeconds, isDark],
   );
 
   return (

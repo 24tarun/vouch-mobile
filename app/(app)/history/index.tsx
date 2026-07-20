@@ -220,6 +220,7 @@ export default function HistoryScreen() {
               accepted={settingsStatsQuery.data?.accepted}
               denied={settingsStatsQuery.data?.denied}
               missed={settingsStatsQuery.data?.missed}
+              surrendered={settingsStatsQuery.data?.surrendered}
               totalVouched={settingsStatsQuery.data?.totalVouched}
               focusedSeconds={settingsStatsQuery.data?.focusedSeconds}
               loading={settingsStatsQuery.loading}

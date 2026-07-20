@@ -28,8 +28,8 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import Toast from 'react-native-toast-message';
 import { DEFAULT_REMINDER_OFFSET_MS, normalizePomoDurationMinutes } from '@/lib/constants/timings';
 import { supabase } from '@/lib/supabase';
-import { purgeTaskProofForFinalState, queueAiEvalForTask, removeTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
-import { completeTask, setTaskRepetitionsPaused, stopTaskRepetitions, undoCompleteTask, deleteTask, postponeTaskDeadline, isTaskWithinDeleteWindow } from '@/lib/tasks/task-actions';
+import { purgeTaskProofForFinalState, queueAiEvalForTask, removeCurrentTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
+import { completeTask, setTaskRepetitionsPaused, stopTaskRepetitions, undoCompleteTask, deleteTask, surrenderTask, postponeTaskDeadline, isTaskWithinDeleteWindow } from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
@@ -48,6 +48,7 @@ import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal'
 import { LegacyPostponeCalendarPicker } from '@/components/tasks/LegacyPostponeCalendarPicker';
 import { ProofCaptureModal } from '@/components/tasks/ProofCaptureModal';
 import { TaskTimeline } from '@/components/tasks/TaskTimeline';
+import { COMPLETION_EDITABLE_STATUSES, DEADLINE_INCLUSIVE_MINUTE_MS, isTaskCompletionLocked } from '@/lib/tasks/task-completion-lock';
 
 const MAX_AI_RESUBMITS = 3;
 
@@ -228,6 +229,7 @@ export default function TaskDetailScreen() {
   const { width: screenWidth } = useWindowDimensions();
   const { user, profile } = useAuth();
   const detail = useTaskDetail(isValidId && routeTaskId ? routeTaskId : null);
+  const task = detail.data?.task ?? null;
   const handleBack = () => {
     if (back === 'friends') {
       router.navigate('/friends' as any);
@@ -368,6 +370,26 @@ export default function TaskDetailScreen() {
   const [isTogglingRepetitions, setIsTogglingRepetitions] = useState(false);
   const [isStoppingRepetitions, setIsStoppingRepetitions] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [taskActionNowMs, setTaskActionNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = setInterval(() => setTaskActionNowMs(Date.now()), 15000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    const currentTask = task;
+    if (!currentTask || !(COMPLETION_EDITABLE_STATUSES as readonly string[]).includes(currentTask.status)) return;
+
+    const deadlineMs = new Date(currentTask.deadline).getTime();
+    if (!Number.isFinite(deadlineMs)) return;
+
+    const delayMs = deadlineMs + DEADLINE_INCLUSIVE_MINUTE_MS - Date.now();
+    if (delayMs <= 0 || delayMs > 2_147_000_000) return;
+
+    const timeoutId = setTimeout(() => setTaskActionNowMs(Date.now()), delayMs + 1);
+    return () => clearTimeout(timeoutId);
+  }, [task]);
   const [isCompleting, setIsCompleting] = useState(false);
   const [isPostponing, setIsPostponing] = useState(false);
   const [isEscalating, setIsEscalating] = useState(false);
@@ -402,7 +424,6 @@ export default function TaskDetailScreen() {
     setMinimized,
     startSession,
   } = usePomodoro();
-  const task = detail.data?.task ?? null;
   const taskId = task?.id ?? null;
   const voucherUsername = task?.voucher_id === AI_PROFILE_ID
     ? AI_PROFILE_USERNAME
@@ -524,6 +545,11 @@ export default function TaskDetailScreen() {
 
   async function uploadSelectedProof(asset: ImagePickerAsset) {
     if (!task || proofUploadLockRef.current) return;
+    if (isTaskCompletionLocked(task.status, task.deadline)) {
+      setProofCaptureOpen(false);
+      Alert.alert('Deadline passed', 'Proof and completion can no longer be changed.');
+      return;
+    }
 
     const isReplacingProof = Boolean(proof);
     const shouldAutoCompleteAfterUpload =
@@ -597,35 +623,19 @@ export default function TaskDetailScreen() {
 
   async function removeCurrentProof() {
     if (!task || !proof || proofUploadLockRef.current || proofRemoving) return;
+    if (isTaskCompletionLocked(task.status, task.deadline)) {
+      Alert.alert('Deadline passed', 'Proof and completion can no longer be changed.');
+      return;
+    }
 
     proofUploadLockRef.current = true;
     setProofRemoving(true);
     try {
-      // 1. Update DB ground truth first so realtime events never see has_proof=true
-      //    after the proof is gone. A dangling storage file is harmless.
-      const nowIso = new Date().toISOString();
-      const { error: taskUpdateError } = await supabase
-        .from('tasks')
-        .update({
-          has_proof: false,
-          updated_at: nowIso,
-        })
-        .eq('id', task.id)
-        .eq('user_id', task.user_id);
-
-      if (taskUpdateError) {
-        Alert.alert('Could not update task', taskUpdateError.message);
-        return;
-      }
-
-      // 2. Best-effort storage cleanup
-      const removeResult = await removeTaskProofAsset(task.id, {
-        bucket: proof.bucket,
-        objectPath: proof.objectPath,
-      });
-
+      const removeResult = await removeCurrentTaskProofAsset(task.id);
       if (!removeResult.success) {
-        Alert.alert('Proof removed', 'Task state was updated, but the proof file could not be deleted from storage.');
+        Alert.alert('Could not remove proof', removeResult.error);
+        await Promise.resolve(detail.refetch());
+        return;
       }
 
       queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
@@ -648,6 +658,10 @@ export default function TaskDetailScreen() {
 
   function openProofPicker() {
     if (proofUploadLockRef.current || proofRemoving) return;
+    if (task && isTaskCompletionLocked(task.status, task.deadline)) {
+      Alert.alert('Deadline passed', 'Proof and completion can no longer be changed.');
+      return;
+    }
     if (!proof) {
       setProofCaptureOpen(true);
       return;
@@ -1024,6 +1038,10 @@ export default function TaskDetailScreen() {
   // ── Undo complete ──────────────────────────────────────────────────────────
   async function handleUndoComplete() {
     if (!task || isUndoingComplete) return;
+    if (isTaskCompletionLocked(task.status, task.deadline)) {
+      Alert.alert('Deadline passed', 'Proof and completion can no longer be changed.');
+      return;
+    }
     setIsUndoingComplete(true);
     try {
       const previousTask = task;
@@ -1233,6 +1251,41 @@ export default function TaskDetailScreen() {
     }
   }
 
+  async function handleSurrenderPress() {
+    if (!task || isDeleting) return;
+    const recurrenceNote = task.recurrence_rule_id ? ' Future repetitions will continue.' : '';
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'Surrender task',
+        `This immediately ends the task, applies its full failure cost, and affects your reputation and commitments.${recurrenceNote}`,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Surrender', style: 'destructive', onPress: () => resolve(true) },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    });
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    try {
+      const result = await surrenderTask(task.id);
+      if (!result.success) {
+        Alert.alert('Could not surrender task', result.error ?? 'Unknown error');
+        invalidateDerivedTaskViews();
+        return;
+      }
+      if (result.warningMessage) {
+        Toast.show({ type: 'proofError', text1: result.warningMessage, position: 'bottom' });
+      }
+      if (result.userId) void syncLocalReminderNotificationsAsync(result.userId);
+      invalidateDerivedTaskViews();
+      router.back();
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
   function updateCustomReminderDatePart(dateValue: Date) {
     setCustomReminderDate((prev) => {
       const next = new Date(prev);
@@ -1430,7 +1483,7 @@ export default function TaskDetailScreen() {
   // ── Allowed flags ──────────────────────────────────────────────────────────
   const s = task.status;
   const isActiveOrPostponed = s === 'ACTIVE' || s === 'POSTPONED';
-  const isMissedOrDenied = s === 'MISSED' || s === 'DENIED';
+  const isMissedOrDenied = s === 'MISSED' || s === 'DENIED' || s === 'SURRENDERED';
   const isOwnTask = task.user_id === user?.id;
   const isAiVouched = task.voucher_id === AI_PROFILE_ID;
   const isAwaitingUserAi = isOwnTask && isAiVouched && s === 'AWAITING_USER';
@@ -1442,12 +1495,15 @@ export default function TaskDetailScreen() {
 
   const canPomo          = isOwnTask && isActiveOrPostponed;
   const canComplete      = isOwnTask && isActiveOrPostponed && !isCompleting;
-  const canProof         = isOwnTask && (isActiveOrPostponed || s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI' || s === 'MARKED_COMPLETE');
+  const completionEditingLocked = isTaskCompletionLocked(task.status, task.deadline, taskActionNowMs);
+  const canProof         = isOwnTask && (isActiveOrPostponed || (!completionEditingLocked && (s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI' || s === 'MARKED_COMPLETE')));
   const canManageRepetitions = isOwnTask && !!task.recurrence_rule_id && !!recurrenceRule;
   const canOverride      = isOwnTask && isMissedOrDenied && !isOverriding;
-  const canUndoComplete  = isOwnTask && (s === 'MARKED_COMPLETE' || s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI') && !isUndoingComplete;
+  const canUndoComplete  = isOwnTask && !completionEditingLocked && (s === 'MARKED_COMPLETE' || s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI') && !isUndoingComplete;
   const canPostpone      = isOwnTask && s === 'ACTIVE' && !task.postponed_at && !isPostponing;
-  const canDelete        = isOwnTask && (s === 'ACTIVE' || s === 'POSTPONED') && isTaskWithinDeleteWindow(task.created_at) && !isDeleting;
+  const hasValidCreatedAt = Number.isFinite(new Date(task.created_at).getTime());
+  const canDelete        = isOwnTask && isActiveOrPostponed && isTaskWithinDeleteWindow(task.created_at, taskActionNowMs) && !isDeleting;
+  const canSurrender     = isOwnTask && isActiveOrPostponed && hasValidCreatedAt && !canDelete && !isDeleting;
 
   const isSelfVouch = task.voucher_id === task.user_id;
   const isCurrentTaskPomo = activePomoSession?.task_id === task.id;
@@ -1844,13 +1900,13 @@ export default function TaskDetailScreen() {
           )}
 
           {/* Delete row */}
-          {canDelete && (
+          {(canDelete || canSurrender) && (
             <ActionBtn
               allowed
               token={BTN.delete}
-              label={isDeleting ? 'Deleting…' : 'Delete'}
-              icon="trash-2"
-              onPress={() => { void handleDeletePress(); }}
+              label={isDeleting ? (canSurrender ? 'Surrendering…' : 'Deleting…') : (canSurrender ? 'Surrender' : 'Delete')}
+              icon={canSurrender ? 'x-circle' : 'trash-2'}
+              onPress={() => { void (canSurrender ? handleSurrenderPress() : handleDeletePress()); }}
               onDeny={() => {}}
               containerStyle={{}}
             />

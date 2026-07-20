@@ -19,6 +19,7 @@ const EVENT_LABEL: Record<string, string> = {
   RECTIFY: 'Rectified',
   OVERRIDE: 'Override applied',
   DEADLINE_MISSED: 'Deadline missed',
+  SURRENDER: 'Task surrendered',
   VOUCHER_TIMEOUT: 'Voucher timed out',
   POMO_COMPLETED: 'Pomodoro',
   DEADLINE_WARNING_1H: '1h left',
@@ -172,6 +173,7 @@ function getTimelineTone(event: TaskEvent): 'SUCCESS' | 'DANGER' | 'WARNING' | '
     case 'AI_DENIED':
     case 'AI_DENIED_AUTO_HOP':
     case 'DEADLINE_MISSED':
+    case 'SURRENDER':
     case 'PROOF_UPLOAD_FAILED_REVERT':
     case 'ACCEPT_DENIAL':
       return 'DANGER';
@@ -305,6 +307,7 @@ function buildTimelineEntries(event: TaskEvent, aiVouches: AiVouch[], usedAiVouc
     case 'RECTIFY':
     case 'OVERRIDE':
     case 'DEADLINE_MISSED':
+    case 'SURRENDER':
     case 'VOUCHER_TIMEOUT':
     case 'ESCALATE':
     case 'AI_ESCALATE_TO_HUMAN':

@@ -1,8 +1,16 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import {
+  COMPLETION_EDIT_LOCKED_ERROR,
+  canMarkProofUploadFailed,
+  isCompletionEditingLocked,
+  wasProofStagedBeforeCompletionLock,
+} from './task-proof-deadline.ts';
 
 const TASK_PROOFS_BUCKET = 'task-proofs';
 const PROOF_TIMESTAMP_PLACEHOLDER = '??:?? ??/??/??';
 const MAX_TASK_PROOF_VIDEO_DURATION_MS = 15_000;
+const MAX_TASK_PROOF_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_TASK_PROOF_VIDEO_BYTES = 30 * 1024 * 1024;
 
 const ALLOWED_PROOF_MIME_TYPES = new Set([
   'image/jpeg',
@@ -44,6 +52,14 @@ const corsHeaders: Record<string, string> = {
 };
 
 type MediaKind = 'image' | 'video';
+
+function maxProofBytes(mediaKind: MediaKind): number {
+  return mediaKind === 'video' ? MAX_TASK_PROOF_VIDEO_BYTES : MAX_TASK_PROOF_IMAGE_BYTES;
+}
+
+function proofSizeLabel(mediaKind: MediaKind): string {
+  return mediaKind === 'video' ? '30 MB' : '4 MB';
+}
 
 interface ProofIntent {
   mediaKind: MediaKind;
@@ -176,6 +192,10 @@ function normalizeProofIntent(raw: unknown): { value?: ProofIntent; error?: stri
     return { error: 'Selected media size is invalid.' };
   }
 
+  if (sizeBytes > maxProofBytes(mediaKind)) {
+    return { error: `${mediaKind === 'video' ? 'Video' : 'Image'} proof must be under ${proofSizeLabel(mediaKind)}.` };
+  }
+
   if (mediaKind === 'video') {
     if (!Number.isFinite(durationMsRaw) || !durationMsRaw || durationMsRaw <= 0) {
       return { error: 'Could not read video duration. Try another clip.' };
@@ -302,7 +322,7 @@ Deno.serve(async (request) => {
 
   const { data: task, error: taskError } = await adminClient
     .from('tasks')
-    .select('id, user_id, voucher_id, status')
+    .select('id, user_id, voucher_id, status, deadline')
     .eq('id', taskId)
     .single();
 
@@ -322,6 +342,15 @@ Deno.serve(async (request) => {
     && !ATTACHABLE_PROOF_STATUSES.has((task as { status: string }).status)
   ) {
     return json(400, { success: false, error: 'Proof can only be attached to active or awaiting tasks.' });
+  }
+
+  const taskStatus = (task as { status: string }).status;
+  const taskDeadline = (task as { deadline?: string | null }).deadline;
+  if (
+    (action === 'init' || action === 'remove-current')
+    && isCompletionEditingLocked(taskStatus, taskDeadline)
+  ) {
+    return json(409, { success: false, error: COMPLETION_EDIT_LOCKED_ERROR });
   }
 
   if (action === 'init') {
@@ -412,7 +441,7 @@ Deno.serve(async (request) => {
 
     const { data: proofRow, error: proofFetchError } = await adminClient
       .from('task_completion_proofs')
-      .select('id, bucket, object_path, owner_id')
+      .select('id, bucket, object_path, owner_id, created_at, updated_at')
       .eq('task_id', taskId)
       .eq('owner_id', user.id)
       .maybeSingle();
@@ -425,11 +454,49 @@ Deno.serve(async (request) => {
       return json(400, { success: false, error: 'Proof record not found.' });
     }
 
+    const proofStagedAt = String(
+      (proofRow as { updated_at?: string | null }).updated_at
+      || (proofRow as { created_at?: string | null }).created_at
+      || '',
+    );
+    if (
+      isCompletionEditingLocked(taskStatus, taskDeadline)
+      && !wasProofStagedBeforeCompletionLock(taskDeadline, proofStagedAt)
+    ) {
+      return json(409, { success: false, error: COMPLETION_EDIT_LOCKED_ERROR });
+    }
+
     if (
       (proofRow as { bucket: string; object_path: string }).bucket !== proofMeta.bucket ||
       (proofRow as { bucket: string; object_path: string }).object_path !== proofMeta.objectPath
     ) {
       return json(400, { success: false, error: 'Proof upload target mismatch.' });
+    }
+
+    const pathParts = proofMeta.objectPath.split('/');
+    const uploadedFileName = pathParts.pop() || '';
+    const uploadedFolder = pathParts.join('/');
+    const { data: uploadedFiles, error: uploadedFileError } = await adminClient.storage
+      .from(proofMeta.bucket)
+      .list(uploadedFolder, { search: uploadedFileName, limit: 10 });
+    const uploadedFile = (uploadedFiles ?? []).find((file) => file.name === uploadedFileName);
+    const actualSizeBytes = Number(uploadedFile?.metadata?.size);
+
+    if (uploadedFileError || !uploadedFile || !Number.isFinite(actualSizeBytes) || actualSizeBytes <= 0) {
+      return json(400, { success: false, error: 'Could not verify the uploaded proof.' });
+    }
+
+    if (actualSizeBytes > maxProofBytes(proofMeta.mediaKind)) {
+      await adminClient.storage.from(proofMeta.bucket).remove([proofMeta.objectPath]);
+      await adminClient
+        .from('task_completion_proofs')
+        .update({ upload_state: 'FAILED', updated_at: new Date().toISOString() })
+        .eq('task_id', taskId)
+        .eq('owner_id', user.id);
+      return json(400, {
+        success: false,
+        error: `${proofMeta.mediaKind === 'video' ? 'Video' : 'Image'} proof must be under ${proofSizeLabel(proofMeta.mediaKind)}.`,
+      });
     }
 
     const { data: finalizeData, error: finalizeError } = await adminClient
@@ -440,7 +507,7 @@ Deno.serve(async (request) => {
         p_object_path: proofMeta.objectPath,
         p_media_kind: proofMeta.mediaKind,
         p_mime_type: proofMeta.mimeType,
-        p_size_bytes: proofMeta.sizeBytes,
+        p_size_bytes: Math.round(actualSizeBytes),
         p_duration_ms: proofMeta.durationMs ?? null,
         p_overlay_timestamp_text: proofMeta.overlayTimestampText,
         p_task_status: (task as { status: string }).status,
@@ -468,14 +535,39 @@ Deno.serve(async (request) => {
       : TASK_PROOFS_BUCKET;
     const objectPath = typeof proofMeta?.objectPath === 'string' ? proofMeta.objectPath.trim() : '';
 
-    await adminClient
+    const { data: pendingProof, error: pendingProofError } = await adminClient
+      .from('task_completion_proofs')
+      .select('bucket, object_path, upload_state')
+      .eq('task_id', taskId)
+      .eq('owner_id', user.id)
+      .maybeSingle();
+
+    if (pendingProofError) {
+      return json(400, { success: false, error: pendingProofError.message });
+    }
+    if (!pendingProof || !canMarkProofUploadFailed((pendingProof as { upload_state?: string }).upload_state)) {
+      return json(400, { success: false, error: 'Only a pending proof upload can be marked failed.' });
+    }
+
+    const pendingBucket = String((pendingProof as { bucket?: string }).bucket || TASK_PROOFS_BUCKET);
+    const pendingObjectPath = String((pendingProof as { object_path?: string }).object_path || '');
+    if (objectPath && (bucket !== pendingBucket || objectPath !== pendingObjectPath)) {
+      return json(400, { success: false, error: 'Proof upload target mismatch.' });
+    }
+
+    const { error: failUpdateError } = await adminClient
       .from('task_completion_proofs')
       .update({
         upload_state: 'FAILED',
         updated_at: new Date().toISOString(),
       })
       .eq('task_id', taskId)
-      .eq('owner_id', user.id);
+      .eq('owner_id', user.id)
+      .eq('upload_state', 'PENDING');
+
+    if (failUpdateError) {
+      return json(400, { success: false, error: failUpdateError.message });
+    }
 
     await adminClient
       .from('tasks')
@@ -486,8 +578,8 @@ Deno.serve(async (request) => {
       .eq('id', taskId)
       .eq('user_id', user.id);
 
-    if (objectPath) {
-      await adminClient.storage.from(bucket).remove([objectPath]);
+    if (pendingObjectPath) {
+      await adminClient.storage.from(pendingBucket).remove([pendingObjectPath]);
     }
 
     return json(200, { success: true });

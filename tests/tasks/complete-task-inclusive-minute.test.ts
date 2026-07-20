@@ -1,6 +1,7 @@
 /* eslint-disable import/first */
 let mockDeadlineIso = '2026-05-05T12:00:00.000Z';
 let capturedDeadlineCutoffIso: string | null = null;
+let capturedTaskUpdate: Record<string, unknown> | null = null;
 let mockVoucherId = 'user-1';
 
 type MockTaskReadBuilder = {
@@ -46,7 +47,10 @@ const mockTaskUpdateBuilder: MockTaskUpdateBuilder = {
 
 const mockTasksTable = {
   select: jest.fn(() => mockTaskReadBuilder),
-  update: jest.fn(() => mockTaskUpdateBuilder),
+  update: jest.fn((values: Record<string, unknown>) => {
+    capturedTaskUpdate = values;
+    return mockTaskUpdateBuilder;
+  }),
 };
 
 const mockTaskEventsTable = {
@@ -96,6 +100,7 @@ describe('completeTask inclusive deadline minute', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     capturedDeadlineCutoffIso = null;
+    capturedTaskUpdate = null;
     mockDeadlineIso = '2026-05-05T12:00:00.000Z';
     mockVoucherId = 'user-1';
     mockQueueAiEvalForTask.mockResolvedValue({ success: true });
@@ -123,6 +128,25 @@ describe('completeTask inclusive deadline minute', () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe('Task can no longer be marked complete. Please refresh.');
     expect(capturedDeadlineCutoffIso).toBe('2026-05-05T12:00:00.000Z');
+  });
+
+  it('gives a human voucher until the end of the second calendar day', async () => {
+    jest.setSystemTime(new Date('2026-05-05T12:00:00.000Z'));
+    mockVoucherId = 'voucher-2';
+
+    const result = await completeTask('task-1');
+
+    expect(result.success).toBe(true);
+    const storedDeadline = new Date(String(capturedTaskUpdate?.voucher_response_deadline));
+    expect([
+      storedDeadline.getFullYear(),
+      storedDeadline.getMonth(),
+      storedDeadline.getDate(),
+      storedDeadline.getHours(),
+      storedDeadline.getMinutes(),
+      storedDeadline.getSeconds(),
+      storedDeadline.getMilliseconds(),
+    ]).toEqual([2026, 4, 7, 23, 59, 59, 999]);
   });
 
   it('returns the backend quota message when AI review cannot be queued', async () => {

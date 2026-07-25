@@ -1,5 +1,6 @@
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { supabase } from '@/lib/supabase';
+import { cancelLocalReminderNotificationsForTaskAsync } from '@/lib/notifications';
 import { postponeTask } from '@/lib/task-postpone';
 import { purgeTaskProofForFinalState, queueAiEvalForTask, removeCurrentTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
 import { syncGoogleCalendarTaskAfterDelete, syncGoogleCalendarTaskAfterSurrender } from '@/lib/google-calendar-mobile-sync';
@@ -136,6 +137,15 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
 
   if (!updatedRows || updatedRows.length === 0) {
     return { success: false, userId, error: 'Task can no longer be marked complete. Please refresh.' };
+  }
+
+  // Cancel native schedules before any later refetch/reconciliation work. If
+  // the app is backgrounded immediately after completion, the OS must not keep
+  // a stale final-call notification for this task.
+  try {
+    await cancelLocalReminderNotificationsForTaskAsync(taskId);
+  } catch (cancelError) {
+    console.warn('[task-actions] immediate reminder cancellation failed:', cancelError);
   }
 
   const { error: eventError } = await supabase.from('task_events').insert({

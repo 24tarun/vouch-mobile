@@ -6,7 +6,6 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSequence,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -648,7 +647,10 @@ export const TaskRow = memo(function TaskRow({
             <TouchableOpacity
               style={styles.actionBtn}
               activeOpacity={0.65}
-              accessibilityLabel={task.has_proof ? 'Replace proof' : 'Attach proof'}
+              accessibilityLabel={proofActionInProgress
+                ? 'Uploading proof'
+                : task.has_proof ? 'Replace proof' : 'Attach proof'}
+              accessibilityState={{ disabled: proofActionInProgress }}
               onPress={openProofSourcePicker}
               disabled={proofActionInProgress}
             >

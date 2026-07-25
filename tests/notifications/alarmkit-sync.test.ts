@@ -129,6 +129,7 @@ const REMOTE_PUSH_REGISTERED_USER_KEY = 'vouch_remote_push_registered_user_v1';
 const notifications = require('@/lib/notifications') as typeof import('@/lib/notifications');
 const {
   getUrlFromNotificationResponse,
+  cancelLocalReminderNotificationsForTaskAsync,
   recordRemoteReminderDeliveryAsync,
   registerRemoteReminderDeliveryTaskAsync,
   registerForPushNotificationsAsync,
@@ -778,6 +779,48 @@ test.each([
   expect(mockDismissNotificationAsync).toHaveBeenCalledWith('stale-notification-1');
   expect(mockScheduleNotificationAsync).not.toHaveBeenCalled();
   expect(await AsyncStorage.getItem(NOTIFICATION_MAP_KEY)).toBe(JSON.stringify({}));
+});
+
+test('completion immediately cancels every local schedule containing the task', async () => {
+  const aggregateKey = 'aggregate|DEFAULT_DEADLINE_DUE|2026-07-20T15:00:00.000Z';
+  await AsyncStorage.setItem(NOTIFICATION_MAP_KEY, JSON.stringify({
+    'reminder-individual': 'expo-individual',
+    [aggregateKey]: 'expo-aggregate',
+    'reminder-other': 'expo-other',
+  }));
+  await AsyncStorage.setItem(ALARMKIT_MAP_KEY, JSON.stringify({
+    'reminder-individual': 'alarm-individual',
+  }));
+  await AsyncStorage.setItem(FINGERPRINT_MAP_KEY, JSON.stringify({
+    'reminder-individual': JSON.stringify({
+      source: 'DEFAULT_DEADLINE_DUE',
+      reminders: [{ id: 'reminder-individual', taskId: 'task-1', reminderAt: futureIso(5) }],
+    }),
+    [aggregateKey]: JSON.stringify({
+      source: 'DEFAULT_DEADLINE_DUE',
+      reminders: [
+        { id: 'reminder-aggregate-1', taskId: 'task-1', reminderAt: futureIso(5) },
+        { id: 'reminder-aggregate-2', taskId: 'task-2', reminderAt: futureIso(5) },
+      ],
+    }),
+    'reminder-other': JSON.stringify({
+      source: 'MANUAL',
+      reminders: [{ id: 'reminder-other', taskId: 'task-2', reminderAt: futureIso(10) }],
+    }),
+  }));
+
+  await expect(cancelLocalReminderNotificationsForTaskAsync('task-1')).resolves.toBe(true);
+
+  expect(mockCancelScheduledNotificationAsync).toHaveBeenCalledWith('expo-individual');
+  expect(mockCancelScheduledNotificationAsync).toHaveBeenCalledWith('expo-aggregate');
+  expect(mockCancelScheduledNotificationAsync).not.toHaveBeenCalledWith('expo-other');
+  expect(mockCancelTenMinuteAlarmAsync).toHaveBeenCalledWith({ nativeAlarmId: 'alarm-individual' });
+  expect(JSON.parse((await AsyncStorage.getItem(NOTIFICATION_MAP_KEY)) ?? '{}')).toEqual({
+    'reminder-other': 'expo-other',
+  });
+  expect(JSON.parse((await AsyncStorage.getItem(FINGERPRINT_MAP_KEY)) ?? '{}')).toEqual({
+    'reminder-other': expect.any(String),
+  });
 });
 
 test('suppresses local backup notifications when remote delivery was already recorded', async () => {

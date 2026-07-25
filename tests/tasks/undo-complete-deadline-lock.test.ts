@@ -60,6 +60,9 @@ jest.mock('@/lib/user-client-instance', () => ({
 }));
 
 jest.mock('@/lib/task-postpone', () => ({ postponeTask: jest.fn() }));
+jest.mock('@/lib/notifications', () => ({
+  cancelLocalReminderNotificationsForTaskAsync: jest.fn(async () => true),
+}));
 jest.mock('@/lib/task-proof-upload', () => ({
   purgeTaskProofForFinalState: jest.fn(),
   queueAiEvalForTask: jest.fn(),

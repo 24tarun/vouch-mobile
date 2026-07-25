@@ -80,6 +80,10 @@ jest.mock('@/lib/task-postpone', () => ({
   postponeTask: jest.fn(),
 }));
 
+jest.mock('@/lib/notifications', () => ({
+  cancelLocalReminderNotificationsForTaskAsync: jest.fn(async () => true),
+}));
+
 jest.mock('@/lib/task-proof-upload', () => ({
   purgeTaskProofForFinalState: jest.fn(async () => undefined),
   queueAiEvalForTask: jest.fn(async () => ({ success: true })),
@@ -93,8 +97,10 @@ jest.mock('@/lib/google-calendar-mobile-sync', () => ({
 
 import { completeTask } from '@/lib/tasks/task-actions';
 import { queueAiEvalForTask } from '@/lib/task-proof-upload';
+import { cancelLocalReminderNotificationsForTaskAsync } from '@/lib/notifications';
 
 const mockQueueAiEvalForTask = queueAiEvalForTask as jest.Mock;
+const mockCancelLocalReminderNotificationsForTaskAsync = cancelLocalReminderNotificationsForTaskAsync as jest.Mock;
 
 describe('completeTask inclusive deadline minute', () => {
   beforeEach(() => {
@@ -118,6 +124,7 @@ describe('completeTask inclusive deadline minute', () => {
 
     expect(result.success).toBe(true);
     expect(capturedDeadlineCutoffIso).toBe('2026-05-05T11:59:59.000Z');
+    expect(mockCancelLocalReminderNotificationsForTaskAsync).toHaveBeenCalledWith('task-1');
   });
 
   it('blocks completion after the inclusive deadline minute window', async () => {
@@ -128,6 +135,7 @@ describe('completeTask inclusive deadline minute', () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe('Task can no longer be marked complete. Please refresh.');
     expect(capturedDeadlineCutoffIso).toBe('2026-05-05T12:00:00.000Z');
+    expect(mockCancelLocalReminderNotificationsForTaskAsync).not.toHaveBeenCalled();
   });
 
   it('gives a human voucher until the end of the second calendar day', async () => {

@@ -509,6 +509,37 @@ export async function cancelLocalReminderBackupAsync(localBackupKey: string): Pr
   return cancelLocalReminderBackupsAsync([localBackupKey]);
 }
 
+/**
+ * Immediately removes every on-device reminder schedule containing a task.
+ *
+ * Normal reconciliation also removes reminders for inactive tasks, but a task
+ * completion must not leave that work fire-and-forget: the app can be suspended
+ * before reconciliation gets a chance to cancel an already registered OS
+ * notification. Fingerprints are persisted alongside the native schedule IDs,
+ * so this cancellation does not depend on another database read.
+ */
+export async function cancelLocalReminderNotificationsForTaskAsync(taskId: string): Promise<boolean> {
+  const normalizedTaskId = taskId.trim();
+  if (!normalizedTaskId) return false;
+
+  const fingerprintMap = await readLocalReminderFingerprintMapAsync();
+  const matchingScheduleKeys = Object.entries(fingerprintMap)
+    .filter(([, rawFingerprint]) => {
+      try {
+        const parsed = JSON.parse(rawFingerprint) as {
+          reminders?: { taskId?: unknown }[];
+        };
+        return Array.isArray(parsed.reminders)
+          && parsed.reminders.some((reminder) => reminder.taskId === normalizedTaskId);
+      } catch {
+        return false;
+      }
+    })
+    .map(([scheduleKey]) => scheduleKey);
+
+  return cancelLocalReminderBackupsAsync(matchingScheduleKeys);
+}
+
 export async function recordRemoteReminderDeliveryAsync(data: unknown): Promise<boolean> {
   if (!isReminderRemoteDeliveryData(data)) return false;
 

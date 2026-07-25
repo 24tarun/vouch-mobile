@@ -98,9 +98,9 @@ const STATUS_STYLE: Record<string, StatusStyle> = {
     border: '#EF44444D',
   },
   SURRENDERED: {
-    text: '#FB7185',
-    bg: '#F43F5E1A',
-    border: '#F43F5E4D',
+    text: '#EF4444',
+    bg: '#EF44441A',
+    border: '#EF44444D',
   },
   RECTIFIED: {
     text: '#FDBA74',        // orange-300

@@ -27,7 +27,7 @@ interface TaskContentProps {
   keyboardBottomInset?: number;
   bottomInsetOffset?: number;
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
-  proofUploadTaskId?: string | null;
+  proofActionTaskIds?: readonly string[];
   hasPastTasks?: boolean;
   initialLoading?: boolean;
   alwaysShowActiveTasks?: boolean;
@@ -51,7 +51,7 @@ export function TaskContent({
   keyboardBottomInset = 0,
   bottomInsetOffset = 0,
   onSubtaskComposerFocus,
-  proofUploadTaskId = null,
+  proofActionTaskIds = [],
   hasPastTasks = false,
   initialLoading = false,
   alwaysShowActiveTasks = false,
@@ -108,7 +108,7 @@ export function TaskContent({
               onSurrender={onSurrender}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}
               onSubtaskComposerFocus={onSubtaskComposerFocus}
-              proofActionInProgress={proofUploadTaskId === task.id}
+              proofActionInProgress={proofActionTaskIds.includes(task.id)}
             />
           ))}
           {alwaysShowActiveTasks ? (
@@ -124,7 +124,7 @@ export function TaskContent({
                 onSurrender={onSurrender}
                 defaultPomoDurationMinutes={defaultPomoDurationMinutes}
                 onSubtaskComposerFocus={onSubtaskComposerFocus}
-                proofActionInProgress={proofUploadTaskId === task.id}
+                proofActionInProgress={proofActionTaskIds.includes(task.id)}
               />
             ))
           ) : (
@@ -139,7 +139,7 @@ export function TaskContent({
               onSurrender={onSurrender}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}
               onSubtaskComposerFocus={onSubtaskComposerFocus}
-              proofUploadTaskId={proofUploadTaskId}
+              proofActionTaskIds={proofActionTaskIds}
             />
           )}
         </>

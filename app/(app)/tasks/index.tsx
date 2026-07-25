@@ -46,6 +46,10 @@ import { TasksScreenCreatorOverlay } from '@/components/tasks/TasksScreenCreator
 import { TasksScreenPostponeOverlay } from '@/components/tasks/TasksScreenPostponeOverlay';
 import { useTaskSortMode } from '@/lib/hooks/useTaskSortMode';
 import { TasksScreenConfettiOverlay } from '@/components/tasks/TasksScreenConfettiOverlay';
+import {
+  TaskProofActionQueue,
+  type TaskProofQueueSnapshot,
+} from '@/lib/tasks/task-proof-action-queue';
 
 import { getFutureBoundaryMs } from '@/lib/utils/date-only';
 
@@ -77,8 +81,17 @@ export default function TasksScreen() {
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('closed');
   const expandProgress = useSharedValue(0);
   const [creatorAnchor, setCreatorAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
-  const [proofUploadTaskId, setProofUploadTaskId] = useState<string | null>(null);
-  const proofUploadLockRef = useRef(false);
+  const [proofQueueSnapshot, setProofQueueSnapshot] = useState<TaskProofQueueSnapshot>({
+    activeTaskId: null,
+    pendingTaskIds: [],
+  });
+  const proofActionQueueRef = useRef<TaskProofActionQueue | null>(null);
+  if (!proofActionQueueRef.current) {
+    proofActionQueueRef.current = new TaskProofActionQueue((error) => {
+      console.error('[tasks] queued proof action failed unexpectedly:', error);
+      Alert.alert('Proof action failed', 'Please try again. Other queued uploads will continue.');
+    });
+  }
   const [optimisticTasks, setOptimisticTasks] = useState<TaskRowData[]>([]);
   const [optimisticallyCompletingTaskIds, setOptimisticallyCompletingTaskIds] = useState<string[]>([]);
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
@@ -108,6 +121,8 @@ export default function TasksScreen() {
   const creatorTargetHeight = screenHeight;
   const displayName = (authProfile?.username ?? 'there').trim() || 'there';
   const todayParts = getTodayParts();
+
+  useEffect(() => proofActionQueueRef.current!.subscribe(setProofQueueSnapshot), []);
 
   const closeOverlay = useCallback(() => {
     Keyboard.dismiss();
@@ -266,14 +281,7 @@ export default function TasksScreen() {
       return;
     }
 
-    if (proofUploadLockRef.current) {
-      Alert.alert('Upload in progress', 'Please wait for the current proof upload to finish.');
-      return;
-    }
-
-    proofUploadLockRef.current = true;
-    setProofUploadTaskId(taskId);
-    try {
+    const queued = proofActionQueueRef.current!.enqueue(taskId, async () => {
       const result = await uploadTaskProof(taskId, asset);
       if (!result.success) {
         Alert.alert('Could not attach proof', result.error);
@@ -291,10 +299,19 @@ export default function TasksScreen() {
       if (autoSubmitAfterProofUpload) {
         await handleCompleteTaskRef.current!(taskId);
       }
-    } finally {
-      proofUploadLockRef.current = false;
-      setProofUploadTaskId((prev) => (prev === taskId ? null : prev));
+    });
+
+    if (!queued.accepted) {
+      Toast.show({
+        type: 'info',
+        text1: 'Proof upload in progress',
+        position: 'bottom',
+        bottomOffset: 84,
+        visibilityTime: 1800,
+      });
     }
+
+    await queued.done;
   };
   const handleProofPicked = useCallback((taskId: string, asset: ImagePickerAsset) => {
     return handleProofPickedRef.current!(taskId, asset);
@@ -307,24 +324,16 @@ export default function TasksScreen() {
       return;
     }
 
-    if (proofUploadLockRef.current) {
-      Alert.alert('Upload in progress', 'Please wait for the current proof action to finish.');
-      return;
-    }
-
-    proofUploadLockRef.current = true;
-    setProofUploadTaskId(taskId);
-    try {
+    const queued = proofActionQueueRef.current!.enqueue(taskId, async () => {
       const result = await removeTaskProof(taskId);
       if (!result.success) {
         Alert.alert('Could not remove proof', result.error ?? 'Unknown error');
         return;
       }
       refetchTasks();
-    } finally {
-      proofUploadLockRef.current = false;
-      setProofUploadTaskId((prev) => (prev === taskId ? null : prev));
-    }
+    });
+
+    await queued.done;
   };
   const handleProofRemoved = useCallback((taskId: string) => {
     return handleProofRemovedRef.current!(taskId);
@@ -400,7 +409,7 @@ export default function TasksScreen() {
 
     void queryClient.invalidateQueries({ queryKey: queryKeys.taskDetail(taskId) });
     refetchTasks();
-    if (result.userId) void syncLocalReminderNotificationsAsync(result.userId);
+    if (result.userId) await syncLocalReminderNotificationsAsync(result.userId);
   };
   const handleCompleteTask = useCallback((taskId: string) => {
     return handleCompleteTaskRef.current!(taskId);
@@ -576,7 +585,7 @@ export default function TasksScreen() {
         keyboardBottomInset={taskListKeyboardInset}
         bottomInsetOffset={bottomDockReservedInset}
         onSubtaskComposerFocus={handleSubtaskComposerFocus}
-        proofUploadTaskId={proofUploadTaskId}
+        proofActionTaskIds={proofQueueSnapshot.pendingTaskIds}
         hasPastTasks={onboardingComplete}
         initialLoading={tasksLoading || onboardingLoading}
         alwaysShowActiveTasks={alwaysShowActiveTasks}

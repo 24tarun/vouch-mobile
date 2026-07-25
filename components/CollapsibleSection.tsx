@@ -23,7 +23,7 @@ interface CollapsibleSectionProps {
   onSurrender?: (task: TaskRowData) => void | Promise<void>;
   defaultPomoDurationMinutes?: number;
   onSubtaskComposerFocus?: (inputBottomY: number) => void;
-  proofUploadTaskId?: string | null;
+  proofActionTaskIds?: readonly string[];
 }
 
 export function CollapsibleSection({
@@ -42,7 +42,7 @@ export function CollapsibleSection({
   onSurrender,
   defaultPomoDurationMinutes = 25,
   onSubtaskComposerFocus,
-  proofUploadTaskId = null,
+  proofActionTaskIds = [],
 }: CollapsibleSectionProps) {
   const { colors } = useTheme();
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -82,7 +82,7 @@ export function CollapsibleSection({
               onSurrender={onSurrender}
               defaultPomoDurationMinutes={defaultPomoDurationMinutes}
               onSubtaskComposerFocus={onSubtaskComposerFocus}
-              proofActionInProgress={proofUploadTaskId === task.id}
+              proofActionInProgress={proofActionTaskIds.includes(task.id)}
             />
           ))}
 

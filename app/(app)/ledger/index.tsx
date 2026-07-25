@@ -88,7 +88,7 @@ function badgeForKind(kind: LedgerEntryKind, colors: Colors, taskStatus?: string
   switch (kind) {
     case 'failure':
       if (taskStatus === 'SURRENDERED') {
-        return { label: 'SURRENDERED', fg: '#FB7185', bg: 'rgba(244,63,94,0.18)' };
+        return { label: 'SURRENDERED', fg: '#EF4444', bg: 'rgba(239,68,68,0.18)' };
       }
       return { label: 'MISSED', fg: '#EF4444', bg: 'rgba(239,68,68,0.18)' };
     case 'rectified':

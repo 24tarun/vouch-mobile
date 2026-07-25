@@ -590,7 +590,7 @@ export default function TaskDetailScreen() {
           Alert.alert('Proof uploaded, but could not complete task', completeResult.error ?? 'Unknown error');
           return;
         }
-        if (completeResult.userId) void syncLocalReminderNotificationsAsync(completeResult.userId);
+        if (completeResult.userId) await syncLocalReminderNotificationsAsync(completeResult.userId);
         await Promise.resolve(detail.refetch());
       }
       if (shouldQueueAiAfterUpload) {
@@ -1101,7 +1101,7 @@ export default function TaskDetailScreen() {
         Alert.alert('Could not complete task', result.error ?? 'Unknown error');
         return;
       }
-      if (result.userId) void syncLocalReminderNotificationsAsync(result.userId);
+      if (result.userId) await syncLocalReminderNotificationsAsync(result.userId);
       await Promise.resolve(detail.refetch());
       invalidateDerivedTaskViews();
     } finally {

@@ -1182,119 +1182,54 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     fontSize: typography.base,
     color: colors.text,
   },
-  // Voucher dropdown
-  selectedFriendRow: {
-    flexDirection: 'row',
+  // Voucher pills
+  voucherSection: {
+    gap: spacing.sm + spacing.xs,
+  },
+  voucherPillContent: {
+    minHeight: 42,
     alignItems: 'center',
-    flex: 1,
     gap: spacing.sm,
-    paddingRight: spacing.sm,
+    paddingVertical: spacing.xs,
   },
-  avatarSmall: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: colors.borderStrong,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarSmallText: {
-    fontSize: typography.xs,
-    color: colors.text,
-    fontWeight: typography.semibold,
-  },
-  voucherDropdown: {
-    position: 'absolute',
-    zIndex: 80,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    shadowColor: '#000',
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: -4 },
-    elevation: 30,
-    overflow: 'hidden',
-  },
-  voucherBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  voucherDropdownScroll: {
-    maxHeight: 260,
-  },
-  voucherSearch: {
+  voucherPill: {
+    minHeight: 34,
+    maxWidth: 185,
     flexDirection: 'row',
     alignItems: 'center',
-    margin: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    height: 36,
-    borderRadius: radius.md,
+    gap: 5,
+    paddingHorizontal: 10,
+    borderRadius: radius.full,
     borderWidth: 1,
     borderColor: colors.inputBorder,
-    backgroundColor: colors.inputBg,
-    gap: spacing.sm,
+    backgroundColor: colors.surface2,
   },
-  voucherSearchInput: {
-    flex: 1,
+  voucherPillSelected: {
+    borderColor: colors.accentCyan,
+    backgroundColor: isDark ? 'rgba(0, 217, 255, 0.12)' : 'rgba(14, 165, 198, 0.12)',
+  },
+  voucherPillDisabled: {
+    opacity: 0.4,
+  },
+  voucherPillText: {
+    flexShrink: 1,
     fontSize: typography.sm,
     color: colors.text,
-    paddingVertical: 0,
+    fontWeight: typography.medium,
   },
-  voucherRow: {
+  voucherPillTextSelected: {
+    color: colors.accentCyan,
+    fontWeight: typography.semibold,
+  },
+  voucherPillLoading: {
+    minHeight: 42,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 11,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
     gap: spacing.sm,
   },
-  voucherRowSelected: {
-    backgroundColor: colors.surface2,
-  },
-  avatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: colors.borderStrong,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  avatarSelf: {
-    backgroundColor: colors.surface2,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-  },
-  avatarText: {
-    fontSize: typography.sm,
-    color: colors.text,
-    fontWeight: typography.semibold,
-  },
-  voucherRowText: {
-    flex: 1,
-    gap: 1,
-  },
-  voucherName: {
-    flex: 1,
-    fontSize: typography.sm,
-    color: colors.text,
-  },
-  voucherQuota: {
-    fontSize: typography.xs,
-    color: colors.textMuted,
-    fontWeight: typography.semibold,
-  },
-  voucherSub: {
-    fontSize: typography.xs,
-    color: colors.textMuted,
-  },
-  voucherHint: {
+  voucherPillLoadingText: {
     fontSize: typography.sm,
     color: colors.textMuted,
-    textAlign: 'center',
-    paddingVertical: spacing.lg,
   },
 
   // Postpone deadline picker modal
@@ -1389,7 +1324,6 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.xs,
-    marginTop: 12,
     marginHorizontal: 14,
   },
 
@@ -1493,22 +1427,6 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     alignItems: 'center',
     gap: spacing.xs,
     paddingHorizontal: spacing.md,
-  },
-  voucherRowInCard: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-  },
-  voucherRowInCardText: {
-    flex: 1,
-    fontSize: typography.base,
-    color: colors.text,
-    fontWeight: typography.medium,
-  },
-  voucherRowInCardTextEmpty: {
-    color: colors.textSubtle,
   },
   recurrenceInlineChip: {
     paddingHorizontal: 8,

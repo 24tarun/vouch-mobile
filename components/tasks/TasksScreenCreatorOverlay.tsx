@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform } from 'react-native';
-import type { TextInput, View } from 'react-native';
+import type { TextInput } from 'react-native';
 import { type SharedValue } from 'react-native-reanimated';
 import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { type QueryClient } from '@tanstack/react-query';
@@ -32,7 +32,11 @@ import {
   type RecurrenceType,
 } from '@/components/tasks/types';
 import { TaskCreatorOverlay } from '@/components/tasks/TaskCreatorOverlay';
-import { VoucherPickerModal } from '@/components/tasks/VoucherPickerModal';
+import {
+  buildVoucherPillOptions,
+  getAiVoucherPillState,
+  useVoucherSelection,
+} from '@/components/tasks/VoucherPillSelector';
 import type { FriendOption } from '@/lib/hooks/useFriends';
 import type { TaskRowData } from '@/components/TaskRow';
 import type { Currency } from '@/lib/types';
@@ -74,8 +78,6 @@ interface Props {
   defaultRequiresProofForAllTasks: boolean;
   friends: FriendOption[];
   friendsLoading: boolean;
-  friendsError: string | null;
-  safeTopInset: number;
   onClose: () => void;
   addOptimisticTask: (task: TaskRowData) => void;
   removeOptimisticTask: (taskId: string) => void;
@@ -194,8 +196,6 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   defaultRequiresProofForAllTasks,
   friends,
   friendsLoading,
-  friendsError,
-  safeTopInset,
   onClose,
   addOptimisticTask,
   removeOptimisticTask,
@@ -204,10 +204,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   const titleInputRef = useRef<TextInput | null>(null);
   const subtaskInputRef = useRef<TextInput | null>(null);
   const failureCostInputRef = useRef<TextInput | null>(null);
-  const voucherButtonRef = useRef<View>(null);
   const hasInitializedFailureCostRef = useRef(false);
-  const hasInitializedVoucherRef = useRef(false);
-  const lastAppliedDefaultVoucherRef = useRef<string | null>(null);
 
   const [title, setTitle] = useState('');
   const [deadlineDate, setDeadlineDate] = useState<Date>(() => buildDefaultDeadlineDate());
@@ -217,8 +214,6 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   const [showCustomDeadlineAndroidPicker, setShowCustomDeadlineAndroidPicker] = useState(false);
   const [showCustomDeadlineAndroidModal, setShowCustomDeadlineAndroidModal] = useState(false);
   const [showCustomDeadlineIosModal, setShowCustomDeadlineIosModal] = useState(false);
-  const [voucherValue, setVoucherValue] = useState<string | null>(null);
-  const [voucherSearch, setVoucherSearch] = useState('');
   const [failureCostInput, setFailureCostInput] = useState('');
   const [failureCostSelection, setFailureCostSelection] = useState<{ start: number; end: number } | undefined>(undefined);
   const [draftReminders, setDraftReminders] = useState<DraftReminder[]>([]);
@@ -246,10 +241,6 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   const [isSubtaskFocused, setIsSubtaskFocused] = useState(false);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
 
-  const [voucherPickerOpen, setVoucherPickerOpen] = useState(false);
-  const [voucherAnchor, setVoucherAnchor] = useState<{ pageX: number; pageY: number; width: number; buttonHeight: number } | null>(null);
-  const [voucherDropdownHeight, setVoucherDropdownHeight] = useState(300);
-
   const {
     quota: aiVoucherQuota,
     loading: aiVoucherQuotaLoading,
@@ -260,7 +251,6 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   const currencySymbol = friendProfile?.currency === 'EUR' ? '\u20AC'
     : friendProfile?.currency === 'INR' ? '\u20B9'
     : '$';
-  const isAiVoucherSelected = voucherValue === AI_PROFILE_ID;
 
   const normalizedFriends = useMemo(
     () =>
@@ -271,24 +261,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     [friends],
   );
 
-  const voucherLabel = useMemo(() => {
-    if (!voucherValue) return 'Select voucher';
-    if (voucherValue === 'self') return 'Self vouch';
-    return normalizedFriends.find((f) => f.id === voucherValue)?.username ?? 'Select voucher';
-  }, [voucherValue, normalizedFriends]);
-
-  const filteredFriends = useMemo(() => {
-    const q = voucherSearch.trim().toLowerCase();
-    if (!q) return normalizedFriends;
-    return normalizedFriends.filter((f) => f.username.toLowerCase().includes(q));
-  }, [normalizedFriends, voucherSearch]);
-
-  const suggestedStartBoundaryDate = useMemo(
-    () => buildDefaultStartBoundaryDate(deadlineDate, defaultEventDurationMinutes),
-    [deadlineDate, defaultEventDurationMinutes],
-  );
-
-  const resolveDefaultVoucherValue = useCallback((): string | null => {
+  const resolvedDefaultVoucherValue = useMemo((): string | null => {
     if (!friendProfile) return null;
     const defaultVoucherId = friendProfile.default_voucher_id ?? null;
     if (!currentUserId) return null;
@@ -299,6 +272,27 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     }
     return 'self';
   }, [friendProfile, currentUserId, friendsLoading, friends]);
+
+  const [voucherValue, setVoucherValue] = useVoucherSelection(visible, resolvedDefaultVoucherValue);
+  const isAiVoucherSelected = voucherValue === AI_PROFILE_ID;
+  const aiVoucherEnabled = normalizedFriends.some((friend) => friend.id === AI_PROFILE_ID);
+  const aiVoucherPillState = useMemo(
+    () => getAiVoucherPillState(aiVoucherQuota, aiVoucherQuotaLoading, aiVoucherQuotaError),
+    [aiVoucherQuota, aiVoucherQuotaError, aiVoucherQuotaLoading],
+  );
+  const voucherOptions = useMemo(
+    () => buildVoucherPillOptions({
+      defaultVoucherValue: resolvedDefaultVoucherValue,
+      friends: normalizedFriends,
+      aiState: aiVoucherPillState,
+    }),
+    [aiVoucherPillState, normalizedFriends, resolvedDefaultVoucherValue],
+  );
+
+  const suggestedStartBoundaryDate = useMemo(
+    () => buildDefaultStartBoundaryDate(deadlineDate, defaultEventDurationMinutes),
+    [deadlineDate, defaultEventDurationMinutes],
+  );
 
   function resetCreateDraftState() {
     setTitle('');
@@ -356,27 +350,12 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
       );
       hasInitializedFailureCostRef.current = true;
     }
+  }, [friendProfile]);
 
-    if (!friendProfile) return;
-    const resolvedDefaultVoucher = resolveDefaultVoucherValue();
-    if (resolvedDefaultVoucher === null) return;
-
-    if (!hasInitializedVoucherRef.current) {
-      setVoucherValue(resolvedDefaultVoucher);
-      lastAppliedDefaultVoucherRef.current = resolvedDefaultVoucher;
-      hasInitializedVoucherRef.current = true;
-      return;
-    }
-
-    const lastAppliedDefaultVoucher = lastAppliedDefaultVoucherRef.current;
-    const userOverrodeVoucher = voucherValue !== null && voucherValue !== lastAppliedDefaultVoucher;
-    if (userOverrodeVoucher) return;
-
-    if (voucherValue !== resolvedDefaultVoucher) {
-      setVoucherValue(resolvedDefaultVoucher);
-    }
-    lastAppliedDefaultVoucherRef.current = resolvedDefaultVoucher;
-  }, [friendProfile, resolveDefaultVoucherValue, voucherValue]);
+  useEffect(() => {
+    if (!visible || !aiVoucherEnabled) return;
+    void refetchAiVoucherQuota();
+  }, [aiVoucherEnabled, refetchAiVoucherQuota, visible]);
 
   useEffect(() => {
     const oneHourEnabled = friendProfile?.deadline_one_hour_warning_enabled ?? true;
@@ -647,21 +626,22 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     return match?.id ?? null;
   }
 
-  function closeVoucherPicker() {
-    setVoucherPickerOpen(false);
-    setVoucherSearch('');
-  }
+  function handleSelectVoucher(value: string) {
+    if (value !== AI_PROFILE_ID || !aiVoucherPillState.disabled) {
+      setVoucherValue(value);
+      return;
+    }
 
-  function openVoucherPicker() {
-    void refetchAiVoucherQuota();
-    voucherButtonRef.current?.measureInWindow((x, y, width, height) => {
-      setVoucherAnchor({ pageX: x, pageY: y, width, buttonHeight: height });
-      setVoucherPickerOpen(true);
-    });
+    if (aiVoucherQuotaLoading) {
+      Alert.alert('Checking AI credits', 'Your AI voucher balance is still loading. Please try again in a moment.');
+    } else if (aiVoucherQuotaError || !aiVoucherQuota) {
+      Alert.alert('AI credits unavailable', 'Could not load your AI voucher balance. Please try again.');
+    } else {
+      Alert.alert('AI credits used', formatAiVoucherQuotaExhaustedMessage(aiVoucherQuota));
+    }
   }
 
   function handleCancel() {
-    closeVoucherPicker();
     onClose();
   }
 
@@ -1035,7 +1015,6 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   }, []);
 
   return (
-    <>
       <TaskCreatorOverlay
         visible={visible}
         anchor={anchor}
@@ -1074,10 +1053,9 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
         setShowCustomDeadlineAndroidModal={setShowCustomDeadlineAndroidModal}
         setCustomDeadlineDate={setCustomDeadlineDate}
         onConfirmCustomDeadline={handleConfirmCustomDeadline}
-        voucherButtonRef={voucherButtonRef}
-        voucherLabel={voucherLabel}
+        voucherOptions={voucherOptions}
         voucherValue={voucherValue}
-        onOpenVoucherPicker={openVoucherPicker}
+        onSelectVoucher={handleSelectVoucher}
         currencySymbol={currencySymbol}
         failureCostInputRef={failureCostInputRef}
         failureCostInput={failureCostInput}
@@ -1119,24 +1097,5 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
         showEventStartAndroidPicker={showEventStartAndroidPicker}
         setShowEventStartAndroidPicker={setShowEventStartAndroidPicker}
       />
-      <VoucherPickerModal
-        visible={voucherPickerOpen}
-        anchor={voucherAnchor}
-        safeTopInset={safeTopInset}
-        voucherDropdownHeight={voucherDropdownHeight}
-        setVoucherDropdownHeight={setVoucherDropdownHeight}
-        voucherSearch={voucherSearch}
-        setVoucherSearch={setVoucherSearch}
-        voucherValue={voucherValue}
-        setVoucherValue={setVoucherValue}
-        closeVoucherPicker={closeVoucherPicker}
-        friendsLoading={friendsLoading}
-        friendsError={friendsError}
-        filteredFriends={filteredFriends}
-        aiQuota={aiVoucherQuota}
-        aiQuotaLoading={aiVoucherQuotaLoading}
-        aiQuotaError={aiVoucherQuotaError}
-      />
-    </>
   );
 });

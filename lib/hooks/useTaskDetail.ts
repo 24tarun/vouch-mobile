@@ -17,6 +17,7 @@ export interface TaskProofData {
 export interface TaskDetailData {
   task: Task | null;
   recurrenceRule: RecurrenceRule | null;
+  recurrenceVoucherUsername: string | null;
   voucherUsername: string | null;
   reminders: TaskReminder[];
   events: TaskEvent[];
@@ -103,11 +104,12 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
   if (proofError) throw new Error(proofError.message);
 
   let recurrenceRule: RecurrenceRule | null = null;
+  let recurrenceVoucherUsername: string | null = null;
   const recurrenceRuleId = (taskData as any)?.recurrence_rule_id as string | null | undefined;
   if (recurrenceRuleId) {
     const { data: recurrenceData, error: recurrenceError } = await supabase
       .from('recurrence_rules')
-      .select('*')
+      .select('*, voucher:profiles!recurrence_rules_voucher_id_fkey(username)')
       .eq('id', recurrenceRuleId)
       .abortSignal(signal)
       .single();
@@ -115,6 +117,8 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
     // Don't fail task detail if recurrence rule lookup is unavailable.
     if (!recurrenceError && recurrenceData) {
       recurrenceRule = recurrenceData as RecurrenceRule;
+      recurrenceVoucherUsername =
+        ((recurrenceData as any)?.voucher?.username as string | null | undefined) ?? null;
     }
   }
 
@@ -149,6 +153,7 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
   return {
     task: taskData as Task,
     recurrenceRule,
+    recurrenceVoucherUsername,
     voucherUsername: ((taskData as any)?.voucher?.username as string | null) ?? null,
     reminders: (remindersRes.data ?? []) as TaskReminder[],
     events: (eventsRes.data ?? []) as TaskEvent[],

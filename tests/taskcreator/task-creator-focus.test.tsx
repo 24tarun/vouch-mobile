@@ -8,8 +8,16 @@ describe('TaskCreatorOverlay keyboard focus behavior', () => {
     jest.clearAllMocks();
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it('focuses title input after opening interactions complete', async () => {
-    const callbacks: Array<() => void> = [];
+    const callbacks: (() => void)[] = [];
+    jest.spyOn(global, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(0);
+      return 0;
+    });
     jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation((task?: Parameters<typeof InteractionManager.runAfterInteractions>[0]) => {
       if (typeof task === 'function') {
         callbacks.push(task);
@@ -57,10 +65,9 @@ describe('TaskCreatorOverlay keyboard focus behavior', () => {
         setShowCustomDeadlineAndroidModal={jest.fn()}
         setCustomDeadlineDate={jest.fn()}
         onConfirmCustomDeadline={jest.fn()}
-        voucherButtonRef={{ current: null }}
-        voucherLabel="Self"
+        voucherOptions={[{ value: 'self', label: 'Myself', icon: 'user-check' }]}
         voucherValue="self"
-        onOpenVoucherPicker={jest.fn()}
+        onSelectVoucher={jest.fn()}
         currencySymbol="$"
         failureCostInputRef={{ current: null }}
         failureCostInput=""

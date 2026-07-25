@@ -38,6 +38,7 @@ import {
   WEEKDAY_SHORT,
 } from './types';
 import { makeStyles } from './styles';
+import { VoucherPillSelector, type VoucherPillOption } from './VoucherPillSelector';
 
 const HIDDEN_REMINDER_SOURCES = new Set(['DEFAULT_DEADLINE_DUE']);
 
@@ -86,10 +87,9 @@ interface TaskCreatorOverlayProps {
   setShowCustomDeadlineAndroidModal: Dispatch<SetStateAction<boolean>>;
   setCustomDeadlineDate: Dispatch<SetStateAction<Date>>;
   onConfirmCustomDeadline: (input?: Date) => boolean | void;
-  voucherButtonRef: RefObject<View | null>;
-  voucherLabel: string;
+  voucherOptions: VoucherPillOption[];
   voucherValue: string | null;
-  onOpenVoucherPicker: () => void;
+  onSelectVoucher: (value: string) => void;
   currencySymbol: string;
   failureCostInputRef: RefObject<TextInput | null>;
   failureCostInput: string;
@@ -170,10 +170,9 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
   setShowCustomDeadlineAndroidModal,
   setCustomDeadlineDate,
   onConfirmCustomDeadline,
-  voucherButtonRef,
-  voucherLabel,
+  voucherOptions,
   voucherValue,
-  onOpenVoucherPicker,
+  onSelectVoucher,
   currencySymbol,
   failureCostInputRef,
   failureCostInput,
@@ -543,63 +542,57 @@ export const TaskCreatorOverlay = memo(function TaskCreatorOverlay({
             </Pressable>
           </View>
 
-          {/* ── 2. Schedule + Voucher glass card (vertical) ── */}
-          <View style={styles.glassCard}>
-            <TouchableOpacity
-              style={styles.deadlineRowInCard}
-              activeOpacity={0.85}
-              onPress={onOpenDeadlinePickerFlow}
-              accessibilityRole="button"
-              accessibilityLabel="Change deadline"
-            >
-              <Feather name="calendar" size={20} color="#FBBF24" />
-              <Text style={[styles.deadlinePickerTriggerText, { flex: 1 }]}>{formatReminderDateTimeLabel(deadlineDate)}</Text>
-              {isRepeatEnabled && (
-                <View style={styles.recurrenceInlineChip}>
-                  <Text style={styles.recurrenceInlineChipText}>
-                    {showCustomRecurrenceDays ? 'Custom'
-                      : recurrenceType === 'DAILY' ? 'Daily'
-                      : recurrenceType === 'WEEKLY' ? 'Weekly'
-                      : recurrenceType === 'MONTHLY' ? 'Monthly'
-                      : ''}
-                  </Text>
-                </View>
-              )}
-              <Feather
-                name="repeat"
-                size={isRepeatEnabled ? 19 : 17}
-                color={isRepeatEnabled ? '#C084FC' : colors.textMuted}
-                style={[styles.deadlinePickerAuxIcon, isRepeatEnabled && styles.deadlinePickerAuxIconActive]}
-              />
-            </TouchableOpacity>
-            <View style={styles.glassCardSeparatorFull} />
-            <View ref={voucherButtonRef} collapsable={false}>
+          <View style={styles.voucherSection}>
+            {/* ── 2. Schedule card ── */}
+            <View style={styles.glassCard}>
               <TouchableOpacity
-                style={styles.voucherRowInCard}
-                onPress={onOpenVoucherPicker}
-                activeOpacity={0.8}
+                style={styles.deadlineRowInCard}
+                activeOpacity={0.85}
+                onPress={onOpenDeadlinePickerFlow}
                 accessibilityRole="button"
-                accessibilityLabel="Select voucher"
+                accessibilityLabel="Change deadline"
               >
-                <Feather name="users" size={16} color={colors.textMuted} />
-                <Text style={[styles.voucherRowInCardText, !voucherValue && styles.voucherRowInCardTextEmpty]}>
-                  {voucherLabel}
-                </Text>
-                <Feather name="chevron-down" size={16} color={colors.textMuted} />
+                <Feather name="calendar" size={20} color="#FBBF24" />
+                <Text style={[styles.deadlinePickerTriggerText, { flex: 1 }]}>{formatReminderDateTimeLabel(deadlineDate)}</Text>
+                {isRepeatEnabled && (
+                  <View style={styles.recurrenceInlineChip}>
+                    <Text style={styles.recurrenceInlineChipText}>
+                      {showCustomRecurrenceDays ? 'Custom'
+                        : recurrenceType === 'DAILY' ? 'Daily'
+                        : recurrenceType === 'WEEKLY' ? 'Weekly'
+                        : recurrenceType === 'MONTHLY' ? 'Monthly'
+                        : ''}
+                    </Text>
+                  </View>
+                )}
+                <Feather
+                  name="repeat"
+                  size={isRepeatEnabled ? 19 : 17}
+                  color={isRepeatEnabled ? '#C084FC' : colors.textMuted}
+                  style={[styles.deadlinePickerAuxIcon, isRepeatEnabled && styles.deadlinePickerAuxIconActive]}
+                />
               </TouchableOpacity>
+              {showCustomDeadlineAndroidPicker ? (
+                <DateTimePicker
+                  value={customDeadlineDate}
+                  mode={customDeadlinePickerMode}
+                  display="default"
+                  minimumDate={customDeadlinePickerMode === 'date' ? new Date() : undefined}
+                  onChange={onCustomDeadlineAndroidPickerChange}
+                />
+              ) : null}
             </View>
-            {showCustomDeadlineAndroidPicker ? (
-              <DateTimePicker
-                value={customDeadlineDate}
-                mode={customDeadlinePickerMode}
-                display="default"
-                minimumDate={customDeadlinePickerMode === 'date' ? new Date() : undefined}
-                onChange={onCustomDeadlineAndroidPickerChange}
-              />
-            ) : null}
+
+            {/* ── 3. Free-flowing voucher pills ── */}
+            <VoucherPillSelector
+              options={voucherOptions}
+              selectedValue={voucherValue}
+              loading={friendsLoading}
+              onSelect={onSelectVoucher}
+            />
           </View>
 
-          {/* ── 3. Reminders glass card ── */}
+          {/* ── 4. Reminders glass card ── */}
           <View style={styles.reminderCard}>
             <View style={styles.reminderHeaderRow}>
               <TouchableOpacity

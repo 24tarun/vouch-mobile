@@ -20,6 +20,22 @@ interface TaskMutationResult {
   stateChanged?: boolean;
 }
 
+export interface PausedRecurrenceSettingsPatch {
+  timeOfDay?: string;
+  failureCostCents?: number;
+  voucherId?: string;
+  requiresProof?: boolean;
+}
+
+export interface PausedRecurrenceSettings {
+  recurrenceRuleId: string;
+  timeOfDay: string;
+  failureCostCents: number;
+  voucherId: string;
+  requiresProof: boolean;
+  updatedAt: string;
+}
+
 function getOffsetIsoForTimeZone(date: Date, timeZone: string): string {
   const offsetPart = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -417,6 +433,54 @@ export async function setTaskRepetitionsPaused(taskId: string, paused: boolean):
     recurrenceRuleId: (result as any)?.recurrence_rule_id,
     pausedAt: (result as any)?.paused_at ?? null,
     stateChanged: Boolean((result as any)?.state_changed),
+  };
+}
+
+export async function updatePausedRecurrenceSettings(
+  taskId: string,
+  patch: PausedRecurrenceSettingsPatch,
+): Promise<{ success: boolean; settings?: PausedRecurrenceSettings; error?: string }> {
+  const userId = await getAuthenticatedUserId();
+  if (!userId) return { success: false, error: 'Please sign in again and retry.' };
+
+  const { data, error } = await (supabase.rpc as any)('update_paused_recurrence_settings', {
+    p_task_id: taskId,
+    p_time_of_day: patch.timeOfDay ?? null,
+    p_failure_cost_cents: patch.failureCostCents ?? null,
+    p_voucher_id: patch.voucherId ?? null,
+    p_requires_proof: patch.requiresProof ?? null,
+  });
+
+  if (error) return { success: false, error: error.message };
+
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    recurrence_rule_id?: string;
+    time_of_day?: string;
+    failure_cost_cents?: number;
+    voucher_id?: string;
+    requires_proof?: boolean;
+    updated_at?: string;
+  } | null;
+
+  if (
+    !row?.recurrence_rule_id
+    || !row.time_of_day
+    || !row.voucher_id
+    || typeof row.failure_cost_cents !== 'number'
+  ) {
+    return { success: false, error: 'Future repetition settings could not be updated.' };
+  }
+
+  return {
+    success: true,
+    settings: {
+      recurrenceRuleId: row.recurrence_rule_id,
+      timeOfDay: row.time_of_day,
+      failureCostCents: row.failure_cost_cents,
+      voucherId: row.voucher_id,
+      requiresProof: Boolean(row.requires_proof),
+      updatedAt: row.updated_at ?? new Date().toISOString(),
+    },
   };
 }
 

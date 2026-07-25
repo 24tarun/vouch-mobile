@@ -29,13 +29,23 @@ import Toast from 'react-native-toast-message';
 import { DEFAULT_REMINDER_OFFSET_MS, normalizePomoDurationMinutes } from '@/lib/constants/timings';
 import { supabase } from '@/lib/supabase';
 import { purgeTaskProofForFinalState, queueAiEvalForTask, removeCurrentTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
-import { completeTask, setTaskRepetitionsPaused, stopTaskRepetitions, undoCompleteTask, deleteTask, surrenderTask, postponeTaskDeadline, isTaskWithinDeleteWindow } from '@/lib/tasks/task-actions';
+import {
+  completeTask,
+  setTaskRepetitionsPaused,
+  stopTaskRepetitions,
+  undoCompleteTask,
+  deleteTask,
+  surrenderTask,
+  postponeTaskDeadline,
+  isTaskWithinDeleteWindow,
+  type PausedRecurrenceSettings,
+} from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import { StatusPill } from '@/components/StatusPill';
 import { usePomodoro } from '@/components/pomodoro/PomodoroProvider';
-import type { RecurrenceRule, Task, TaskReminder } from '@/lib/types';
+import type { Currency, RecurrenceRule, Task, TaskReminder } from '@/lib/types';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { AI_PROFILE_ID, AI_PROFILE_USERNAME } from '@/lib/constants/ai-profile';
 import { useAuth } from '@/hooks/useAuth';
@@ -47,6 +57,10 @@ import { getDefaultDeadline } from '@/lib/task-title-parser';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
 import { LegacyPostponeCalendarPicker } from '@/components/tasks/LegacyPostponeCalendarPicker';
 import { ProofCaptureModal } from '@/components/tasks/ProofCaptureModal';
+import {
+  PausedRecurrenceEditorSheet,
+  type RecurrenceEditorField,
+} from '@/components/tasks/PausedRecurrenceEditorSheet';
 import { TaskTimeline } from '@/components/tasks/TaskTimeline';
 import { COMPLETION_EDITABLE_STATUSES, DEADLINE_INCLUSIVE_MINUTE_MS, isTaskCompletionLocked } from '@/lib/tasks/task-completion-lock';
 
@@ -86,6 +100,16 @@ function formatFullDeadline(iso: string): string {
   const dayName = d.toLocaleDateString('en-GB', { weekday: 'long' });
   const month = d.toLocaleDateString('en-GB', { month: 'long' });
   return `${dayName} ${getOrdinal(d.getDate())} ${month} · ${time}`;
+}
+
+function formatDeadlineWithTimeOfDay(iso: string, timeOfDay: string | undefined): string {
+  const deadline = new Date(iso);
+  if (Number.isNaN(deadline.getTime())) return formatFullDeadline(iso);
+  const match = timeOfDay?.match(/^(\d{2}):(\d{2})$/);
+  if (match) {
+    deadline.setHours(Number(match[1]), Number(match[2]), 0, 0);
+  }
+  return formatFullDeadline(deadline.toISOString());
 }
 
 function formatFocusedTime(totalSeconds: number): string {
@@ -400,6 +424,9 @@ export default function TaskDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [proofLightboxOpen, setProofLightboxOpen] = useState(false);
   const [proofCaptureOpen, setProofCaptureOpen] = useState(false);
+  const [recurrenceEditorField, setRecurrenceEditorField] = useState<RecurrenceEditorField | null>(null);
+  const [editedRecurrenceFields, setEditedRecurrenceFields] = useState<Set<RecurrenceEditorField>>(new Set());
+  const [savedRecurrenceSettings, setSavedRecurrenceSettings] = useState<PausedRecurrenceSettings | null>(null);
 
   useEffect(() => {
     hasUserToggledSubtasksRef.current = false;
@@ -435,6 +462,7 @@ export default function TaskDetailScreen() {
   const proof = detail.data?.proof ?? null;
   const hasUploadedProof = Boolean(proof);
   const recurrenceRule = detail.data?.recurrenceRule ?? null;
+  const recurrenceVoucherUsername = detail.data?.recurrenceVoucherUsername ?? null;
   const proofPreviewWidth = screenWidth - spacing.lg * 2;
   const autoSubmitAfterProofUpload = profile?.auto_submit_after_proof_upload ?? true;
 
@@ -1176,6 +1204,10 @@ export default function TaskDetailScreen() {
         return;
       }
 
+      if (!nextPaused) {
+        setEditedRecurrenceFields(new Set());
+        setSavedRecurrenceSettings(null);
+      }
       invalidateDerivedTaskViews();
       await Promise.resolve(detail.refetch());
       Toast.show({
@@ -1510,6 +1542,12 @@ export default function TaskDetailScreen() {
   const currentTaskPomoStatus = isCurrentTaskPomo ? activePomoSession?.status : null;
   const recurrenceSummary = buildRecurrenceSummary(task, recurrenceRule);
   const isRepetitionPaused = Boolean(recurrenceRule?.paused_at);
+  const canEditFutureRepetitions = canManageRepetitions && isRepetitionPaused;
+  const futureVoucherLabel = recurrenceRule?.voucher_id === task.user_id
+    ? 'Self vouch'
+    : recurrenceRule?.voucher_id === AI_PROFILE_ID
+      ? AI_PROFILE_USERNAME
+      : recurrenceVoucherUsername ?? '—';
 
   const handlePomoPress = () => {
     if (isCurrentTaskPomo) {
@@ -1566,20 +1604,73 @@ export default function TaskDetailScreen() {
             </View>
           </View>
           <Divider />
-          <InfoRow icon="clock"         label="Deadline"     value={formatFullDeadline(task.deadline)} />
+          <InfoRow
+            icon="clock"
+            label="Deadline"
+            value={canEditFutureRepetitions && editedRecurrenceFields.has('deadline')
+              ? formatDeadlineWithTimeOfDay(
+                task.deadline,
+                savedRecurrenceSettings?.timeOfDay ?? recurrenceRule?.rule_config.time_of_day,
+              )
+              : formatFullDeadline(task.deadline)}
+            editable={canEditFutureRepetitions}
+            highlightedValue={canEditFutureRepetitions && editedRecurrenceFields.has('deadline')}
+            onEdit={() => setRecurrenceEditorField('deadline')}
+          />
           <Divider />
-          <InfoRow icon="stopwatch-outline" iconSet="ionicons" label="Focused" value={formatFocusedTime(totalFocusedSeconds)} />
+          <InfoRow
+            icon="stopwatch-outline"
+            iconSet="ionicons"
+            label="Focused"
+            value={formatFocusedTime(totalFocusedSeconds)}
+          />
           <Divider />
-          <InfoRow icon="alert-circle"  label="Failure cost" value={formatCost(task.failure_cost_cents, currency)} />
+          <InfoRow
+            icon="alert-circle"
+            label="Failure cost"
+            value={formatCost(
+              canEditFutureRepetitions && editedRecurrenceFields.has('failureCost')
+                ? savedRecurrenceSettings?.failureCostCents
+                  ?? recurrenceRule?.failure_cost_cents
+                  ?? task.failure_cost_cents
+                : task.failure_cost_cents,
+              currency,
+            )}
+            editable={canEditFutureRepetitions}
+            highlightedValue={canEditFutureRepetitions && editedRecurrenceFields.has('failureCost')}
+            onEdit={() => setRecurrenceEditorField('failureCost')}
+          />
           <Divider />
-          <InfoRow icon="user"          label="Voucher"      value={isSelfVouch ? 'Self vouch' : (voucherUsername ? voucherUsername : '—')} />
-          {task.postponed_at && (<><Divider /><InfoRow icon="skip-forward" label="Postponed at"  value={formatFullDeadline(task.postponed_at)} /></>)}
+          <InfoRow
+            icon="user"
+            label="Voucher"
+            value={canEditFutureRepetitions && editedRecurrenceFields.has('voucher')
+              ? savedRecurrenceSettings?.voucherId === task.user_id
+                ? 'Self vouch'
+                : savedRecurrenceSettings?.voucherId === AI_PROFILE_ID
+                  ? AI_PROFILE_USERNAME
+                  : futureVoucherLabel
+              : (isSelfVouch ? 'Self vouch' : (voucherUsername ? voucherUsername : '—'))}
+            editable={canEditFutureRepetitions}
+            highlightedValue={canEditFutureRepetitions && editedRecurrenceFields.has('voucher')}
+            onEdit={() => setRecurrenceEditorField('voucher')}
+          />
+          <Divider />
+          <InfoRow
+            icon="camera"
+            label="Proof required"
+            value={(canEditFutureRepetitions && editedRecurrenceFields.has('requiresProof')
+              ? savedRecurrenceSettings?.requiresProof ?? recurrenceRule?.requires_proof
+              : task.requires_proof) ? 'True' : 'False'}
+            editable={canEditFutureRepetitions}
+            highlightedValue={canEditFutureRepetitions && editedRecurrenceFields.has('requiresProof')}
+            onEdit={() => setRecurrenceEditorField('requiresProof')}
+          />
         </View>
 
         {/* Flags */}
-        {(task.requires_proof || task.required_pomo_minutes || task.is_strict) && (
+        {(task.required_pomo_minutes || task.is_strict) && (
           <View style={styles.flagsRow}>
-            {task.requires_proof && <FlagPill icon="camera" label={hasUploadedProof ? 'Proof uploaded' : 'Proof required'} active={hasUploadedProof} />}
             {task.required_pomo_minutes != null && <FlagPill icon="clock" label={`${task.required_pomo_minutes} pomo min`} active={false} />}
             {task.is_strict && <FlagPill icon="lock" label="Strict window" active={false} />}
           </View>
@@ -1653,6 +1744,29 @@ export default function TaskDetailScreen() {
               </TouchableOpacity>
             </Pressable>
           </Modal>
+        ) : null}
+
+        {recurrenceEditorField && recurrenceRule && user?.id ? (
+          <PausedRecurrenceEditorSheet
+            key={recurrenceEditorField}
+            field={recurrenceEditorField}
+            taskId={task.id}
+            recurrenceRule={recurrenceRule}
+            currency={currency as Currency}
+            currentUserId={user.id}
+            onClose={() => setRecurrenceEditorField(null)}
+            onSaved={(settings) => {
+              setSavedRecurrenceSettings(settings);
+              setEditedRecurrenceFields((previous) => new Set(previous).add(recurrenceEditorField));
+              setRecurrenceEditorField(null);
+              Toast.show({
+                type: 'proofSuccess',
+                text1: 'Future repetitions updated',
+                position: 'bottom',
+              });
+              void detail.refetch();
+            }}
+          />
         ) : null}
         <ProofCaptureModal
           visible={proofCaptureOpen}
@@ -2311,23 +2425,46 @@ function InfoRow({
   label,
   value,
   iconSet = 'feather',
+  editable = false,
+  highlightedValue = false,
+  onEdit,
 }: {
   icon: string;
   label: string;
   value: string;
   iconSet?: 'feather' | 'ionicons';
+  editable?: boolean;
+  highlightedValue?: boolean;
+  onEdit?: () => void;
 }) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   return (
     <View style={styles.infoRow}>
-      {iconSet === 'ionicons' ? (
+      {editable ? (
+        <TouchableOpacity
+          style={styles.infoMainEditButton}
+          onPress={onEdit}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${label.toLowerCase()} for future repetitions`}
+          hitSlop={8}
+        >
+          <Feather name="edit-2" size={15} color="#C084FC" />
+        </TouchableOpacity>
+      ) : iconSet === 'ionicons' ? (
         <Ionicons name={icon as any} size={16} color={colors.textMuted} style={{ flexShrink: 0 }} />
       ) : (
         <Feather name={icon as any} size={15} color={colors.textMuted} style={{ flexShrink: 0 }} />
       )}
       <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue} numberOfLines={2}>{value}</Text>
+      <View style={styles.infoValueWrap}>
+        <Text
+          style={[styles.infoValue, highlightedValue && styles.infoValueEdited]}
+          numberOfLines={2}
+        >
+          {value}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -2368,7 +2505,10 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   infoBlock: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, overflow: 'hidden' },
   infoRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: 13, gap: spacing.sm },
   infoLabel: { fontSize: typography.sm, color: colors.textMuted, width: 110, flexShrink: 0 },
-  infoValue: { flex: 1, fontSize: typography.sm, color: colors.text, textAlign: 'right' },
+  infoMainEditButton: { width: 16, height: 16, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  infoValueWrap: { flex: 1, alignItems: 'flex-end' },
+  infoValue: { fontSize: typography.sm, color: colors.text, textAlign: 'right' },
+  infoValueEdited: { color: '#C084FC' },
   infoDivider: { height: 1, backgroundColor: colors.border, marginHorizontal: spacing.md },
   flagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   flagPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: spacing.sm, paddingVertical: 5, borderRadius: radius.full, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },

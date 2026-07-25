@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { useSharedValue, withTiming, runOnJS, Easing } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { useQueryClient } from '@tanstack/react-query';
@@ -56,7 +56,6 @@ import { getFutureBoundaryMs } from '@/lib/utils/date-only';
 type OverlayMode = 'closed' | 'create';
 
 export default function TasksScreen() {
-  const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const { profile: authProfile, user } = useAuth();
@@ -106,7 +105,7 @@ export default function TasksScreen() {
   const keyboardTopYRef = useRef(Number.POSITIVE_INFINITY);
   const [taskListKeyboardInset, setTaskListKeyboardInset] = useState(0);
 
-  const { friends, currentUserId, profile, loading: friendsLoading, error: friendsError } = useFriends();
+  const { friends, currentUserId, profile, loading: friendsLoading } = useFriends();
   const defaultRequiresProofForAllTasks = profile?.default_requires_proof_for_all_tasks ?? false;
   const autoSubmitAfterProofUpload = authProfile?.auto_submit_after_proof_upload ?? profile?.auto_submit_after_proof_upload ?? true;
   const defaultPomoDurationMinutes = normalizePomoDurationMinutes(authProfile?.default_pomo_duration_minutes);
@@ -560,8 +559,6 @@ export default function TasksScreen() {
         defaultRequiresProofForAllTasks={defaultRequiresProofForAllTasks}
         friends={friends}
         friendsLoading={friendsLoading}
-        friendsError={friendsError}
-        safeTopInset={insets.top}
         onClose={closeOverlay}
         addOptimisticTask={addOptimisticTask}
         removeOptimisticTask={removeOptimisticTask}

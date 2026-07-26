@@ -2248,10 +2248,10 @@ export default function TaskDetailScreen() {
         </View>
 
         {/* Description */}
-        {task.description ? (
+        {task.description?.trim() ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Description</Text>
-            <Text style={styles.description}>{task.description}</Text>
+            <Text style={styles.description}>{task.description.trim()}</Text>
           </View>
         ) : null}
 

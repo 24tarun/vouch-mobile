@@ -6,6 +6,7 @@
  * - Events: -event with -start/-end (also -s/.s and -e/.e)
  * - Event colors: -color helper and aliases like -pink, -blue
  * - Task metadata: -proof, pomo N, remind@..., repeat daily|weekly|monthly|yearly, vouch/.v USER, -strict
+ * - Verification context: -d(...)
  * - Subtasks: / delimiter
  */
 
@@ -32,12 +33,77 @@ const WEEKDAY_TOKEN_PATTERN =
   '\\b@?(mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\\b';
 
 const WEEKDAY_TOKEN_REGEX = new RegExp(WEEKDAY_TOKEN_PATTERN, 'gi');
-const TOMORROW_KEYWORD_REGEX = /\b@?(?:tmrw|tomorrow)\b/i;
+const TOMORROW_KEYWORD_REGEX = /(^|\s)@?(?:tmrw|tomorrow)(?=\s|$)/i;
 const ORDINAL_DATE_TOKEN_REGEX = /\b([12]?\d|3[01])(st|nd|rd|th)\b/gi;
 const SLASH_DATE_TOKEN_REGEX = /\b(0?[1-9]|[12]\d|3[01])\/(0?[1-9]|1[0-2])(?:\/(\d{4}))?\b/g;
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
+}
+
+interface TaskDescriptionCommandMatch {
+  commandStart: number;
+  contentStart: number;
+  contentEnd: number | null;
+  commandEnd: number | null;
+}
+
+function findTaskDescriptionCommand(text: string): TaskDescriptionCommandMatch | null {
+  const openingMatch = /(^|\s)-d\(/i.exec(text);
+  if (!openingMatch) return null;
+
+  const commandStart = (openingMatch.index ?? 0) + (openingMatch[1]?.length ?? 0);
+  const contentStart = commandStart + 3;
+  let depth = 1;
+
+  for (let index = contentStart; index < text.length; index += 1) {
+    if (text[index] === '(') {
+      depth += 1;
+    } else if (text[index] === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          commandStart,
+          contentStart,
+          contentEnd: index,
+          commandEnd: index + 1,
+        };
+      }
+    }
+  }
+
+  return {
+    commandStart,
+    contentStart,
+    contentEnd: null,
+    commandEnd: null,
+  };
+}
+
+export interface ParsedTaskDescription {
+  taskInput: string;
+  description: string | null;
+}
+
+export function parseTaskDescription(text: string): ParsedTaskDescription {
+  if (!text) {
+    return { taskInput: '', description: null };
+  }
+
+  const command = findTaskDescriptionCommand(text);
+  if (!command || command.contentEnd == null || command.commandEnd == null) {
+    return { taskInput: text.trim(), description: null };
+  }
+
+  const description = text.slice(command.contentStart, command.contentEnd).trim();
+  const taskInput = normalizeWhitespace(
+    `${text.slice(0, command.commandStart)} ${text.slice(command.commandEnd)}`,
+  );
+
+  return {
+    taskInput,
+    description: description || null,
+  };
 }
 
 function mapWeekdayTokenToIndex(token: string): number {
@@ -648,7 +714,8 @@ export function validateEventColorUsage(rawTitle: string, hasEvent: boolean): { 
 function stripMetadata(text: string): string {
   if (!text) return '';
 
-  const withoutStandardTokens = text
+  const { taskInput } = parseTaskDescription(text);
+  const withoutStandardTokens = taskInput
     .replace(/(^|\s)@(?:\d{1,2}:\d{2}(?:\s*(?:am|pm))?|\d{1,4}(?:\s*(?:am|pm))?|\d{1,2}(?:\s*(?:am|pm))?)\b/gi, '$1')
     .replace(/(?:^|\s)-start\s*(?:\d{1,2}:\d{2}|\d{1,4})\b/gi, ' ')
     .replace(/(?:^|\s)-end\s*(?:\d{1,2}:\d{2}|\d{1,4})\b/gi, ' ')
@@ -657,7 +724,7 @@ function stripMetadata(text: string): string {
     .replace(/\b([12]?\d|3[01])(?:st|nd|rd|th)\b/gi, '')
     .replace(/\b(?:0?[1-9]|[12]\d|3[01])\/(?:0?[1-9]|1[0-2])(?:\/\d{4})?\b/g, '')
     .replace(/(^|\s)remind@(?:\d{1,2}:\d{2}(?:\s*(?:am|pm))?|\d{1,4}(?:\s*(?:am|pm))?|\d{1,2}(?:\s*(?:am|pm))?)\b/gi, '$1')
-    .replace(/\b@?(?:tmrw|tomorrow|today)\b/gi, '')
+    .replace(/(^|\s)@?(?:tmrw|tomorrow|today)(?=\s|$)/gi, '$1')
     .replace(new RegExp(WEEKDAY_TOKEN_REGEX.source, 'gi'), '')
     .replace(/(?:\bvouch|\.v)\s+[^\s/]+/gi, '')
     .replace(/(?:^|\s)-proof(?=\s|$)/gi, ' ')
@@ -687,24 +754,26 @@ export function parseTitleForDeadline(
   text: string,
   _currentDeadline: Date,
 ): Date | null {
-  if (!titleHasDeadlineToken(text) && !EVENT_TOKEN_REGEX.test(text)) {
+  const { taskInput } = parseTaskDescription(text);
+  if (!titleHasDeadlineToken(taskInput) && !EVENT_TOKEN_REGEX.test(taskInput)) {
     return null;
   }
 
-  const resolution = resolveTaskDeadline(text, new Date(), 60);
+  const resolution = resolveTaskDeadline(taskInput, new Date(), 60);
   if (resolution.error) return null;
   return resolution.deadline;
 }
 
 export function titleHasDeadlineToken(text: string): boolean {
   if (!text) return false;
+  const { taskInput } = parseTaskDescription(text);
   return (
-    TOMORROW_KEYWORD_REGEX.test(text)
-    || /\b@today\b/i.test(text)
-    || new RegExp(WEEKDAY_TOKEN_REGEX.source, 'i').test(text)
-    || new RegExp(ORDINAL_DATE_TOKEN_REGEX.source, 'i').test(text)
-    || new RegExp(SLASH_DATE_TOKEN_REGEX.source).test(text)
-    || /(?:^|\s)@(\d{1,2}:\d{2}(?:\s*(?:am|pm))?|\d{1,4}(?:\s*(?:am|pm))?|\d{1,2}(?:\s*(?:am|pm))?)\b/i.test(text)
-    || /\btimer\s+\d+\b/i.test(text)
+    TOMORROW_KEYWORD_REGEX.test(taskInput)
+    || /\b@today\b/i.test(taskInput)
+    || new RegExp(WEEKDAY_TOKEN_REGEX.source, 'i').test(taskInput)
+    || new RegExp(ORDINAL_DATE_TOKEN_REGEX.source, 'i').test(taskInput)
+    || new RegExp(SLASH_DATE_TOKEN_REGEX.source).test(taskInput)
+    || /(?:^|\s)@(\d{1,2}:\d{2}(?:\s*(?:am|pm))?|\d{1,4}(?:\s*(?:am|pm))?|\d{1,2}(?:\s*(?:am|pm))?)\b/i.test(taskInput)
+    || /\btimer\s+\d+\b/i.test(taskInput)
   );
 }

@@ -364,6 +364,7 @@ export function TaskTimeline({
     const hasActiveEvent = events.some((e) => e.event_type === 'ACTIVE');
     const hasMarkCompleteEvent = events.some((e) => e.event_type === 'MARK_COMPLETE');
     const hasFinalCallEvent = events.some((e) => e.event_type === 'DEADLINE_WARNING_DUE');
+    const canReceiveDeadlineReminder = task.status === 'ACTIVE' || task.status === 'POSTPONED';
     const synthetic: TaskEvent[] = [];
 
     if (!hasActiveEvent) {
@@ -392,7 +393,7 @@ export function TaskTimeline({
       });
     }
 
-    if (!hasFinalCallEvent) {
+    if (!hasFinalCallEvent && canReceiveDeadlineReminder) {
       const dueReminder = reminders.find((reminder) => {
         if (reminder.source !== 'DEFAULT_DEADLINE_DUE') return false;
         const reminderMs = new Date(reminder.reminder_at).getTime();
@@ -421,7 +422,7 @@ export function TaskTimeline({
     const displayEvents = [...synthetic, ...events].sort(compareTimelineEvents);
     const usedAiVouchIds = new Set<string>();
     return displayEvents.flatMap((event) => buildTimelineEntries(event, aiVouches, usedAiVouchIds));
-  }, [aiVouches, events, reminders, task.created_at, task.id, task.marked_completed_at, timelineNowMs]);
+  }, [aiVouches, events, reminders, task.created_at, task.id, task.marked_completed_at, task.status, timelineNowMs]);
 
   if (timelineEntries.length === 0) return null;
 

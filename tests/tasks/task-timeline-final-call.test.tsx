@@ -67,12 +67,44 @@ describe('TaskTimeline final call reminder', () => {
     expect(getByText('Final Call Reminder Sent')).toBeTruthy();
   });
 
-  it('renders from the due reminder when the background event loses the completion race', () => {
+  it('does not claim a final call was sent after the task starts awaiting voucher', () => {
+    const { queryByText } = render(
+      <TaskTimeline
+        task={{
+          ...task,
+          status: 'AWAITING_VOUCHER',
+          marked_completed_at: '2026-06-24T09:59:00.000Z',
+        }}
+        events={[]}
+        reminders={[finalCallReminder]}
+        referenceNowMs={new Date(task.deadline).getTime()}
+      />,
+    );
+
+    expect(queryByText('Final Call Reminder Sent')).toBeNull();
+  });
+
+  it.each(['ACTIVE', 'POSTPONED'] as const)(
+    'renders the due reminder fallback while the task is %s',
+    (status) => {
+      const { getByText } = render(
+        <TaskTimeline
+          task={{ ...task, status }}
+          events={[]}
+          reminders={[finalCallReminder]}
+          referenceNowMs={new Date(task.deadline).getTime()}
+        />,
+      );
+
+      expect(getByText('Final Call Reminder Sent')).toBeTruthy();
+    },
+  );
+
+  it('keeps a genuinely recorded final call in the history after completion', () => {
     const { getByText } = render(
       <TaskTimeline
         task={{ ...task, status: 'AWAITING_VOUCHER', marked_completed_at: task.deadline }}
-        events={[]}
-        reminders={[finalCallReminder]}
+        events={[finalCallEvent]}
         referenceNowMs={new Date(task.deadline).getTime()}
       />,
     );

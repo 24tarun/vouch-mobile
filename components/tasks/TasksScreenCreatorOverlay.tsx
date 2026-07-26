@@ -16,6 +16,7 @@ import {
   parseReminderTimesFromTitle,
   parseRepeatTokenFromTitle,
   parseRequiredPomoFromTitle,
+  parseTaskDescription,
   parseTaskTitleAndSubtasks,
   parseTitleForDeadline,
   resolveEventAnchorDate,
@@ -684,21 +685,23 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
       return;
     }
 
+    const parsedDescription = parseTaskDescription(rawTitle);
+    const parserSourceTitle = parsedDescription.taskInput;
     const eventDurationMinutes = defaultEventDurationMinutes;
-    const parsedTask = parseTaskTitleAndSubtasks(rawTitle);
+    const parsedTask = parseTaskTitleAndSubtasks(parserSourceTitle);
     const taskTitle = parsedTask.title.trim();
     if (!taskTitle) {
       Alert.alert('Missing title', 'Please enter a task title.');
       return;
     }
 
-    const requiredPomoParse = parseRequiredPomoFromTitle(rawTitle);
+    const requiredPomoParse = parseRequiredPomoFromTitle(parserSourceTitle);
     if (requiredPomoParse.error) {
       Alert.alert('Invalid pomodoro requirement', requiredPomoParse.error);
       return;
     }
 
-    const parsedVoucherId = resolveVoucherIdFromTitle(rawTitle);
+    const parsedVoucherId = resolveVoucherIdFromTitle(parserSourceTitle);
     const effectiveVoucherId = parsedVoucherId ?? resolvedVoucherId;
     if (!effectiveVoucherId) {
       Alert.alert('Missing voucher', 'Please select a voucher.');
@@ -720,9 +723,9 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
       }
     }
 
-    const parsedEventToken = EVENT_TOKEN_REGEX.test(rawTitle);
+    const parsedEventToken = EVENT_TOKEN_REGEX.test(parserSourceTitle);
     const effectiveEventSyncEnabled = eventSyncEnabled || parsedEventToken;
-    const isStrict = /(^|\s)-strict(?=\s|$)/i.test(rawTitle);
+    const isStrict = /(^|\s)-strict(?=\s|$)/i.test(parserSourceTitle);
     const effectiveTimeBoundEnabled = timeBoundEnabled || isStrict;
 
     let deadlineToCreate = new Date(deadlineOverride ?? deadlineDate);
@@ -732,9 +735,9 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
       setDeadlineDate(deadlineToCreate);
       setCustomDeadlineDate(deadlineToCreate);
     }
-    const titleHasParserDeadline = titleHasDeadlineToken(rawTitle) || parsedEventToken;
+    const titleHasParserDeadline = titleHasDeadlineToken(parserSourceTitle) || parsedEventToken;
     if (titleHasParserDeadline) {
-      const parserResolution = resolveTaskDeadline(rawTitle, new Date(), eventDurationMinutes);
+      const parserResolution = resolveTaskDeadline(parserSourceTitle, new Date(), eventDurationMinutes);
       if (parserResolution.error) {
         Alert.alert('Invalid deadline', parserResolution.error);
         return;
@@ -752,14 +755,14 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     let boundedStartIso: string | null = null;
     let startOffsetMinutes: number | null = null;
     if (parsedEventToken) {
-      const anchorResolution = resolveEventAnchorDate(rawTitle, new Date());
+      const anchorResolution = resolveEventAnchorDate(parserSourceTitle, new Date());
       if (anchorResolution.error) {
         Alert.alert('Invalid event date', anchorResolution.error);
         return;
       }
 
       const eventResolution = resolveEventSchedule({
-        rawTitle,
+        rawTitle: parserSourceTitle,
         anchorDate: anchorResolution.anchorDate,
         defaultDurationMinutes: eventDurationMinutes,
         now: new Date(),
@@ -809,7 +812,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
       }
     }
 
-    const parsedReminderTimes = parseReminderTimesFromTitle(rawTitle);
+    const parsedReminderTimes = parseReminderTimesFromTitle(parserSourceTitle);
     const oneHourEnabled = friendProfile?.deadline_one_hour_warning_enabled ?? true;
     const finalEnabled = friendProfile?.deadline_final_warning_enabled ?? true;
     const dueEnabled = friendProfile?.deadline_due_warning_enabled ?? true;
@@ -850,9 +853,9 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
       ...(pendingSubtaskTitle.length > 0 ? [pendingSubtaskTitle] : []),
     ];
 
-    const parsedRepeatType = parseRepeatTokenFromTitle(rawTitle);
+    const parsedRepeatType = parseRepeatTokenFromTitle(parserSourceTitle);
     const effectiveRecurrenceType = parsedRepeatType ?? recurrenceType;
-    const titleRequiresProof = parseProofRequiredFromTitle(rawTitle);
+    const titleRequiresProof = parseProofRequiredFromTitle(parserSourceTitle);
 
     const nowIso = new Date().toISOString();
     const deadlineIso = deadlineToCreate.toISOString();
@@ -915,7 +918,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
         p_voucher_id: effectiveVoucherId,
         p_title: taskTitle,
         p_creation_input: rawTitle,
-        p_description: null,
+        p_description: parsedDescription.description,
         p_failure_cost_cents: failureCostCents,
         p_required_pomo_minutes: requiredPomoParse.requiredPomoMinutes,
         p_requires_proof: finalRequiresProof,

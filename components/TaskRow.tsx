@@ -269,7 +269,7 @@ const makeStyles = (colors: Colors, isDark: boolean) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: 12,
   },
   swipeActionLabel: {
     fontSize: typography.sm,
@@ -295,7 +295,7 @@ const makeStyles = (colors: Colors, isDark: boolean) => StyleSheet.create({
   historicalRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: 12,
     paddingVertical: 13,
     gap: spacing.sm,
     marginHorizontal: spacing.sm,
@@ -338,7 +338,7 @@ const makeStyles = (colors: Colors, isDark: boolean) => StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: 12,
     paddingVertical: 13,
     gap: spacing.md,
   },

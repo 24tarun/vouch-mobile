@@ -81,6 +81,7 @@
       "expo-audio",
       "react-native-compressor",
       "./plugins/withAlarmKit",
+      "./plugins/withSceneLifecycle",
       [
         "expo-build-properties",
         {

@@ -15,6 +15,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
+import type { ProofCaptureAsset } from '@/lib/proof-timestamp-mobile';
 
 type CaptureMode = 'photo' | 'video';
 
@@ -23,7 +24,7 @@ interface ProofCaptureModalProps {
   embedded?: boolean;
   initialMode?: CaptureMode;
   onClose: () => void;
-  onAssetPicked: (asset: ImagePicker.ImagePickerAsset) => Promise<void> | void;
+  onAssetPicked: (asset: ProofCaptureAsset) => Promise<void> | void;
 }
 
 const MAX_VIDEO_SECONDS = 15;
@@ -45,6 +46,7 @@ export function ProofCaptureModal({
   const [recordingSecondsLeft, setRecordingSecondsLeft] = useState(MAX_VIDEO_SECONDS);
   const [facing, setFacing] = useState<'front' | 'back'>('back');
   const [pictureSize, setPictureSize] = useState<string | undefined>(undefined);
+  const recordingStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!visible) return;
@@ -53,6 +55,7 @@ export function ProofCaptureModal({
     setRecordingSecondsLeft(MAX_VIDEO_SECONDS);
     setFacing('back');
     setPictureSize(undefined);
+    recordingStartedAtRef.current = null;
   }, [visible, initialMode]);
 
   useEffect(() => {
@@ -84,7 +87,7 @@ export function ProofCaptureModal({
     })();
   }, [visible, cameraPermission?.granted, requestCameraPermission, onClose]);
 
-  async function handlePickedAsset(asset: ImagePicker.ImagePickerAsset) {
+  async function handlePickedAsset(asset: ProofCaptureAsset) {
     if (asset.type === 'video' && typeof asset.duration === 'number' && asset.duration > 15000) {
       Alert.alert('Video too long', 'Please keep proof videos at 15 seconds or less.');
       return;
@@ -123,6 +126,9 @@ export function ProofCaptureModal({
           type: 'image',
           exif: photo.exif as any,
           duration: null,
+          proofOrigin: 'CAMERA',
+          proofCapturedAtMs: Date.now(),
+          proofAttachedAtMs: Date.now(),
         });
       } catch {
         Alert.alert('Could not capture photo', 'Please try again.');
@@ -133,6 +139,7 @@ export function ProofCaptureModal({
     if (!isRecording) {
       try {
         setIsRecording(true);
+        recordingStartedAtRef.current = Date.now();
         const video = await cameraRef.current.recordAsync({
           maxDuration: MAX_VIDEO_SECONDS,
         });
@@ -151,11 +158,15 @@ export function ProofCaptureModal({
           mimeType: 'video/mp4',
           type: 'video',
           duration: MAX_VIDEO_SECONDS * 1000,
+          proofOrigin: 'CAMERA',
+          proofCapturedAtMs: recordingStartedAtRef.current,
+          proofAttachedAtMs: Date.now(),
         });
       } catch {
         Alert.alert('Could not record video', 'Please try again.');
       } finally {
         setIsRecording(false);
+        recordingStartedAtRef.current = null;
       }
       return;
     }
@@ -195,7 +206,11 @@ export function ProofCaptureModal({
       });
 
       if (result.canceled || result.assets.length === 0) return;
-      await handlePickedAsset(result.assets[0]);
+      await handlePickedAsset({
+        ...result.assets[0],
+        proofOrigin: 'LIBRARY',
+        proofAttachedAtMs: Date.now(),
+      });
     } catch {
       Alert.alert('Could not open photo library', 'Please try again.');
     }

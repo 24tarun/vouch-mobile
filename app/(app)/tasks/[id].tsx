@@ -29,6 +29,7 @@ import Toast from 'react-native-toast-message';
 import { DEFAULT_REMINDER_OFFSET_MS, normalizePomoDurationMinutes } from '@/lib/constants/timings';
 import { supabase } from '@/lib/supabase';
 import { purgeTaskProofForFinalState, queueAiEvalForTask, queueAiRectificationEval, queueRectificationNotification, removeCurrentTaskProofAsset, uploadTaskProofAsset } from '@/lib/task-proof-upload';
+import { runRectificationAppealFlow } from '@/lib/tasks/rectification-appeal-flow';
 import {
   completeTask,
   setTaskRepetitionsPaused,
@@ -308,6 +309,8 @@ export default function TaskDetailScreen() {
 
   const [subtasks, setSubtasks] = useState<Subtask[]>(() => getCachedSubtasks() ?? []);
   const [newSubtaskDraft, setNewSubtaskDraft] = useState('');
+  const [descriptionDraft, setDescriptionDraft] = useState('');
+  const [isSavingDescription, setIsSavingDescription] = useState(false);
   const subtaskInputRef = useRef<TextInput>(null);
   const subtaskSnapshotRef = useRef<Subtask[]>([]);
   const mutatingSubtaskIdsRef = useRef<Set<string>>(new Set());
@@ -332,6 +335,44 @@ export default function TaskDetailScreen() {
       });
     return () => { cancelled = true; };
   }, [id, getCachedSubtasks]);
+
+  useEffect(() => {
+    setDescriptionDraft(task?.description ?? '');
+  }, [task?.description, task?.id]);
+
+  async function handleSaveDescription() {
+    if (!task || !user?.id || isSavingDescription) return;
+
+    const description = descriptionDraft.trim();
+    if (description === (task.description ?? '')) return;
+
+    const previousDescription = task.description;
+    const updatedAt = new Date().toISOString();
+    setIsSavingDescription(true);
+    queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
+      ...previous,
+      task: previous.task ? { ...previous.task, description: description || null, updated_at: updatedAt } : previous.task,
+    } : previous);
+
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .update({ description: description || null, updated_at: updatedAt })
+        .eq('id', task.id)
+        .eq('user_id', user.id);
+      if (error) throw error;
+      invalidateDerivedTaskViews();
+    } catch {
+      queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
+        ...previous,
+        task: previous.task ? { ...previous.task, description: previousDescription } : previous.task,
+      } : previous);
+      setDescriptionDraft(previousDescription ?? '');
+      Alert.alert('Could not save description', 'Please try again.');
+    } finally {
+      setIsSavingDescription(false);
+    }
+  }
 
   async function handleAddSubtask() {
     const title = newSubtaskDraft.trim();
@@ -449,7 +490,7 @@ export default function TaskDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [proofLightboxOpen, setProofLightboxOpen] = useState(false);
   const [proofCaptureOpen, setProofCaptureOpen] = useState(false);
-  const [proofCaptureDestination, setProofCaptureDestination] = useState<'task' | 'rectification'>('task');
+  const [proofCaptureDestination, setProofCaptureDestination] = useState<'task' | 'rectification' | 'rectification-appeal'>('task');
   const [recurrenceEditorField, setRecurrenceEditorField] = useState<RecurrenceEditorField | null>(null);
   const [editedRecurrenceFields, setEditedRecurrenceFields] = useState<Set<RecurrenceEditorField>>(new Set());
   const [savedRecurrenceSettings, setSavedRecurrenceSettings] = useState<PausedRecurrenceSettings | null>(null);
@@ -586,12 +627,15 @@ export default function TaskDetailScreen() {
     }
   }
 
-  async function uploadSelectedProof(asset: ImagePickerAsset) {
-    if (!task || proofUploadLockRef.current) return;
+  async function uploadSelectedProof(
+    asset: ImagePickerAsset,
+    options?: { showReplacementToast?: boolean },
+  ): Promise<boolean> {
+    if (!task || proofUploadLockRef.current) return false;
     if (task.status !== 'AWAITING_RECTIFICATION' && isTaskCompletionLocked(task.status, task.deadline)) {
       setProofCaptureOpen(false);
       Alert.alert('Deadline passed', 'Proof and completion can no longer be changed.');
-      return;
+      return false;
     }
 
     const isReplacingProof = Boolean(proof);
@@ -609,7 +653,7 @@ export default function TaskDetailScreen() {
       const result = await uploadTaskProofAsset(task.id, asset);
       if (!result.success) {
         showProofToast(`Proof upload failed: ${result.error}`, 'error');
-        return;
+        return false;
       }
 
       queryClient.setQueryData(queryKeys.taskDetail(routeTaskId), (previous: any) => previous ? {
@@ -634,7 +678,7 @@ export default function TaskDetailScreen() {
         }
         if (!completeResult.success) {
           Alert.alert('Proof uploaded, but could not complete task', completeResult.error ?? 'Unknown error');
-          return;
+          return false;
         }
         if (completeResult.userId) await syncLocalReminderNotificationsAsync(completeResult.userId);
         await Promise.resolve(detail.refetch());
@@ -645,7 +689,7 @@ export default function TaskDetailScreen() {
             requireUploadedProof: false,
             successMessage: 'Proof uploaded. Submitted to AI',
           });
-          if (!submitted) return;
+          if (!submitted) return false;
         } else {
           Toast.show({
             type: 'proofSuccess',
@@ -666,9 +710,10 @@ export default function TaskDetailScreen() {
         void queueRectificationNotification(task.id, rectificationRequest.id, 'PROOF_UPLOADED');
       }
       invalidateDerivedTaskViews();
-      if (isReplacingProof) {
+      if (isReplacingProof && options?.showReplacementToast !== false) {
         showProofToast('Proof replaced successfully.', 'success');
       }
+      return true;
     } finally {
       proofUploadLockRef.current = false;
       setProofUploading(false);
@@ -718,6 +763,12 @@ export default function TaskDetailScreen() {
   function openRectificationProofCapture() {
     if (rectificationBusy || proofUploading || proofRemoving) return;
     setProofCaptureDestination('rectification');
+    setProofCaptureOpen(true);
+  }
+
+  function openRectificationAppealProofCapture() {
+    if (rectificationBusy || proofUploading || proofRemoving || proofUploadLockRef.current) return;
+    setProofCaptureDestination('rectification-appeal');
     setProofCaptureOpen(true);
   }
 
@@ -1127,8 +1178,8 @@ export default function TaskDetailScreen() {
     }
   }
 
-  async function handleRectificationAiAppeal() {
-    if (!rectificationRequest || !task || rectificationBusy) return;
+  async function handleRectificationAiAppeal(): Promise<boolean> {
+    if (!rectificationRequest || !task || rectificationBusy) return false;
     setRectificationBusy(true);
     try {
       const request = await appealAiRectification(rectificationRequest.id, rectificationReason);
@@ -1137,11 +1188,27 @@ export default function TaskDetailScreen() {
         if (!queued.success) throw new Error(queued.error);
       }
       await Promise.resolve(detail.refetch());
+      invalidateDerivedTaskViews();
+      Toast.show({
+        type: 'proofSuccess',
+        text1: 'Appeal submitted to AI',
+        position: 'bottom',
+        bottomOffset: 84,
+      });
+      return true;
     } catch (error) {
       Alert.alert('Appeal failed', error instanceof Error ? error.message : 'Please try again.');
+      return false;
     } finally {
       setRectificationBusy(false);
     }
+  }
+
+  async function handleRectificationAppealProof(asset: ImagePickerAsset) {
+    await runRectificationAppealFlow({
+      uploadFreshProof: () => uploadSelectedProof(asset, { showReplacementToast: false }),
+      submitAppeal: handleRectificationAiAppeal,
+    });
   }
 
   async function handleRectificationEscalation() {
@@ -1808,6 +1875,27 @@ export default function TaskDetailScreen() {
         ) : (
           <Text style={styles.title}>{task.title}</Text>
         )}
+        {(isOwnTask || task.description?.trim()) ? (
+          <View style={styles.descriptionBox}>
+            <Feather name="align-left" size={16} color={colors.textMuted} />
+            {isOwnTask ? (
+              <TextInput
+                style={styles.descriptionBoxInput}
+                placeholder="Add description..."
+                placeholderTextColor={colors.textMuted}
+                value={descriptionDraft}
+                onChangeText={setDescriptionDraft}
+                onBlur={() => { void handleSaveDescription(); }}
+                onSubmitEditing={() => { void handleSaveDescription(); }}
+                editable={!isSavingDescription}
+                returnKeyType="done"
+                numberOfLines={1}
+              />
+            ) : (
+              <Text style={styles.descriptionBoxText} numberOfLines={1}>{task.description?.trim()}</Text>
+            )}
+          </View>
+        ) : null}
         {recurrenceSummary ? (
           <View style={styles.recurrenceSummaryRow}>
             <Feather name="repeat" size={16} color="#C084FC" style={styles.recurrenceSummaryIconInline} />
@@ -2161,9 +2249,15 @@ export default function TaskDetailScreen() {
           </SafeAreaView>
         </Modal>
         <ProofCaptureModal
-          visible={proofCaptureOpen && proofCaptureDestination === 'task'}
+          visible={proofCaptureOpen && proofCaptureDestination !== 'rectification'}
           onClose={() => setProofCaptureOpen(false)}
-          onAssetPicked={uploadSelectedProof}
+          onAssetPicked={async (asset) => {
+            if (proofCaptureDestination === 'rectification-appeal') {
+              await handleRectificationAppealProof(asset);
+            } else {
+              await uploadSelectedProof(asset);
+            }
+          }}
         />
 
         {/* ── Actions ───────────────────────────────────────────────────────── */}
@@ -2189,31 +2283,29 @@ export default function TaskDetailScreen() {
 
               {isOwnTask ? (
                 <View style={styles.rectificationActionsWrap}>
-                  <ActionBtn allowed={!rectificationBusy} token={BTN.proof} label={proof ? 'Replace proof' : 'Add proof'} icon="camera"
-                    onPress={openProofPicker} onDeny={() => {}} containerStyle={{ flex: 1 }} />
                   <ActionBtn allowed={!rectificationBusy} token={BTN.delete} label="Cancel request" icon="x-circle"
-                    onPress={() => { void handleCancelRectification(); }} onDeny={() => {}} containerStyle={{ flex: 1 }} />
+                    onPress={() => { void handleCancelRectification(); }} onDeny={() => {}} containerStyle={styles.rectificationActionButton} />
                   {rectificationRequest.state === 'AWAITING_AI_APPEAL' && rectificationRequest.ai_appeal_count < 3 ? (
-                    <ActionBtn allowed={!rectificationBusy && hasUploadedProof} token={BTN.rectify}
+                    <ActionBtn allowed={!rectificationBusy && !proofUploading && !proofRemoving} token={BTN.rectify}
                       label={`Appeal (${rectificationRequest.ai_appeal_count}/3)`} icon="refresh-cw"
-                      onPress={() => { void handleRectificationAiAppeal(); }} onDeny={() => Alert.alert('Proof required', 'Upload proof before appealing.')}
-                      containerStyle={{ flex: 1 }} />
+                      onPress={openRectificationAppealProofCapture} onDeny={() => {}}
+                      containerStyle={styles.rectificationActionButton} />
                   ) : null}
                   {rectificationRequest.state === 'AWAITING_AI_APPEAL'
                     && rectificationRequest.original_voucher_id !== rectificationRequest.owner_id
                     && rectificationRequest.original_voucher_id !== AI_PROFILE_ID ? (
                     <ActionBtn allowed={!rectificationBusy} token={BTN.reminders} label="Ask original voucher" icon="user"
-                      onPress={() => { void handleRectificationEscalation(); }} onDeny={() => {}} containerStyle={{ flex: 1 }} />
+                      onPress={() => { void handleRectificationEscalation(); }} onDeny={() => {}} containerStyle={styles.rectificationActionButton} />
                   ) : null}
                 </View>
               ) : user?.id === rectificationRequest.target_voucher_id && rectificationRequest.state === 'PENDING_HUMAN' ? (
                 <View style={styles.rectificationActionsWrap}>
                   <ActionBtn allowed={!rectificationBusy} token={BTN.delete} label="Decline" icon="x"
-                    onPress={() => { void handleRectificationDecision('DECLINE'); }} onDeny={() => {}} containerStyle={{ flex: 1 }} />
+                    onPress={() => { void handleRectificationDecision('DECLINE'); }} onDeny={() => {}} containerStyle={styles.rectificationActionButton} />
                   <ActionBtn allowed={!rectificationBusy} token={BTN.proof} label="Ask for proof" icon="camera"
-                    onPress={() => { void handleRectificationProofRequest(); }} onDeny={() => {}} containerStyle={{ flex: 1 }} />
+                    onPress={() => { void handleRectificationProofRequest(); }} onDeny={() => {}} containerStyle={styles.rectificationActionButton} />
                   <ActionBtn allowed={!rectificationBusy} token={BTN.complete} label="Rectify" icon="check"
-                    onPress={() => { void handleRectificationDecision('APPROVE'); }} onDeny={() => {}} containerStyle={{ flex: 1 }} />
+                    onPress={() => { void handleRectificationDecision('APPROVE'); }} onDeny={() => {}} containerStyle={styles.rectificationActionButton} />
                 </View>
               ) : null}
             </View>
@@ -2617,14 +2709,6 @@ export default function TaskDetailScreen() {
 
         </View>
 
-        {/* Description */}
-        {task.description?.trim() ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Description</Text>
-            <Text style={styles.description}>{task.description.trim()}</Text>
-          </View>
-        ) : null}
-
         {/* Event timeline */}
         <TaskTimeline task={task} events={events} aiVouches={aiVouches} reminders={reminders} />
 
@@ -2868,6 +2952,9 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   retryText: { fontSize: typography.sm, color: colors.text },
   title: { fontSize: typography.xl, fontWeight: typography.bold, color: colors.text, lineHeight: 32, letterSpacing: -0.5, textAlign: 'center' },
   iterationInline: { color: '#C084FC' },
+  descriptionBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  descriptionBoxText: { flex: 1, fontSize: typography.sm, color: colors.text, lineHeight: 20 },
+  descriptionBoxInput: { flex: 1, fontSize: typography.sm, color: colors.text, paddingVertical: 0 },
   recurrenceSummaryRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: spacing.xs },
   recurrenceSummaryIconInline: { marginRight: spacing.xs, transform: [{ translateY: 1 }] },
   recurrencePausedIconInline: { marginRight: spacing.xs, marginLeft: -4, transform: [{ translateY: 1 }] },
@@ -3048,7 +3135,6 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   reminderPickerConfirmText: { fontSize: typography.sm, fontWeight: typography.semibold, color: BTN.reminders.text },
   section: { gap: spacing.sm },
   sectionTitle: { fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 },
-  description: { fontSize: typography.base, color: colors.text, lineHeight: 22 },
   proofPreviewWrap: {
     height: 220,
     borderRadius: radius.md,
@@ -3235,6 +3321,7 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   rectificationCardMeta: { color: colors.textMuted, fontSize: typography.xs },
   rectificationCardReason: { color: colors.text, fontSize: typography.sm, fontStyle: 'italic', lineHeight: 20 },
   rectificationActionsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
+  rectificationActionButton: { flexBasis: '48%', flexGrow: 0, flexShrink: 1, minWidth: 0 },
   escalationBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#00000088',

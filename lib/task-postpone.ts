@@ -378,7 +378,10 @@ export async function postponeTask(
           actor_user_client_instance_id: resolvedActorUserClientInstanceId,
           from_status: (task as any).status,
           to_status: 'POSTPONED',
-          metadata: { new_deadline: newDeadlineDate.toISOString() },
+          metadata: {
+            previous_deadline: currentDeadline.toISOString(),
+            new_deadline: newDeadlineDate.toISOString(),
+          },
         } as any),
     ]);
 

@@ -135,6 +135,12 @@ describe('postponeTask inclusive deadline minute', () => {
 
     expect(result.success).toBe(true);
     expect(capturedDeadlineCutoffIso).toBe('2026-05-05T11:59:59.000Z');
+    expect(mockTaskEventsTable.insert).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: {
+        previous_deadline: '2026-05-05T12:00:00.000Z',
+        new_deadline: '2026-05-05T13:00:00.000Z',
+      },
+    }));
   });
 
   it('blocks postponing after the displayed deadline minute ends', async () => {

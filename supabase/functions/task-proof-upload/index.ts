@@ -69,6 +69,17 @@ interface ProofIntent {
   sizeBytes: number;
   durationMs?: number | null;
   overlayTimestampText?: string | null;
+  proofOrigin?: 'CAMERA' | 'LIBRARY' | 'UNKNOWN';
+  proofTimestampAt?: string | null;
+  proofTimestampSource?:
+    | 'CAMERA_CAPTURE'
+    | 'EXIF'
+    | 'EMBEDDED_METADATA'
+    | 'FILE_CREATION'
+    | 'FILE_MODIFICATION'
+    | 'ATTACHED'
+    | 'UNKNOWN';
+  proofTimezone?: string | null;
 }
 
 interface ProofMeta extends ProofIntent {
@@ -168,6 +179,96 @@ function normalizeProofTimestampText(value: unknown): string {
   return PROOF_TIMESTAMP_REGEX.test(trimmed) ? trimmed : PROOF_TIMESTAMP_PLACEHOLDER;
 }
 
+const PROOF_ORIGINS = new Set(['CAMERA', 'LIBRARY', 'UNKNOWN']);
+const PROOF_TIMESTAMP_SOURCES = new Set([
+  'CAMERA_CAPTURE',
+  'EXIF',
+  'EMBEDDED_METADATA',
+  'FILE_CREATION',
+  'FILE_MODIFICATION',
+  'ATTACHED',
+  'UNKNOWN',
+]);
+
+function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function formatProofTimestamp(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const map: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== 'literal') map[part.type] = part.value;
+  }
+  return `${map.hour}:${map.minute} ${map.day}/${map.month}/${map.year}`;
+}
+
+function normalizeProofTimestampMetadata(candidate: Record<string, unknown>, overlayTimestampText: string): {
+  value?: {
+    proofOrigin: 'CAMERA' | 'LIBRARY' | 'UNKNOWN';
+    proofTimestampAt: string | null;
+    proofTimestampSource: ProofIntent['proofTimestampSource'];
+    proofTimezone: string | null;
+  };
+  error?: string;
+} {
+  const rawOrigin = typeof candidate.proofOrigin === 'string' ? candidate.proofOrigin.trim().toUpperCase() : 'UNKNOWN';
+  const rawSource = typeof candidate.proofTimestampSource === 'string'
+    ? candidate.proofTimestampSource.trim().toUpperCase()
+    : 'UNKNOWN';
+  const rawTimestamp = typeof candidate.proofTimestampAt === 'string' ? candidate.proofTimestampAt.trim() : '';
+  const rawTimezone = typeof candidate.proofTimezone === 'string' ? candidate.proofTimezone.trim() : '';
+
+  if (!PROOF_ORIGINS.has(rawOrigin) || !PROOF_TIMESTAMP_SOURCES.has(rawSource)) {
+    return { error: 'Invalid proof timestamp metadata.' };
+  }
+
+  if (rawSource === 'UNKNOWN') {
+    if (rawTimestamp || rawTimezone) return { error: 'Incomplete proof timestamp metadata.' };
+    return {
+      value: {
+        proofOrigin: 'UNKNOWN',
+        proofTimestampAt: null,
+        proofTimestampSource: 'UNKNOWN',
+        proofTimezone: null,
+      },
+    };
+  }
+
+  const timestampDate = new Date(rawTimestamp);
+  if (!rawTimestamp || Number.isNaN(timestampDate.getTime()) || !rawTimezone || !isValidTimeZone(rawTimezone)) {
+    return { error: 'Invalid proof timestamp metadata.' };
+  }
+  if (rawSource === 'CAMERA_CAPTURE' && rawOrigin !== 'CAMERA') {
+    return { error: 'Camera proof timestamp metadata is inconsistent.' };
+  }
+  if (overlayTimestampText !== formatProofTimestamp(timestampDate, rawTimezone)) {
+    return { error: 'Proof timestamp does not match its visible overlay.' };
+  }
+
+  return {
+    value: {
+      proofOrigin: rawOrigin as 'CAMERA' | 'LIBRARY' | 'UNKNOWN',
+      proofTimestampAt: timestampDate.toISOString(),
+      proofTimestampSource: rawSource as ProofIntent['proofTimestampSource'],
+      proofTimezone: rawTimezone,
+    },
+  };
+}
+
 function inferExtensionFromMime(mimeType: string): string {
   const normalized = mimeType.toLowerCase();
   if (normalized.includes('jpeg') || normalized.includes('jpg')) return 'jpg';
@@ -200,6 +301,11 @@ function normalizeProofIntent(raw: unknown): { value?: ProofIntent; error?: stri
   const sizeBytes = Number(candidate.sizeBytes);
   const durationMsRaw = candidate.durationMs == null ? null : Number(candidate.durationMs);
   const overlayTimestampText = normalizeProofTimestampText(candidate.overlayTimestampText);
+  const timestampMetadata = normalizeProofTimestampMetadata(candidate, overlayTimestampText);
+
+  if (timestampMetadata.error || !timestampMetadata.value) {
+    return { error: timestampMetadata.error || 'Invalid proof timestamp metadata.' };
+  }
 
   if (!mediaKind || !mimeType || !ALLOWED_PROOF_MIME_TYPES.has(mimeType)) {
     return { error: 'Please use JPG, PNG, WEBP, HEIC, MP4, MOV, or WEBM.' };
@@ -230,6 +336,7 @@ function normalizeProofIntent(raw: unknown): { value?: ProofIntent; error?: stri
       sizeBytes: Math.round(sizeBytes),
       durationMs: mediaKind === 'video' ? Math.round(Number(durationMsRaw)) : null,
       overlayTimestampText,
+      ...timestampMetadata.value,
     },
   };
 }
@@ -414,6 +521,10 @@ Deno.serve(async (request) => {
         size_bytes: proofIntent.sizeBytes,
         duration_ms: proofIntent.durationMs ?? null,
         overlay_timestamp_text: proofIntent.overlayTimestampText,
+        proof_origin: proofIntent.proofOrigin,
+        proof_timestamp_at: proofIntent.proofTimestampAt,
+        proof_timestamp_source: proofIntent.proofTimestampSource,
+        proof_timezone: proofIntent.proofTimezone,
         upload_state: 'PENDING',
       }, { onConflict: 'task_id' });
 
@@ -459,7 +570,7 @@ Deno.serve(async (request) => {
 
     const { data: proofRow, error: proofFetchError } = await adminClient
       .from('task_completion_proofs')
-      .select('id, bucket, object_path, owner_id, created_at, updated_at')
+      .select('id, bucket, object_path, owner_id, proof_origin, proof_timestamp_at, proof_timestamp_source, proof_timezone, created_at, updated_at')
       .eq('task_id', taskId)
       .eq('owner_id', user.id)
       .maybeSingle();
@@ -489,6 +600,16 @@ Deno.serve(async (request) => {
       (proofRow as { bucket: string; object_path: string }).object_path !== proofMeta.objectPath
     ) {
       return json(400, { success: false, error: 'Proof upload target mismatch.' });
+    }
+
+    const storedTimestampAt = (proofRow as { proof_timestamp_at?: string | null }).proof_timestamp_at;
+    if (
+      (proofRow as { proof_origin?: string | null }).proof_origin !== proofMeta.proofOrigin
+      || (storedTimestampAt ? new Date(storedTimestampAt).toISOString() : null) !== proofMeta.proofTimestampAt
+      || (proofRow as { proof_timestamp_source?: string | null }).proof_timestamp_source !== proofMeta.proofTimestampSource
+      || (proofRow as { proof_timezone?: string | null }).proof_timezone !== proofMeta.proofTimezone
+    ) {
+      return json(400, { success: false, error: 'Proof timestamp metadata changed during upload.' });
     }
 
     const pathParts = proofMeta.objectPath.split('/');

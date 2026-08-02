@@ -1,7 +1,7 @@
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { File } from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
-import { deriveProofTimestampText } from '@/lib/proof-timestamp-mobile';
+import { deriveProofTimestampMetadata } from '@/lib/proof-timestamp-mobile';
 import { prepareTaskProofMedia, type PreparedTaskProofMedia } from '@/lib/proof-media-preparation';
 import { maxTaskProofBytes, taskProofSizeLabel } from '@/lib/proof-media-limits';
 import type { AiVoucherQuota } from '@/lib/types';
@@ -36,6 +36,16 @@ interface TaskProofIntent {
   sizeBytes: number;
   durationMs: number | null;
   overlayTimestampText: string;
+  proofOrigin: 'CAMERA' | 'LIBRARY' | 'UNKNOWN';
+  proofTimestampAt: string;
+  proofTimestampSource:
+    | 'CAMERA_CAPTURE'
+    | 'EXIF'
+    | 'EMBEDDED_METADATA'
+    | 'FILE_CREATION'
+    | 'FILE_MODIFICATION'
+    | 'ATTACHED';
+  proofTimezone: string;
 }
 
 interface TaskProofMeta extends TaskProofIntent {
@@ -436,7 +446,7 @@ export async function uploadTaskProofAsset(taskId: string, asset: ImagePickerAss
       };
     }
 
-    const overlayTimestampText = deriveProofTimestampText({
+    const proofTimestamp = deriveProofTimestampMetadata({
       asset,
       mimeType,
       fileBuffer: fileBytes,
@@ -449,7 +459,11 @@ export async function uploadTaskProofAsset(taskId: string, asset: ImagePickerAss
       mimeType,
       sizeBytes,
       durationMs,
-      overlayTimestampText,
+      overlayTimestampText: proofTimestamp.overlayTimestampText,
+      proofOrigin: proofTimestamp.origin,
+      proofTimestampAt: proofTimestamp.timestampAt,
+      proofTimestampSource: proofTimestamp.timestampSource,
+      proofTimezone: proofTimestamp.timeZone,
     };
 
     const initResult = await initProofUpload(taskId, proofIntent);

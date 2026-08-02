@@ -44,6 +44,15 @@ export type LedgerEntryType =
   | 'voucher_timeout_penalty';
 
 export type ProofUploadState = 'PENDING' | 'UPLOADED' | 'FAILED';
+export type ProofOrigin = 'CAMERA' | 'LIBRARY' | 'UNKNOWN';
+export type ProofTimestampSource =
+  | 'CAMERA_CAPTURE'
+  | 'EXIF'
+  | 'EMBEDDED_METADATA'
+  | 'FILE_CREATION'
+  | 'FILE_MODIFICATION'
+  | 'ATTACHED'
+  | 'UNKNOWN';
 
 export type PomoStatus = 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'DELETED';
 
@@ -141,6 +150,7 @@ export interface Task {
   description: string | null;
   failure_cost_cents: number;
   deadline: string;
+  original_deadline?: string | null;
   status: TaskStatus;
   postponed_at: string | null;
   marked_completed_at: string | null;
@@ -240,6 +250,10 @@ export interface TaskCompletionProof {
   size_bytes: number;
   duration_ms: number | null;
   overlay_timestamp_text: string;
+  proof_origin: ProofOrigin;
+  proof_timestamp_at: string | null;
+  proof_timestamp_source: ProofTimestampSource;
+  proof_timezone: string | null;
   upload_state: ProofUploadState;
   created_at: string;
   updated_at: string;

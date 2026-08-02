@@ -1,5 +1,38 @@
 import type { ImagePickerAsset } from 'expo-image-picker';
 
+export type ProofOrigin = 'CAMERA' | 'LIBRARY' | 'UNKNOWN';
+export type ProofTimestampSource =
+  | 'CAMERA_CAPTURE'
+  | 'EXIF'
+  | 'EMBEDDED_METADATA'
+  | 'FILE_CREATION'
+  | 'FILE_MODIFICATION'
+  | 'ATTACHED'
+  | 'UNKNOWN';
+
+export type ProofCaptureAsset = ImagePickerAsset & {
+  proofOrigin?: Exclude<ProofOrigin, 'UNKNOWN'>;
+  proofCapturedAtMs?: number | null;
+  proofAttachedAtMs?: number | null;
+};
+
+export interface ProofTimestampMetadata {
+  timestampAt: string;
+  timestampSource: Exclude<ProofTimestampSource, 'UNKNOWN'>;
+  origin: ProofOrigin;
+  timeZone: string;
+  overlayTimestampText: string;
+}
+
+export function formatProofTimestampOverlay(
+  overlayTimestampText: string | null | undefined,
+  timestampSource: string | null | undefined,
+): string {
+  const text = overlayTimestampText?.trim() ?? '';
+  if (!text) return '';
+  return timestampSource === 'ATTACHED' ? `Attached ${text}` : text;
+}
+
 const PROOF_TIMESTAMP_PLACEHOLDER = '??:?? ??/??/??';
 
 const PROOF_TIMESTAMP_REGEX = /^(?:\d{2}:\d{2} \d{2}\/\d{2}\/\d{2}|\?\?:\?\? \?\?\/\?\?\/\?\?)$/;
@@ -48,6 +81,78 @@ function formatProofTimestampParts(parts: ProofTimestampParts): string {
   if (!hasValidParts(parts)) return PROOF_TIMESTAMP_PLACEHOLDER;
 
   return `${pad2(parts.hours)}:${pad2(parts.minutes)} ${pad2(parts.day)}/${pad2(parts.month)}/${pad2(parts.year % 100)}`;
+}
+
+function proofTimestampPartsFromText(value: string): ProofTimestampParts | null {
+  const match = value.match(/^(\d{2}):(\d{2}) (\d{2})\/(\d{2})\/(\d{2})$/);
+  if (!match) return null;
+  const parts: ProofTimestampParts = {
+    year: 2000 + Number(match[5]),
+    month: Number(match[4]),
+    day: Number(match[3]),
+    hours: Number(match[1]),
+    minutes: Number(match[2]),
+  };
+  return hasValidParts(parts) ? parts : null;
+}
+
+function dateTimePartsInTimeZone(date: Date, timeZone: string): ProofTimestampParts | null {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date);
+    const map: Record<string, string> = {};
+    for (const part of parts) {
+      if (part.type !== 'literal') map[part.type] = part.value;
+    }
+    const resolved: ProofTimestampParts = {
+      year: Number(map.year),
+      month: Number(map.month),
+      day: Number(map.day),
+      hours: Number(map.hour),
+      minutes: Number(map.minute),
+    };
+    return hasValidParts(resolved) ? resolved : null;
+  } catch {
+    return null;
+  }
+}
+
+function proofTimestampTextToIso(value: string, timeZone: string): string | null {
+  const desired = proofTimestampPartsFromText(value);
+  if (!desired) return null;
+
+  const desiredAsUtc = Date.UTC(
+    desired.year,
+    desired.month - 1,
+    desired.day,
+    desired.hours,
+    desired.minutes,
+  );
+  let candidateMs = desiredAsUtc;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const actual = dateTimePartsInTimeZone(new Date(candidateMs), timeZone);
+    if (!actual) return null;
+    const actualAsUtc = Date.UTC(
+      actual.year,
+      actual.month - 1,
+      actual.day,
+      actual.hours,
+      actual.minutes,
+    );
+    const adjustmentMs = desiredAsUtc - actualAsUtc;
+    candidateMs += adjustmentMs;
+    if (adjustmentMs === 0) return new Date(candidateMs).toISOString();
+  }
+
+  return null;
 }
 
 function normalizeProofTimestampText(value: unknown): string {
@@ -411,45 +516,86 @@ function extractProofTimestampTextFromBuffer(
   return normalizeProofTimestampText(extracted);
 }
 
-function timestampMsToText(ms: number | null | undefined, timeZone: string): string {
-  if (!Number.isFinite(ms)) return PROOF_TIMESTAMP_PLACEHOLDER;
-  const date = new Date(Number(ms));
-  if (Number.isNaN(date.getTime())) return PROOF_TIMESTAMP_PLACEHOLDER;
-  return normalizeProofTimestampText(formatDateInTimeZone(date, timeZone));
+export function deriveProofTimestampMetadata(params: {
+  asset: ProofCaptureAsset;
+  mimeType: string;
+  fileBuffer?: ArrayBuffer | null;
+  fileModificationTimeMs?: number | null;
+  fileCreationTimeMs?: number | null;
+}): ProofTimestampMetadata {
+  const uploaderTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const origin = params.asset.proofOrigin ?? 'UNKNOWN';
+
+  const fromExactTimestamp = (
+    timestampMs: number | null | undefined,
+    timestampSource: Exclude<ProofTimestampSource, 'UNKNOWN'>,
+  ): ProofTimestampMetadata | null => {
+    if (!Number.isFinite(timestampMs)) return null;
+    const date = new Date(Number(timestampMs));
+    if (Number.isNaN(date.getTime())) return null;
+    return {
+      timestampAt: date.toISOString(),
+      timestampSource,
+      origin,
+      timeZone: uploaderTimeZone,
+      overlayTimestampText: formatDateInTimeZone(date, uploaderTimeZone),
+    };
+  };
+
+  const fromTimestampText = (
+    timestampText: string | null,
+    timestampSource: Exclude<ProofTimestampSource, 'UNKNOWN'>,
+  ): ProofTimestampMetadata | null => {
+    const normalized = normalizeProofTimestampText(timestampText);
+    if (normalized === PROOF_TIMESTAMP_PLACEHOLDER) return null;
+    const timestampAt = proofTimestampTextToIso(normalized, uploaderTimeZone);
+    if (!timestampAt) return null;
+    return {
+      timestampAt,
+      timestampSource,
+      origin,
+      timeZone: uploaderTimeZone,
+      overlayTimestampText: normalized,
+    };
+  };
+
+  if (origin === 'CAMERA') {
+    const cameraCapture = fromExactTimestamp(params.asset.proofCapturedAtMs, 'CAMERA_CAPTURE');
+    if (cameraCapture) return cameraCapture;
+  }
+
+  const exifTimestamp = fromTimestampText(
+    extractProofTimestampTextFromExifLike(params.asset.exif),
+    'EXIF',
+  );
+  if (exifTimestamp) return exifTimestamp;
+
+  if (params.fileBuffer) {
+    const embeddedTimestamp = fromTimestampText(
+      extractProofTimestampTextFromBuffer(params.mimeType, params.fileBuffer, uploaderTimeZone),
+      'EMBEDDED_METADATA',
+    );
+    if (embeddedTimestamp) return embeddedTimestamp;
+  }
+
+  const creationTimestamp = fromExactTimestamp(params.fileCreationTimeMs, 'FILE_CREATION');
+  if (creationTimestamp) return creationTimestamp;
+
+  const modificationTimestamp = fromExactTimestamp(params.fileModificationTimeMs, 'FILE_MODIFICATION');
+  if (modificationTimestamp) return modificationTimestamp;
+
+  return fromExactTimestamp(
+    params.asset.proofAttachedAtMs ?? Date.now(),
+    'ATTACHED',
+  )!;
 }
 
 export function deriveProofTimestampText(params: {
-  asset: ImagePickerAsset;
+  asset: ProofCaptureAsset;
   mimeType: string;
   fileBuffer?: ArrayBuffer | null;
   fileModificationTimeMs?: number | null;
   fileCreationTimeMs?: number | null;
 }): string {
-  const uploaderTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-
-  const exifText = normalizeProofTimestampText(
-    extractProofTimestampTextFromExifLike(params.asset.exif),
-  );
-  if (exifText !== PROOF_TIMESTAMP_PLACEHOLDER) {
-    return exifText;
-  }
-
-  if (params.fileBuffer) {
-    const fromBuffer = extractProofTimestampTextFromBuffer(params.mimeType, params.fileBuffer, uploaderTimeZone);
-    if (fromBuffer !== PROOF_TIMESTAMP_PLACEHOLDER) {
-      return fromBuffer;
-    }
-  }
-
-  const creationText = timestampMsToText(params.fileCreationTimeMs, uploaderTimeZone);
-  if (creationText !== PROOF_TIMESTAMP_PLACEHOLDER) {
-    return creationText;
-  }
-
-  const modificationText = timestampMsToText(params.fileModificationTimeMs, uploaderTimeZone);
-  if (modificationText !== PROOF_TIMESTAMP_PLACEHOLDER) {
-    return modificationText;
-  }
-
-  return PROOF_TIMESTAMP_PLACEHOLDER;
+  return deriveProofTimestampMetadata(params).overlayTimestampText;
 }

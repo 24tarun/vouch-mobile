@@ -5,6 +5,7 @@ import type { AiVouch, RecurrenceRule, RectificationRequest, Task, TaskEvent, Ta
 import { SIGNED_URL_EXPIRY_SECONDS } from '@/lib/constants/timings';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
+import { formatProofTimestampOverlay } from '@/lib/proof-timestamp-mobile';
 
 export interface TaskProofData {
   signedUrl: string;
@@ -99,7 +100,7 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
 
   const { data: proofRows, error: proofError } = await supabase
     .from('task_completion_proofs')
-    .select('bucket, object_path, media_kind, overlay_timestamp_text, upload_state, updated_at')
+    .select('bucket, object_path, media_kind, overlay_timestamp_text, proof_timestamp_source, upload_state, updated_at')
     .eq('task_id', taskId)
     .eq('upload_state', 'UPLOADED')
     .order('updated_at', { ascending: false })
@@ -133,6 +134,7 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
     object_path?: string | null;
     media_kind?: string | null;
     overlay_timestamp_text?: string | null;
+    proof_timestamp_source?: string | null;
     updated_at?: string | null;
   } | null;
 
@@ -148,7 +150,10 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
       proof = {
         signedUrl: proofUrl,
         mediaKind: proofRow.media_kind === 'video' ? 'video' : 'image',
-        overlayTimestampText: proofRow.overlay_timestamp_text ?? '',
+        overlayTimestampText: formatProofTimestampOverlay(
+          proofRow.overlay_timestamp_text,
+          proofRow.proof_timestamp_source,
+        ),
         bucket,
         objectPath: proofRow.object_path,
       };

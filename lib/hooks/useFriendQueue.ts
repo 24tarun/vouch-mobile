@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { formatProofTimestampOverlay } from '@/lib/proof-timestamp-mobile';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
 import type { RectificationRequest, TaskStatus } from '@/lib/types';
@@ -105,7 +106,7 @@ async function fetchProofsForTasks(
 
   const { data, error } = await supabase
     .from('task_completion_proofs')
-    .select('task_id, object_path, media_kind, overlay_timestamp_text, upload_state')
+    .select('task_id, object_path, media_kind, overlay_timestamp_text, proof_timestamp_source, upload_state')
     .in('task_id', taskIds)
     .eq('upload_state', 'UPLOADED');
 
@@ -129,7 +130,10 @@ async function fetchProofsForTasks(
       result[row.task_id as string] = {
         signedUrl: signedData.signedUrl,
         mediaKind: (row.media_kind as string) === 'video' ? 'video' : 'image',
-        overlayTimestampText: (row.overlay_timestamp_text as string) ?? '',
+        overlayTimestampText: formatProofTimestampOverlay(
+          row.overlay_timestamp_text as string | null,
+          row.proof_timestamp_source as string | null,
+        ),
       };
     }),
   );

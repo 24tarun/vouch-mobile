@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import Toast from 'react-native-toast-message';
 import { PostponeDeadlineModal } from '@/components/tasks/PostponeDeadlineModal';
 import { LegacyPostponeCalendarPicker } from '@/components/tasks/LegacyPostponeCalendarPicker';
 import { postponeTaskDeadline } from '@/lib/tasks/task-actions';
@@ -67,6 +68,14 @@ export const TasksScreenPostponeOverlay = memo(function TasksScreenPostponeOverl
     try {
       const result = await postponeTaskDeadline(task.id, postponePickerDate.toISOString());
       if (!result.success) {
+        if (result.error === 'Daily repeating tasks can only be postponed within the same day.') {
+          Toast.show({
+            type: 'proofError',
+            text1: "Can't postpone daily tasks to the next day",
+            position: 'bottom',
+          });
+          return;
+        }
         Alert.alert('Could not move deadline', result.error ?? 'Unknown error');
         return;
       }

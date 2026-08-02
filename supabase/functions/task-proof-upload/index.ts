@@ -31,6 +31,7 @@ const ATTACHABLE_PROOF_STATUSES = new Set([
   'AWAITING_AI',
   'AWAITING_USER',
   'ESCALATED',
+  'AWAITING_RECTIFICATION',
 ]);
 
 const FINAL_TASK_STATUSES = new Set([
@@ -39,6 +40,7 @@ const FINAL_TASK_STATUSES = new Set([
   'AI_ACCEPTED',
   'DENIED',
   'MISSED',
+  'SURRENDERED',
   'RECTIFIED',
   'SETTLED',
   'DELETED',
@@ -127,13 +129,28 @@ interface QueueAiEvalRequestBody {
   taskId: string;
 }
 
+interface QueueAiRectificationEvalRequestBody {
+  action: 'queue-rectification-ai-eval';
+  taskId: string;
+  requestId: string;
+}
+
+interface QueueRectificationNotificationRequestBody {
+  action: 'queue-rectification-notification';
+  taskId: string;
+  requestId?: string;
+  kind: 'REQUESTED' | 'UPDATED' | 'CANCELLED' | 'PROOF_REQUESTED' | 'PROOF_UPLOADED' | 'ESCALATED' | 'APPROVED' | 'DECLINED' | 'DIRECT_APPROVED';
+}
+
 type RequestBody =
   | InitRequestBody
   | FinalizeRequestBody
   | FailRequestBody
   | PurgeFinalRequestBody
   | RemoveCurrentRequestBody
-  | QueueAiEvalRequestBody;
+  | QueueAiEvalRequestBody
+  | QueueAiRectificationEvalRequestBody
+  | QueueRectificationNotificationRequestBody;
 
 function json(status: number, payload: Record<string, unknown>) {
   return new Response(JSON.stringify(payload), {
@@ -332,7 +349,7 @@ Deno.serve(async (request) => {
 
   if ((task as { user_id: string }).user_id !== user.id) {
     const isVoucher = (task as { voucher_id: string }).voucher_id === user.id;
-    if (!(action === 'purge-final' && isVoucher)) {
+    if (!(action === 'purge-final' && isVoucher) && action !== 'queue-rectification-notification') {
       return json(403, { success: false, error: 'You can only upload proof for your own tasks.' });
     }
   }
@@ -348,6 +365,7 @@ Deno.serve(async (request) => {
   const taskDeadline = (task as { deadline?: string | null }).deadline;
   if (
     (action === 'init' || action === 'remove-current')
+    && taskStatus !== 'AWAITING_RECTIFICATION'
     && isCompletionEditingLocked(taskStatus, taskDeadline)
   ) {
     return json(409, { success: false, error: COMPLETION_EDIT_LOCKED_ERROR });
@@ -767,6 +785,102 @@ Deno.serve(async (request) => {
     }
 
     console.log('AI voucher evaluation queued for task', taskId);
+    return json(200, { success: true });
+  }
+
+  if (action === 'queue-rectification-ai-eval') {
+    const requestId = typeof (body as QueueAiRectificationEvalRequestBody).requestId === 'string'
+      ? (body as QueueAiRectificationEvalRequestBody).requestId.trim()
+      : '';
+    if (!requestId || taskStatus !== 'AWAITING_RECTIFICATION') {
+      return json(400, { success: false, error: 'Rectification request is not ready for AI review.' });
+    }
+    const { data: rectification } = await adminClient
+      .from('rectification_requests')
+      .select('id, owner_id, task_id, target_type, state')
+      .eq('id', requestId)
+      .eq('task_id', taskId)
+      .eq('owner_id', user.id)
+      .maybeSingle();
+    if (!rectification || rectification.target_type !== 'AI' || rectification.state !== 'PENDING_AI') {
+      return json(400, { success: false, error: 'AI rectification request is no longer pending.' });
+    }
+    const { data: uploadedProof } = await adminClient
+      .from('task_completion_proofs')
+      .select('id')
+      .eq('task_id', taskId)
+      .eq('owner_id', user.id)
+      .eq('upload_state', 'UPLOADED')
+      .maybeSingle();
+    if (!uploadedProof) {
+      return json(400, { success: false, error: 'Proof is required for AI rectification.' });
+    }
+    const triggerSecretKey = Deno.env.get('TRIGGER_SECRET_KEY');
+    if (!triggerSecretKey) return json(500, { success: false, error: 'AI evaluation service not configured.' });
+    const triggerRes = await fetch('https://api.trigger.dev/api/v1/tasks/ai-rectification-evaluate/trigger', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${triggerSecretKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload: { requestId } }),
+    }).catch(() => null);
+    if (!triggerRes?.ok) {
+      return json(500, { success: false, error: 'AI rectification evaluation could not be queued.' });
+    }
+    return json(200, { success: true });
+  }
+
+  if (action === 'queue-rectification-notification') {
+    const notificationBody = body as QueueRectificationNotificationRequestBody;
+    const requestId = typeof notificationBody.requestId === 'string' ? notificationBody.requestId.trim() : '';
+    const kind = notificationBody.kind;
+    const eventTypeByKind: Record<QueueRectificationNotificationRequestBody['kind'], string> = {
+      REQUESTED: 'RECTIFICATION_REQUESTED',
+      UPDATED: 'RECTIFICATION_UPDATED',
+      CANCELLED: 'RECTIFICATION_CANCELLED',
+      PROOF_REQUESTED: 'RECTIFICATION_PROOF_REQUESTED',
+      PROOF_UPLOADED: 'RECTIFICATION_PROOF_UPLOADED',
+      ESCALATED: 'RECTIFICATION_ESCALATED',
+      APPROVED: 'RECTIFICATION_APPROVED',
+      DECLINED: 'RECTIFICATION_DECLINED',
+      DIRECT_APPROVED: 'RECTIFICATION_APPROVED',
+    };
+    if (!kind || !eventTypeByKind[kind] || (kind !== 'DIRECT_APPROVED' && !requestId)) {
+      return json(400, { success: false, error: 'Invalid rectification notification.' });
+    }
+
+    if (requestId) {
+      const { data: rectification } = await adminClient.from('rectification_requests').select('*')
+        .eq('id', requestId).eq('task_id', taskId).maybeSingle();
+      if (!rectification) return json(404, { success: false, error: 'Rectification request not found.' });
+      const ownerKinds = new Set(['REQUESTED', 'UPDATED', 'CANCELLED', 'PROOF_UPLOADED', 'ESCALATED']);
+      const voucherKinds = new Set(['PROOF_REQUESTED', 'APPROVED', 'DECLINED']);
+      const allowed = (ownerKinds.has(kind) && rectification.owner_id === user.id)
+        || (voucherKinds.has(kind) && rectification.target_voucher_id === user.id && rectification.target_type === 'ORIGINAL_VOUCHER');
+      if (!allowed) return json(403, { success: false, error: 'Not authorized for this rectification notification.' });
+    } else if (kind !== 'DIRECT_APPROVED' || (task as { voucher_id: string }).voucher_id !== user.id) {
+      return json(403, { success: false, error: 'Not authorized for this rectification notification.' });
+    }
+
+    const { data: recentEvents } = await adminClient.from('task_events')
+      .select('metadata').eq('task_id', taskId).eq('event_type', eventTypeByKind[kind])
+      .eq('actor_id', user.id).order('created_at', { ascending: false }).limit(10);
+    const matchingEvent = (recentEvents || []).some((event: { metadata?: Record<string, unknown> | null }) => (
+      kind === 'DIRECT_APPROVED'
+        ? event.metadata?.direct === true
+        : event.metadata?.request_id === requestId
+    ));
+    if (!matchingEvent) return json(409, { success: false, error: 'Rectification event is not committed yet.' });
+
+    const triggerSecretKey = Deno.env.get('TRIGGER_SECRET_KEY');
+    if (!triggerSecretKey) return json(500, { success: false, error: 'Notification service not configured.' });
+    const triggerRes = await fetch('https://api.trigger.dev/api/v1/tasks/rectification-notification/trigger', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${triggerSecretKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payload: { taskId, requestId: requestId || undefined, kind },
+        options: { idempotencyKey: `rectification-${requestId || taskId}-${kind}` },
+      }),
+    }).catch(() => null);
+    if (!triggerRes?.ok) return json(500, { success: false, error: 'Rectification notification could not be queued.' });
     return json(200, { success: true });
   }
 

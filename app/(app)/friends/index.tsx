@@ -29,14 +29,16 @@ import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { StatusPill } from '@/components/StatusPill';
+import { UserAvatar } from '@/components/UserAvatar';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { resolveUserClientInstanceId } from '@/lib/user-client-instance';
 import { queryKeys } from '@/lib/query/keys';
 import { sendProofRequestedPushNotificationAsync } from '@/lib/notifications';
-import { purgeTaskProofForFinalState } from '@/lib/task-proof-upload';
+import { purgeTaskProofForFinalState, queueRectificationNotification } from '@/lib/task-proof-upload';
 import { VOUCHER_ACTIONABLE_STATUSES, VOUCHER_ACTIVE_VIEW_STATUSES } from '@/lib/constants/task-status';
 import { useFriendQueue, type VoucherTaskRow, type VouchHistoryTaskRow } from '@/lib/hooks/useFriendQueue';
 import type { TaskDetailData } from '@/lib/hooks/useTaskDetail';
+import { authorizeTaskRectification, decideTaskRectification, requestRectificationProof } from '@/lib/rectification';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -110,11 +112,6 @@ function formatActiveDeadline(deadline: string): string {
   });
 }
 
-const AVATAR_PALETTE = [
-  '#7C3AED', '#2563EB', '#059669', '#B45309',
-  '#DC2626', '#0891B2', '#7E22CE', '#065F46',
-];
-
 const CAT_IMAGES = [
   require('@/assets/friends-cats/cat-1.jpg'),
   require('@/assets/friends-cats/cat-2.jpg'),
@@ -122,36 +119,6 @@ const CAT_IMAGES = [
   require('@/assets/friends-cats/cat-4.jpg'),
   require('@/assets/friends-cats/cat-5.jpg'),
 ] as const;
-
-function getAvatarColor(username: string): string {
-  let h = 0;
-  for (let i = 0; i < username.length; i++) {
-    h = (h * 31 + username.charCodeAt(i)) & 0x7fffffff;
-  }
-  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
-}
-
-function getInitials(username: string): string {
-  const t = username.trim();
-  if (!t) return '?';
-  const parts = t.split(/[\s_.-]+/);
-  if (parts.length >= 2 && parts[1]) return (parts[0][0] + parts[1][0]).toUpperCase();
-  return t.slice(0, 2).toUpperCase();
-}
-
-// ─── Avatar ───────────────────────────────────────────────────────────────────
-
-const FriendAvatar = memo(function FriendAvatar({ username, size = 34 }: { username: string; size?: number }) {
-  const { colors, isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
-  return (
-    <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: getAvatarColor(username) }]}>
-      <Text style={[styles.avatarText, { fontSize: Math.round(size * 0.38) }]}>
-        {getInitials(username)}
-      </Text>
-    </View>
-  );
-});
 
 // ─── Cat placeholder ──────────────────────────────────────────────────────────
 
@@ -357,7 +324,7 @@ function CardContent({
     <>
       <View style={styles.cardHeader}>
         <View style={styles.cardHeaderLeft}>
-          <FriendAvatar username={username} size={32} />
+          <UserAvatar username={username} avatarPath={friend?.avatar_path} size={32} />
           <View style={styles.cardHeaderMeta}>
             <Text style={styles.cardFriendName}>{username.toLowerCase()}</Text>
             <Text style={styles.cardSubmittedTime}>{timeAgo(task.updated_at)}</Text>
@@ -592,7 +559,7 @@ const HistoryRow = memo(function HistoryRow({
   const username = task.user?.username ?? 'Unknown';
   return (
     <TouchableOpacity style={styles.historyRow} activeOpacity={0.75} onPress={onPress} accessibilityRole="button">
-      <FriendAvatar username={username} size={28} />
+      <UserAvatar username={username} avatarPath={task.user?.avatar_path} size={28} />
       <View style={styles.historyRowBody}>
         <Text style={styles.historyTaskTitle} numberOfLines={1}>{task.title}</Text>
         <View style={styles.historyRowPillRow}>
@@ -626,7 +593,7 @@ const ActiveRow = memo(function ActiveRow({ task }: { task: VoucherTaskRow }) {
   const username = task.user?.username ?? 'Unknown';
   return (
     <View style={styles.activeRow}>
-      <FriendAvatar username={username} size={28} />
+      <UserAvatar username={username} avatarPath={task.user?.avatar_path} size={28} />
       <View style={styles.activeRowBody}>
         <Text style={styles.historyTaskTitle} numberOfLines={1}>{task.title}</Text>
         <Text style={styles.historyTaskMeta} numberOfLines={1}>
@@ -666,7 +633,8 @@ export default function FriendsScreen() {
 
   const tasks = friendQueue.tasks;
   const historyTasks = friendQueue.historyTasks;
-  const loading = friendQueue.loading;
+  const rectificationRequests = friendQueue.rectificationRequests;
+  const loading = friendQueue.loading || friendQueue.rectificationLoading;
   const historyLoading = friendQueue.historyLoading;
   const historyHasMore = friendQueue.historyHasMore;
   const historyLoadingMore = friendQueue.historyLoadingMore;
@@ -685,7 +653,7 @@ export default function FriendsScreen() {
 
   useEffect(() => {
     if (pendingFocusAutoTabToken === 0 || loading) return;
-    const preferredTab: TabView | null = awaitingVoucherTasks.length > 0
+    const preferredTab: TabView | null = (awaitingVoucherTasks.length > 0 || rectificationRequests.length > 0)
       ? 'pending'
       : activeTasks.length > 0
         ? 'active'
@@ -694,19 +662,50 @@ export default function FriendsScreen() {
       setActiveTab(preferredTab);
     }
     setPendingFocusAutoTabToken(0);
-  }, [activeTasks.length, awaitingVoucherTasks.length, loading, pendingFocusAutoTabToken]);
+  }, [activeTasks.length, awaitingVoucherTasks.length, loading, pendingFocusAutoTabToken, rectificationRequests.length]);
 
   // Safety net: realtime can drop events during reconnect, app backgrounding,
   // or when the screen was unmounted. Refetch on focus so the list always
   // reflects server state the moment the user lands here.
-  const { refetchQueue, refetchHistory } = friendQueue;
+  const { refetchQueue, refetchHistory, refetchRectifications } = friendQueue;
   useFocusEffect(
     useCallback(() => {
       setPendingFocusAutoTabToken((prev) => prev + 1);
       void refetchQueue();
       void refetchHistory();
-    }, [refetchQueue, refetchHistory]),
+      void refetchRectifications();
+    }, [refetchQueue, refetchHistory, refetchRectifications]),
   );
+
+  async function handleRectificationDecision(requestId: string, taskId: string, decision: 'APPROVE' | 'DECLINE') {
+    if (decision === 'DECLINE') {
+      const confirmed = await new Promise<boolean>((resolve) => Alert.alert(
+        'Decline rectification?', 'This decision is final for this task.',
+        [{ text: 'Back', style: 'cancel', onPress: () => resolve(false) }, { text: 'Decline', style: 'destructive', onPress: () => resolve(true) }],
+      ));
+      if (!confirmed) return;
+    }
+    try {
+      await decideTaskRectification(requestId, decision);
+      void queueRectificationNotification(taskId, requestId, decision === 'APPROVE' ? 'APPROVED' : 'DECLINED');
+      await purgeTaskProofForFinalState(taskId);
+      friendQueue.refetchRectifications();
+      friendQueue.refetchHistory();
+    } catch (decisionError) {
+      Alert.alert('Decision failed', decisionError instanceof Error ? decisionError.message : 'Please try again.');
+    }
+  }
+
+  async function handleRectificationProofRequest(requestId: string, taskId: string) {
+    try {
+      await requestRectificationProof(requestId);
+      void queueRectificationNotification(taskId, requestId, 'PROOF_REQUESTED');
+      friendQueue.refetchRectifications();
+      Toast.show({ type: 'proofSuccess', text1: 'Proof requested; timer unchanged', position: 'bottom' });
+    } catch (proofError) {
+      Alert.alert('Could not request proof', proofError instanceof Error ? proofError.message : 'Please try again.');
+    }
+  }
 
   // Release the resolved guard once history confirms the task has landed in a
   // terminal status — server has fully committed and no refetch can ghost it back.
@@ -790,7 +789,7 @@ export default function FriendsScreen() {
       const next: VouchHistoryTaskRow = {
         id: task.id, title: task.title, status: 'ACCEPTED', updated_at: nextUpdatedAt,
         failure_cost_cents: task.failure_cost_cents,
-        user: task.user ? { id: task.user.id, username: task.user.username } : null,
+        user: task.user ? { id: task.user.id, username: task.user.username, avatar_path: task.user.avatar_path } : null,
       };
       return [next, ...c.filter((t) => t.id !== task.id)].slice(0, 10);
     });
@@ -855,7 +854,7 @@ export default function FriendsScreen() {
       const next: VouchHistoryTaskRow = {
         id: task.id, title: task.title, status: 'DENIED', updated_at: nextUpdatedAt,
         failure_cost_cents: task.failure_cost_cents,
-        user: task.user ? { id: task.user.id, username: task.user.username } : null,
+        user: task.user ? { id: task.user.id, username: task.user.username, avatar_path: task.user.avatar_path } : null,
       };
       return [next, ...c.filter((t) => t.id !== task.id)].slice(0, 10);
     });
@@ -968,22 +967,11 @@ export default function FriendsScreen() {
   async function handleRectify(task: VouchHistoryTaskRow) {
     if (!user || inFlightRectifyByTaskId[task.id]) return;
 
-    const currentPeriod = new Date().toISOString().slice(0, 7);
-    const failedPeriod = new Date(task.updated_at).toISOString().slice(0, 7);
-    if (failedPeriod !== currentPeriod) {
-      Alert.alert('Rectify expired', 'Rectify can only be authorised for tasks that failed this calendar month.');
-      return;
-    }
-
-    const { count } = await supabase
-      .from('rectify_passes').select('*', { count: 'exact', head: true })
-      .eq('user_id', task.user?.id ?? '').eq('period', currentPeriod);
-
-    const passesUsed = count ?? 0;
-    if (passesUsed >= 5) {
-      Alert.alert('Pass limit reached', `${task.user?.username ?? 'This user'} has already used all 5 rectify passes this month.`);
-      return;
-    }
+    const { data: summaryRows } = await supabase.rpc('get_task_rectification_pass_summary', {
+      p_task_id: task.id,
+    });
+    const summary = Array.isArray(summaryRows) ? summaryRows[0] : summaryRows;
+    const passesUsed = Number(summary?.used ?? 0) + Number(summary?.reserved ?? 0);
 
     const cost = (task.failure_cost_cents / 100).toFixed(2);
     Alert.alert(
@@ -996,19 +984,13 @@ export default function FriendsScreen() {
           onPress: async () => {
             setInFlightRectifyByTaskId((prev) => ({ ...prev, [task.id]: true }));
             try {
-              const fromStatus = task.status;
-              const instanceId = await resolveUserClientInstanceId(user.id);
-              const { error: taskErr } = await supabase.from('tasks')
-                .update({ status: 'RECTIFIED' }).eq('id', task.id).eq('voucher_id', user.id);
-              if (taskErr) { Alert.alert('Rectify failed', taskErr.message); return; }
-
-              const results = await Promise.all([
-                supabase.from('rectify_passes').insert({ user_id: task.user?.id, task_id: task.id, authorized_by: user.id, period: currentPeriod }),
-                supabase.from('ledger_entries').insert({ user_id: task.user?.id, task_id: task.id, period: currentPeriod, amount_cents: -(task.failure_cost_cents), entry_type: 'rectified' }),
-                supabase.from('task_events').insert({ task_id: task.id, event_type: 'RECTIFY', actor_id: user.id, actor_user_client_instance_id: instanceId, from_status: fromStatus, to_status: 'RECTIFIED' }),
-              ]);
-              const writeError = results.find((r) => r.error)?.error;
-              if (writeError) { Alert.alert('Rectify partially failed', writeError.message); return; }
+              try {
+                await authorizeTaskRectification(task.id);
+                void queueRectificationNotification(task.id, null, 'DIRECT_APPROVED');
+              } catch (error) {
+                Alert.alert('Rectify failed', error instanceof Error ? error.message : 'Please try again.');
+                return;
+              }
 
               const purge = await purgeTaskProofForFinalState(task.id);
               if (!purge.success) Toast.show({ type: 'proofError', text1: `Rectified, but proof cleanup failed: ${purge.error}`, position: 'bottom' });
@@ -1031,8 +1013,6 @@ export default function FriendsScreen() {
       ],
     );
   }
-
-  const currentPeriod = new Date().toISOString().slice(0, 7);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -1072,6 +1052,7 @@ export default function FriendsScreen() {
                 setRefreshing(true);
                 Promise.all([
                   friendQueue.refetchQueue(),
+                  friendQueue.refetchRectifications(),
                   activeTab === 'history' ? friendQueue.refetchHistory() : Promise.resolve(),
                 ]).finally(() => setRefreshing(false));
               }}
@@ -1088,12 +1069,51 @@ export default function FriendsScreen() {
 
           {/* ── Pending tab ── */}
           {activeTab === 'pending' ? (
-            decksByFriend.length === 0 ? (
+            decksByFriend.length === 0 && rectificationRequests.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyTitle}>No pending requests</Text>
               </View>
             ) : (
               <View style={styles.deckList}>
+                {rectificationRequests.map((request) => (
+                  <TouchableOpacity key={request.id} style={styles.rectificationReviewCard}
+                    onPress={() => router.push({ pathname: '/tasks/[id]' as any, params: { id: request.task_id, back: 'friends' } })}
+                    activeOpacity={0.85}>
+                    <Text style={styles.rectificationReviewKicker}>RECTIFICATION REQUEST</Text>
+                    <Text style={styles.rectificationReviewTitle}>{request.task?.title ?? 'Task'}</Text>
+                    <Text style={styles.rectificationReviewMeta}>
+                      {request.task?.user?.username ?? 'Friend'} · original {request.original_status.toLowerCase()} · {((request.task?.failure_cost_cents ?? 0) / 100).toFixed(2)} {request.task?.user?.currency ?? 'EUR'}
+                    </Text>
+                    {request.reason ? <Text style={styles.rectificationReviewReason}>“{request.reason}”</Text> : null}
+                    <Text style={styles.rectificationReviewMeta}>1 rectification pass reserved</Text>
+                    <Text style={styles.rectificationReviewMeta}>
+                      Ledger resolves: {new Date(request.auto_rectify_at).toLocaleDateString('en-GB', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: '2-digit',
+                      })}
+                    </Text>
+                    {request.proof ? (
+                      <MediaBox proof={request.proof} taskId={request.task_id} onExpand={() => setLightboxProof(request.proof)} />
+                    ) : (
+                      <Text style={styles.rectificationReviewMeta}>No proof attached</Text>
+                    )}
+                    <View style={styles.rectificationReviewActions}>
+                      <TouchableOpacity style={[styles.rectificationReviewButton, styles.rectificationDeclineButton]}
+                        onPress={(event) => { event.stopPropagation(); void handleRectificationDecision(request.id, request.task_id, 'DECLINE'); }}>
+                        <Text style={styles.rectificationDeclineText}>Decline</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.rectificationReviewButton, styles.rectificationProofButton]}
+                        onPress={(event) => { event.stopPropagation(); void handleRectificationProofRequest(request.id, request.task_id); }}>
+                        <Text style={styles.rectificationProofText}>Ask for proof</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.rectificationReviewButton, styles.rectificationApproveButton]}
+                        onPress={(event) => { event.stopPropagation(); void handleRectificationDecision(request.id, request.task_id, 'APPROVE'); }}>
+                        <Text style={styles.rectificationApproveText}>Rectify</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </TouchableOpacity>
+                ))}
                 {decksByFriend.map(({ friendId, friend, tasks: groupTasks }) => (
                   <FriendDeck
                     key={friendId}
@@ -1139,8 +1159,7 @@ export default function FriendsScreen() {
             ) : (
               <View style={styles.historyList}>
                 {historyTasks.map((task) => {
-                  const failedPeriod = new Date(task.updated_at).toISOString().slice(0, 7);
-                  const canRectify = (task.status === 'DENIED' || task.status === 'MISSED' || task.status === 'SURRENDERED') && failedPeriod === currentPeriod;
+                  const canRectify = task.status === 'DENIED' || task.status === 'MISSED' || task.status === 'SURRENDERED';
                   return (
                     <HistoryRow
                       key={task.id}
@@ -1602,6 +1621,39 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     fontWeight: '400',
     lineHeight: 24,
   },
+  rectificationReviewCard: {
+    borderWidth: 1,
+    borderColor: '#8B5CF666',
+    backgroundColor: '#8B5CF61A',
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  rectificationReviewKicker: {
+    color: '#A78BFA',
+    fontSize: 10,
+    fontWeight: typography.bold,
+    letterSpacing: 1,
+  },
+  rectificationReviewTitle: {
+    color: colors.text,
+    fontSize: typography.lg,
+    fontWeight: typography.semibold,
+  },
+  rectificationReviewMeta: { color: colors.textMuted, fontSize: typography.xs },
+  rectificationReviewReason: { color: colors.text, fontSize: typography.sm, lineHeight: 20, fontStyle: 'italic' },
+  rectificationReviewActions: { flexDirection: 'row', gap: spacing.xs, marginTop: spacing.sm },
+  rectificationReviewButton: {
+    flex: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center',
+    borderRadius: radius.md, borderWidth: 1, paddingHorizontal: spacing.xs,
+  },
+  rectificationDeclineButton: { borderColor: '#F8717159', backgroundColor: '#F871711A' },
+  rectificationDeclineText: { color: '#F87171', fontSize: typography.xs, fontWeight: typography.semibold },
+  rectificationProofButton: { borderColor: '#F472B659', backgroundColor: '#F472B61A' },
+  rectificationProofText: { color: '#F472B6', fontSize: typography.xs, fontWeight: typography.semibold },
+  rectificationApproveButton: { borderColor: '#22C55E59', backgroundColor: '#22C55E1A' },
+  rectificationApproveText: { color: '#22C55E', fontSize: typography.xs, fontWeight: typography.semibold },
 
   // History
   historyList: {

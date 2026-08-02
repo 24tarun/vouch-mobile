@@ -4,6 +4,7 @@ export const COMPLETION_EDITABLE_STATUSES = [
   'AWAITING_VOUCHER',
   'AWAITING_AI',
   'MARKED_COMPLETE',
+  'ACCEPTED',
 ] as const;
 
 const completionEditableStatusSet = new Set<string>(COMPLETION_EDITABLE_STATUSES);

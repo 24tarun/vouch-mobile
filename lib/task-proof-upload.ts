@@ -68,6 +68,16 @@ export type TaskProofPurgeResult = { success: true } | { success: false; error: 
 export type QueueAiEvalResult =
   | { success: true }
   | { success: false; error: string; code?: string; quota?: AiVoucherQuota };
+export type RectificationNotificationKind =
+  | 'REQUESTED'
+  | 'UPDATED'
+  | 'CANCELLED'
+  | 'PROOF_REQUESTED'
+  | 'PROOF_UPLOADED'
+  | 'ESCALATED'
+  | 'APPROVED'
+  | 'DECLINED'
+  | 'DIRECT_APPROVED';
 
 async function invokeTaskProofFunction<TResponse>(body: Record<string, unknown>) {
   const { data: sessionData } = await supabase.auth.getSession();
@@ -315,6 +325,36 @@ export async function queueAiEvalForTask(taskId: string): Promise<QueueAiEvalRes
     return { success: false, error: data?.error || 'Could not queue AI evaluation.' };
   }
 
+  return { success: true };
+}
+
+export async function queueAiRectificationEval(
+  taskId: string,
+  requestId: string,
+): Promise<QueueAiEvalResult> {
+  const { data, error } = await invokeTaskProofFunction<TaskProofSimpleResponse>({
+    action: 'queue-rectification-ai-eval',
+    taskId,
+    requestId,
+  });
+  if (error) return { success: false, error: await invokeErrorMessage(error) };
+  if (!data?.success) return { success: false, error: data?.error || 'Could not queue AI rectification review.' };
+  return { success: true };
+}
+
+export async function queueRectificationNotification(
+  taskId: string,
+  requestId: string | null,
+  kind: RectificationNotificationKind,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const { data, error } = await invokeTaskProofFunction<TaskProofSimpleResponse>({
+    action: 'queue-rectification-notification',
+    taskId,
+    requestId: requestId || undefined,
+    kind,
+  });
+  if (error) return { success: false, error: await invokeErrorMessage(error) };
+  if (!data?.success) return { success: false, error: data?.error || 'Could not queue rectification notification.' };
   return { success: true };
 }
 

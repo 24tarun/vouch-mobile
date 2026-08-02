@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
-import type { TaskStatus } from '@/lib/types';
+import type { RectificationRequest, TaskStatus } from '@/lib/types';
 import { SIGNED_URL_EXPIRY_SECONDS } from '@/lib/constants/timings';
 import {
   VOUCHER_ACTIONABLE_STATUSES,
@@ -40,6 +40,7 @@ export interface VoucherTaskRow {
   user: {
     id: string;
     username: string;
+    avatar_path: string | null;
     voucher_can_view_active_tasks: boolean;
     currency: string;
   } | null;
@@ -54,7 +55,19 @@ export interface VouchHistoryTaskRow {
   user: {
     id: string;
     username: string;
+    avatar_path: string | null;
   } | null;
+}
+
+export interface RectificationVoucherRow extends RectificationRequest {
+  task: {
+    id: string;
+    title: string;
+    failure_cost_cents: number;
+    has_proof: boolean;
+    user: { id: string; username: string; avatar_path: string | null; currency: string } | null;
+  } | null;
+  proof: TaskProof | null;
 }
 
 const HISTORY_PAGE_SIZE = 10;
@@ -140,6 +153,7 @@ export async function fetchFriendQueue(userId: string, signal?: AbortSignal): Pr
       user:profiles!tasks_user_id_fkey(
         id,
         username,
+        avatar_path,
         voucher_can_view_active_tasks,
         currency
       )
@@ -157,6 +171,7 @@ export async function fetchFriendQueue(userId: string, signal?: AbortSignal): Pr
     const owner = row.user as {
       id?: string;
       username?: string;
+      avatar_path?: string | null;
       voucher_can_view_active_tasks?: boolean;
       currency?: string;
     } | null;
@@ -176,6 +191,7 @@ export async function fetchFriendQueue(userId: string, signal?: AbortSignal): Pr
         ? {
             id: owner.id,
             username: owner.username ?? 'Unknown owner',
+            avatar_path: owner.avatar_path ?? null,
             voucher_can_view_active_tasks: Boolean(owner.voucher_can_view_active_tasks),
             currency: (owner.currency as string) ?? 'EUR',
           }
@@ -197,6 +213,21 @@ export async function fetchFriendQueue(userId: string, signal?: AbortSignal): Pr
   }));
 }
 
+async function fetchRectificationQueue(userId: string, signal?: AbortSignal): Promise<RectificationVoucherRow[]> {
+  const { data, error } = await supabase.from('rectification_requests').select(`
+    *,
+    task:tasks!rectification_requests_task_id_fkey(
+      id, title, failure_cost_cents, has_proof,
+      user:profiles!tasks_user_id_fkey(id, username, avatar_path, currency)
+    )
+  `).eq('target_voucher_id', userId).eq('target_type', 'ORIGINAL_VOUCHER').eq('state', 'PENDING_HUMAN')
+    .order('updated_at', { ascending: false }).abortSignal(signal!);
+  if (error) throw new Error(error.message);
+  const rows = ((data ?? []) as any[]).map((row) => ({ ...row, proof: null })) as RectificationVoucherRow[];
+  const proofs = await fetchProofsForTasks(rows.filter((row) => row.task?.has_proof).map((row) => row.task_id), signal);
+  return rows.map((row) => ({ ...row, proof: proofs[row.task_id] ?? null }));
+}
+
 async function fetchFriendHistory(userId: string, searchQuery: string, offset = 0): Promise<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }> {
   let query = supabase
     .from('tasks')
@@ -208,7 +239,8 @@ async function fetchFriendHistory(userId: string, searchQuery: string, offset = 
       failure_cost_cents,
       user:profiles!tasks_user_id_fkey(
         id,
-        username
+        username,
+        avatar_path
       )
     `)
     .eq('voucher_id', userId)
@@ -227,7 +259,7 @@ async function fetchFriendHistory(userId: string, searchQuery: string, offset = 
   }
 
   const rawBatch = ((data ?? []) as any[]).map((row) => {
-    const owner = row.user as { id?: string; username?: string } | null;
+    const owner = row.user as { id?: string; username?: string; avatar_path?: string | null } | null;
     return {
       id: row.id as string,
       title: (row.title as string) || 'Untitled task',
@@ -238,6 +270,7 @@ async function fetchFriendHistory(userId: string, searchQuery: string, offset = 
         ? {
             id: owner.id,
             username: owner.username ?? 'Unknown owner',
+            avatar_path: owner.avatar_path ?? null,
           }
         : null,
     } satisfies VouchHistoryTaskRow;
@@ -264,11 +297,20 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
     enabled: Boolean(userId),
   });
 
+  const rectificationQuery = useQuery({
+    queryKey: ['rectification-queue', userId],
+    queryFn: ({ signal }) => fetchRectificationQueue(userId!, signal),
+    enabled: Boolean(userId),
+  });
+
   // Stable refs so useFocusEffect deps in the screen never change reference,
   // which would cause useFocusEffect to re-run while focused and wipe pagination.
   const queueRefetchRef = useRef(queueQuery.refetch);
   queueRefetchRef.current = queueQuery.refetch;
   const refetchQueue = useCallback(() => { void queueRefetchRef.current(); }, []);
+  const rectificationRefetchRef = useRef(rectificationQuery.refetch);
+  rectificationRefetchRef.current = rectificationQuery.refetch;
+  const refetchRectifications = useCallback(() => { void rectificationRefetchRef.current(); }, []);
 
   const historyRefetchRef = useRef(historyQuery.refetch);
   historyRefetchRef.current = historyQuery.refetch;
@@ -309,6 +351,7 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
           { table: 'profiles' },
           { table: 'rectify_passes' },
           { table: 'ledger_entries' },
+          { table: 'rectification_requests', filter: `target_voucher_id=eq.${userId}` },
         ]
       : [],
     [userId],
@@ -320,7 +363,10 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
     subscriptions,
     // Direct refetch instead of invalidate — invalidateQueries doesn't reliably
     // trigger a background refetch in React Native when the app is already focused.
-    onPayload: userId ? () => { void queueRefetchRef.current(); } : undefined,
+    onPayload: userId ? () => {
+      void queueRefetchRef.current();
+      void rectificationRefetchRef.current();
+    } : undefined,
     invalidateKeys: [queryKeys.friendHistory(userId, searchQuery)],
   });
 
@@ -329,6 +375,10 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
     loading: queueQuery.isLoading,
     error: queueQuery.error instanceof Error ? queueQuery.error.message : null,
     refetchQueue,
+    rectificationRequests: rectificationQuery.data ?? [],
+    rectificationLoading: rectificationQuery.isLoading,
+    rectificationError: rectificationQuery.error instanceof Error ? rectificationQuery.error.message : null,
+    refetchRectifications,
     historyTasks: historyQuery.data?.tasks ?? [],
     historyHasMore: historyQuery.data?.hasMore ?? false,
     historyLoading: historyQuery.isLoading,

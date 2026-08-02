@@ -127,7 +127,7 @@ export async function fetchLedger(userId: string): Promise<LedgerData> {
         amount_cents,
         entry_type,
         created_at,
-        task:tasks(id, title, status, deadline)
+        task:tasks(id, title, status, deadline, rectification_requests(original_status, state, created_at))
       `)
       .eq('user_id', userId)
       .order('created_at', { ascending: false }),
@@ -156,6 +156,8 @@ export async function fetchLedger(userId: string): Promise<LedgerData> {
       ? row.period
       : parsePeriodFromCreatedAt(row.created_at, currentPeriodId);
 
+    const openRectification = (task?.rectification_requests as { original_status?: string; state?: string }[] | undefined)
+      ?.find((request) => ['PENDING_HUMAN', 'PENDING_AI', 'AWAITING_AI_APPEAL'].includes(request.state ?? ''));
     return {
       id: String(row.id),
       taskId: task?.id ? String(task.id) : null,
@@ -165,7 +167,9 @@ export async function fetchLedger(userId: string): Promise<LedgerData> {
       createdAt: typeof row.created_at === 'string' ? row.created_at : new Date().toISOString(),
       deadline: typeof task?.deadline === 'string' ? task.deadline : null,
       kind,
-      taskStatus: typeof task?.status === 'string' ? task.status : null,
+      taskStatus: task?.status === 'AWAITING_RECTIFICATION' && openRectification?.original_status
+        ? openRectification.original_status
+        : typeof task?.status === 'string' ? task.status : null,
     };
   });
 

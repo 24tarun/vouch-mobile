@@ -27,6 +27,7 @@ const Reanimated = {
   useDerivedValue: (fn: () => unknown) => ({ value: fn() }),
   useAnimatedScrollHandler: () => NOOP,
   useAnimatedGestureHandler: () => NOOP,
+  useEvent: () => NOOP,
   useAnimatedRef: () => ({ current: null }),
   withTiming: IDENTITY,
   withSpring: IDENTITY,

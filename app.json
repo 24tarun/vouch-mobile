@@ -57,8 +57,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Vouch to access your photos and videos so you can attach proof.",
-          "cameraPermission": "Allow Vouch to use your camera to capture photo or video proof.",
+          "photosPermission": "Allow Vouch to access your photos and videos so you can choose a profile picture or attach proof.",
+          "cameraPermission": "Allow Vouch to use your camera to take a profile picture or capture proof.",
           "microphonePermission": "Allow Vouch to record audio while capturing video proof."
         }
       ],
@@ -80,7 +80,15 @@
       "expo-apple-authentication",
       "expo-audio",
       "react-native-compressor",
-      "./plugins/withAlarmKit"
+      "./plugins/withAlarmKit",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "17.0"
+          }
+        }
+      ]
     ],
     "extra": {
       "router": {},

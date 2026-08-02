@@ -6,7 +6,7 @@ import {
 describe('completed task deadline lock', () => {
   const deadlineIso = '2026-07-19T12:00:00.000Z';
 
-  it.each(['AWAITING_VOUCHER', 'AWAITING_AI', 'MARKED_COMPLETE'])(
+  it.each(['AWAITING_VOUCHER', 'AWAITING_AI', 'MARKED_COMPLETE', 'ACCEPTED'])(
     'locks %s at the end of the inclusive deadline minute',
     (status) => {
       expect(isTaskCompletionLocked(status, deadlineIso, Date.parse('2026-07-19T12:00:59.999Z'))).toBe(false);

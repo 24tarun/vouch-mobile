@@ -43,7 +43,7 @@ export function LegacyPostponeCalendarPicker({
             <DateTimePicker
               value={date}
               mode="datetime"
-              display="inline"
+              display="spinner"
               minimumDate={task.created_at ? new Date(task.created_at) : undefined}
               onChange={onDateChange}
               themeVariant="dark"

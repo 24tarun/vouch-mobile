@@ -2,8 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   Alert,
   Keyboard,
-  Platform,
-  ScrollView,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -16,15 +14,13 @@ import Toast from 'react-native-toast-message';
 import { spacing } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from '@/components/tasks/styles';
-import {
-  getTodayParts,
-  normalizeEventDurationMinutes,
-} from '@/components/tasks/helpers';
-import type { TaskRowData } from '@/components/TaskRow';
-import { TaskTopBar } from '@/components/tasks/TaskTopBar';
+import { normalizeEventDurationMinutes } from '@/components/tasks/helpers';
+import type { TaskCompletionIntentResult, TaskRowData } from '@/components/TaskRow';
+import { ReputationBar } from '@/components/ReputationBar';
 import { TaskBottomActions } from '@/components/tasks/TaskBottomActions';
 import { TaskContent } from '@/components/tasks/TaskContent';
-import { normalizePomoDurationMinutes, OPTIMISTIC_COMPLETION_TIMEOUT_MS } from '@/lib/constants/timings';
+import { ProofCaptureModal } from '@/components/tasks/ProofCaptureModal';
+import { OPTIMISTIC_COMPLETION_TIMEOUT_MS } from '@/lib/constants/timings';
 import { useTaskCreatorHandle } from '@/lib/taskCreatorState';
 import { useFriends } from '@/lib/hooks/useFriends';
 import { useTasks } from '@/lib/hooks/useTasks';
@@ -33,14 +29,7 @@ import { useGoogleCalendarConnection } from '@/hooks/useGoogleCalendarConnection
 import { useAuth } from '@/hooks/useAuth';
 import { useReputationScore } from '@/lib/hooks/useReputationScore';
 import { queryKeys } from '@/lib/query/keys';
-import {
-  completeTask,
-  deleteTask,
-  isTaskWithinDeleteWindow,
-  surrenderTask,
-  removeTaskProof,
-  uploadTaskProof,
-} from '@/lib/tasks/task-actions';
+import { completeTask, uploadTaskProof } from '@/lib/tasks/task-actions';
 import { syncLocalReminderNotificationsAsync } from '@/lib/notifications';
 import { TasksScreenCreatorOverlay } from '@/components/tasks/TasksScreenCreatorOverlay';
 import { TasksScreenPostponeOverlay } from '@/components/tasks/TasksScreenPostponeOverlay';
@@ -52,8 +41,22 @@ import {
 } from '@/lib/tasks/task-proof-action-queue';
 
 import { getFutureBoundaryMs } from '@/lib/utils/date-only';
+import { createTaskDetailPrefetcher } from '@/lib/tasks/task-detail-prefetch';
+import { isOptimisticTaskId } from '@/lib/tasks/task-id';
+import {
+  getPostProofUploadAction,
+  getTaskCompletionDecision,
+  getTaskPostponeBlockReason,
+} from '@/lib/tasks/task-completion-intent';
 
 type OverlayMode = 'closed' | 'create';
+
+interface TaskListsCache {
+  dueSoonTasks: TaskRowData[];
+  futureTasks: TaskRowData[];
+  pastTasks: TaskRowData[];
+  hasMorePast: boolean;
+}
 
 export default function TasksScreen() {
   const { colors } = useTheme();
@@ -64,6 +67,10 @@ export default function TasksScreen() {
   const defaultEventDurationMinutes = normalizeEventDurationMinutes(authProfile?.default_event_duration_minutes);
   const defaultGoogleEventColorId = googleCalendarConnection?.defaultEventColorId ?? '9';
   const queryClient = useQueryClient();
+  const taskDetailPrefetcherRef = useRef<ReturnType<typeof createTaskDetailPrefetcher> | null>(null);
+  if (!taskDetailPrefetcherRef.current) {
+    taskDetailPrefetcherRef.current = createTaskDetailPrefetcher(queryClient, 2);
+  }
   const rootRef = useRef<View | null>(null);
   const creatorAnchorRef = useRef<View | null>(null);
   const taskCreatorHandle = useTaskCreatorHandle();
@@ -72,8 +79,12 @@ export default function TasksScreen() {
   const {
     dueSoonTasks,
     futureTasks,
+    pastTasks,
+    hasMorePast,
+    loadingMore: loadingMorePast,
     loading: tasksLoading,
     refetch: refetchTasks,
+    loadMorePastTasks,
   } = useTasks(sortMode);
   const { onboardingComplete, loading: onboardingLoading, completeOnboarding } = useOnboarding();
   const [refreshing, setRefreshing] = useState(false);
@@ -93,22 +104,16 @@ export default function TasksScreen() {
   }
   const [optimisticTasks, setOptimisticTasks] = useState<TaskRowData[]>([]);
   const [optimisticallyCompletingTaskIds, setOptimisticallyCompletingTaskIds] = useState<string[]>([]);
+  const [proofTargetTask, setProofTargetTask] = useState<TaskRowData | null>(null);
+  const [postponeTargetTask, setPostponeTargetTask] = useState<TaskRowData | null>(null);
   const { height: screenHeight, width: screenWidth } = useWindowDimensions();
   const [bottomActionsHeight, setBottomActionsHeight] = useState(0);
 
-  const [postponeTargetTask, setPostponeTargetTask] = useState<TaskRowData | null>(null);
   const [confettiBurstCount, setConfettiBurstCount] = useState(0);
-
-  const taskListScrollRef = useRef<ScrollView | null>(null);
-  const taskListScrollOffsetYRef = useRef(0);
-  const focusedSubtaskInputBottomYRef = useRef<number | null>(null);
-  const keyboardTopYRef = useRef(Number.POSITIVE_INFINITY);
-  const [taskListKeyboardInset, setTaskListKeyboardInset] = useState(0);
 
   const { friends, currentUserId, profile, loading: friendsLoading } = useFriends();
   const defaultRequiresProofForAllTasks = profile?.default_requires_proof_for_all_tasks ?? false;
   const autoSubmitAfterProofUpload = authProfile?.auto_submit_after_proof_upload ?? profile?.auto_submit_after_proof_upload ?? true;
-  const defaultPomoDurationMinutes = normalizePomoDurationMinutes(authProfile?.default_pomo_duration_minutes);
   const alwaysShowActiveTasks = authProfile?.always_show_active_tasks ?? false;
 
   const isCreateOverlayOpen = overlayMode === 'create';
@@ -118,8 +123,6 @@ export default function TasksScreen() {
   const bottomDockReservedInset = bottomDockOffset + bottomActionsHeight + spacing.sm;
   const creatorTargetTop = 0;
   const creatorTargetHeight = screenHeight;
-  const displayName = (authProfile?.username ?? 'there').trim() || 'there';
-  const todayParts = getTodayParts();
 
   useEffect(() => proofActionQueueRef.current!.subscribe(setProofQueueSnapshot), []);
 
@@ -222,57 +225,6 @@ export default function TasksScreen() {
     return () => clearTimeout(timeout);
   }, [optimisticallyCompletingTaskIds]);
 
-  const scrollFocusedSubtaskIntoView = useCallback((inputBottomY: number | null = focusedSubtaskInputBottomYRef.current) => {
-    if (inputBottomY == null) return;
-
-    const keyboardTopY = keyboardTopYRef.current;
-    if (!Number.isFinite(keyboardTopY)) return;
-
-    const visibilityGap = spacing.md;
-    const overlap = inputBottomY + visibilityGap - keyboardTopY;
-    if (overlap <= 0) return;
-
-    const nextOffsetY = Math.max(0, taskListScrollOffsetYRef.current + overlap);
-    taskListScrollRef.current?.scrollTo({ y: nextOffsetY, animated: true });
-  }, []);
-
-  const handleSubtaskComposerFocus = useCallback((inputBottomY: number) => {
-    focusedSubtaskInputBottomYRef.current = inputBottomY;
-    requestAnimationFrame(() => {
-      scrollFocusedSubtaskIntoView(inputBottomY);
-    });
-  }, [scrollFocusedSubtaskIntoView]);
-
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-
-    const show = Keyboard.addListener(showEvent, (e) => {
-      const nextHeight = Math.max(0, e.endCoordinates?.height ?? 0);
-      const nextScreenY = e.endCoordinates?.screenY ?? (screenHeight - nextHeight);
-
-      keyboardTopYRef.current = nextScreenY;
-      setTaskListKeyboardInset(nextHeight);
-
-      const focusedBottomY = focusedSubtaskInputBottomYRef.current;
-      if (focusedBottomY != null) {
-        requestAnimationFrame(() => {
-          scrollFocusedSubtaskIntoView(focusedBottomY);
-        });
-      }
-    });
-
-    const hide = Keyboard.addListener(hideEvent, () => {
-      keyboardTopYRef.current = Number.POSITIVE_INFINITY;
-      setTaskListKeyboardInset(0);
-    });
-
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, [screenHeight, scrollFocusedSubtaskIntoView]);
-
   const handleProofPickedRef = useRef<(taskId: string, asset: ImagePickerAsset) => Promise<void>>(undefined);
   handleProofPickedRef.current = async (taskId: string, asset: ImagePickerAsset) => {
     if (taskId.startsWith('optimistic-')) {
@@ -286,6 +238,24 @@ export default function TasksScreen() {
         Alert.alert('Could not attach proof', result.error);
         return;
       }
+      queryClient.setQueriesData<TaskListsCache>(
+        { queryKey: ['task-lists'], exact: false },
+        (current) => {
+          if (!current) return current;
+          const attachProof = (tasks: TaskRowData[]) => tasks.map((task) => (
+            task.id === taskId ? { ...task, has_proof: true } : task
+          ));
+          return {
+            ...current,
+            dueSoonTasks: attachProof(current.dueSoonTasks),
+            futureTasks: attachProof(current.futureTasks),
+            pastTasks: attachProof(current.pastTasks),
+          };
+        },
+      );
+      setOptimisticTasks((current) => current.map((task) => (
+        task.id === taskId ? { ...task, has_proof: true } : task
+      )));
       void queryClient.invalidateQueries({ queryKey: queryKeys.taskDetail(taskId) });
       refetchTasks();
       Toast.show({
@@ -295,7 +265,7 @@ export default function TasksScreen() {
         bottomOffset: 84,
         visibilityTime: 1800,
       });
-      if (autoSubmitAfterProofUpload) {
+      if (getPostProofUploadAction(autoSubmitAfterProofUpload) === 'complete') {
         await handleCompleteTaskRef.current!(taskId);
       }
     });
@@ -316,28 +286,6 @@ export default function TasksScreen() {
     return handleProofPickedRef.current!(taskId, asset);
   }, []);
 
-  const handleProofRemovedRef = useRef<(taskId: string) => Promise<void>>(undefined);
-  handleProofRemovedRef.current = async (taskId: string) => {
-    if (taskId.startsWith('optimistic-')) {
-      Alert.alert('Please wait', 'Task is still being created.');
-      return;
-    }
-
-    const queued = proofActionQueueRef.current!.enqueue(taskId, async () => {
-      const result = await removeTaskProof(taskId);
-      if (!result.success) {
-        Alert.alert('Could not remove proof', result.error ?? 'Unknown error');
-        return;
-      }
-      refetchTasks();
-    });
-
-    await queued.done;
-  };
-  const handleProofRemoved = useCallback((taskId: string) => {
-    return handleProofRemovedRef.current!(taskId);
-  }, []);
-
   const handleCompleteTaskRef = useRef<(taskId: string) => Promise<void>>(undefined);
   handleCompleteTaskRef.current = async (taskId: string) => {
     if (taskId.startsWith('optimistic-')) {
@@ -347,12 +295,6 @@ export default function TasksScreen() {
 
     if (optimisticallyCompletingTaskIds.includes(taskId)) return;
 
-    type TaskListsCache = {
-      dueSoonTasks: TaskRowData[];
-      futureTasks: TaskRowData[];
-      pastTasks: TaskRowData[];
-      hasMorePast: boolean;
-    };
     const taskListKey = queryKeys.taskLists(user?.id, sortMode);
     const cachedLists = queryClient.getQueryData<TaskListsCache>(taskListKey);
     const allCached = [
@@ -414,87 +356,54 @@ export default function TasksScreen() {
     return handleCompleteTaskRef.current!(taskId);
   }, []);
 
-  const handleDeleteTaskRef = useRef<(task: TaskRowData) => Promise<void>>(undefined);
-  handleDeleteTaskRef.current = async (task: TaskRowData) => {
-    if (task.id.startsWith('optimistic-')) {
+  const handleCompletionIntent = useCallback((task: TaskRowData): TaskCompletionIntentResult => {
+    const decision = getTaskCompletionDecision(
+      task,
+      optimisticallyCompletingTaskIds.includes(task.id)
+        || proofQueueSnapshot.pendingTaskIds.includes(task.id),
+    );
+
+    if (decision.result === 'blocked' && decision.reason === 'optimistic') {
       Alert.alert('Please wait', 'Task is still being created.');
-      return;
+      return 'blocked';
     }
-
-    const isWithinDeleteWindow = isTaskWithinDeleteWindow(task.created_at);
-    if (!isWithinDeleteWindow) {
-      Alert.alert('Delete unavailable', 'Tasks can only be deleted within 1 hour of creation.');
-      return;
+    if (decision.result === 'blocked' && decision.reason === 'busy') {
+      return 'blocked';
     }
-
-    const result = await deleteTask(task.id);
-    if (!result.success) {
-      Alert.alert('Could not delete task', result.error ?? 'Unknown error');
-      return;
-    }
-
-    if (result.warningMessage) {
+    if (decision.result === 'blocked' && decision.reason === 'incomplete-subtasks') {
       Toast.show({
-        type: 'proofError',
-        text1: result.warningMessage,
+        type: 'error',
+        text1: 'All subtasks must be completed',
         position: 'bottom',
         bottomOffset: 84,
-        visibilityTime: 3200,
+        visibilityTime: 2500,
       });
+      return 'blocked';
+    }
+    if (decision.result === 'proof-required') {
+      setProofTargetTask(task);
+      return 'proof-required';
     }
 
-    refetchTasks();
-    if (result.userId) {
-      void syncLocalReminderNotificationsAsync(result.userId);
-    }
-  };
-  const handleDeleteTask = useCallback((task: TaskRowData) => {
-    return handleDeleteTaskRef.current!(task);
+    void handleCompleteTask(task.id);
+    return 'accepted';
+  }, [handleCompleteTask, optimisticallyCompletingTaskIds, proofQueueSnapshot.pendingTaskIds]);
+
+  const handlePrefetchTask = useCallback((taskId: string) => {
+    if (isOptimisticTaskId(taskId)) return;
+    void taskDetailPrefetcherRef.current!.prefetch(taskId);
   }, []);
 
-  const handleSurrenderTaskRef = useRef<(task: TaskRowData) => Promise<void>>(undefined);
-  handleSurrenderTaskRef.current = async (task: TaskRowData) => {
-    if (task.id.startsWith('optimistic-')) {
+  const handlePostponeIntent = useCallback((task: TaskRowData) => {
+    const blockReason = getTaskPostponeBlockReason(task);
+    if (blockReason === 'optimistic') {
       Alert.alert('Please wait', 'Task is still being created.');
       return;
     }
-
-    const result = await surrenderTask(task.id);
-    if (!result.success) {
-      Alert.alert('Could not surrender task', result.error ?? 'Unknown error');
-      refetchTasks();
-      return;
-    }
-
-    if (result.warningMessage) {
-      Toast.show({
-        type: 'proofError',
-        text1: result.warningMessage,
-        position: 'bottom',
-        bottomOffset: 84,
-        visibilityTime: 3200,
-      });
-    }
-
-    void queryClient.invalidateQueries({ queryKey: queryKeys.taskDetail(task.id) });
-    refetchTasks();
-    if (result.userId) void syncLocalReminderNotificationsAsync(result.userId);
-  };
-  const handleSurrenderTask = useCallback((task: TaskRowData) => {
-    return handleSurrenderTaskRef.current!(task);
-  }, []);
-
-  const handlePostponeTask = useCallback((task: TaskRowData) => {
-    if (task.id.startsWith('optimistic-')) {
-      Alert.alert('Please wait', 'Task is still being created.');
-      return;
-    }
-
-    if (task.postponed_at) {
+    if (blockReason === 'already-postponed') {
       Alert.alert('Already postponed', 'Task has already been postponed once.');
       return;
     }
-
     setPostponeTargetTask(task);
   }, []);
 
@@ -517,14 +426,16 @@ export default function TasksScreen() {
     ));
   }, []);
 
-  const taskListHeader = useMemo(() => (
-    <TaskTopBar
-      displayName={displayName}
-      todayParts={todayParts}
-      reputationScore={reputationScore}
-      showReputationBar={authProfile?.display_rp_bar_on_dashboard ?? false}
-    />
-  ), [displayName, todayParts, reputationScore, authProfile?.display_rp_bar_on_dashboard]);
+  const taskListHeader = authProfile?.display_rp_bar_on_dashboard && reputationScore != null ? (
+    <View style={styles.reputationBarWrap}>
+      <ReputationBar data={reputationScore} />
+    </View>
+  ) : null;
+
+  const completionTaskIds = useMemo(() => Array.from(new Set([
+    ...optimisticallyCompletingTaskIds,
+    ...proofQueueSnapshot.pendingTaskIds,
+  ])), [optimisticallyCompletingTaskIds, proofQueueSnapshot.pendingTaskIds]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -532,16 +443,16 @@ export default function TasksScreen() {
     setRefreshing(false);
   }, [refetchTasks]);
 
-  const handleScrollOffsetChange = useCallback((offsetY: number) => {
-    taskListScrollOffsetYRef.current = offsetY;
-  }, []);
-
-  const handlePostponeClose = useCallback(() => {
-    setPostponeTargetTask(null);
-  }, []);
-
   return (
     <SafeAreaView ref={rootRef} style={styles.safe} edges={['top']}>
+      <ProofCaptureModal
+        visible={proofTargetTask != null}
+        onClose={() => setProofTargetTask(null)}
+        onAssetPicked={async (asset) => {
+          if (!proofTargetTask) return;
+          await handleProofPicked(proofTargetTask.id, asset);
+        }}
+      />
       <TasksScreenCreatorOverlay
         visible={isCreateOverlayOpen}
         anchor={creatorAnchor}
@@ -568,22 +479,17 @@ export default function TasksScreen() {
         header={taskListHeader}
         dueSoonTasks={mergedDueSoonTasks}
         futureTasks={mergedFutureTasks}
+        pastTasks={pastTasks}
+        hasMorePast={hasMorePast}
+        loadingMorePast={loadingMorePast}
+        onLoadMorePast={loadMorePastTasks}
         refreshing={refreshing}
         onRefresh={handleRefresh}
-        onComplete={handleCompleteTask}
-        onProofPicked={handleProofPicked}
-        onProofRemoved={handleProofRemoved}
-        onPostpone={handlePostponeTask}
-        onDelete={handleDeleteTask}
-        onSurrender={handleSurrenderTask}
-        defaultPomoDurationMinutes={defaultPomoDurationMinutes}
-        scrollRef={taskListScrollRef}
-        onScrollOffsetChange={handleScrollOffsetChange}
-        keyboardBottomInset={taskListKeyboardInset}
+        onCompletionIntent={handleCompletionIntent}
+        onPostponeIntent={handlePostponeIntent}
+        onPrefetchTask={handlePrefetchTask}
         bottomInsetOffset={bottomDockReservedInset}
-        onSubtaskComposerFocus={handleSubtaskComposerFocus}
-        proofActionTaskIds={proofQueueSnapshot.pendingTaskIds}
-        hasPastTasks={onboardingComplete}
+        completionTaskIds={completionTaskIds}
         initialLoading={tasksLoading || onboardingLoading}
         alwaysShowActiveTasks={alwaysShowActiveTasks}
       />
@@ -597,7 +503,7 @@ export default function TasksScreen() {
       <TasksScreenPostponeOverlay
         task={postponeTargetTask}
         refetchTasks={refetchTasks}
-        onClose={handlePostponeClose}
+        onClose={() => setPostponeTargetTask(null)}
       />
       <TasksScreenConfettiOverlay burstCount={confettiBurstCount} />
     </SafeAreaView>

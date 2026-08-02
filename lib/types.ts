@@ -12,6 +12,7 @@ export type TaskStatus =
   | 'AI_DENIED'
   | 'AWAITING_USER'
   | 'ESCALATED'
+  | 'AWAITING_RECTIFICATION'
   | 'ACCEPTED'
   | 'AUTO_ACCEPTED'
   | 'AI_ACCEPTED'
@@ -88,6 +89,7 @@ export interface Profile {
   id: string;
   email: string;
   username: string;
+  avatar_path: string | null;
   currency: Currency;
   default_pomo_duration_minutes: number;
   default_event_duration_minutes: number;
@@ -167,6 +169,41 @@ export interface Task {
   subtasks?: TaskSubtask[];
   completion_proof?: TaskCompletionProof | null;
   pomo_total_seconds?: number;
+  rectification_request?: RectificationRequest | null;
+}
+
+export type RectificationRequestState =
+  | 'PENDING_HUMAN'
+  | 'PENDING_AI'
+  | 'AWAITING_AI_APPEAL'
+  | 'APPROVED'
+  | 'AUTO_APPROVED'
+  | 'DECLINED'
+  | 'CANCELLED';
+
+export interface RectificationRequest {
+  id: string;
+  task_id: string;
+  owner_id: string;
+  original_voucher_id: string;
+  target_voucher_id: string;
+  target_type: 'ORIGINAL_VOUCHER' | 'AI';
+  original_status: 'DENIED' | 'MISSED' | 'SURRENDERED';
+  failure_period: string;
+  request_period: string;
+  owner_timezone: string;
+  reason: string | null;
+  state: RectificationRequestState;
+  auto_rectify_at: string;
+  ai_appeal_count: number;
+  ai_attempt_count: number;
+  proof_requested_at: string | null;
+  proof_requested_by: string | null;
+  decision_reason: string | null;
+  requested_at: string;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface TaskSubtask {

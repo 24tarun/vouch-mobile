@@ -20,6 +20,7 @@ type CaptureMode = 'photo' | 'video';
 
 interface ProofCaptureModalProps {
   visible: boolean;
+  embedded?: boolean;
   initialMode?: CaptureMode;
   onClose: () => void;
   onAssetPicked: (asset: ImagePicker.ImagePickerAsset) => Promise<void> | void;
@@ -29,6 +30,7 @@ const MAX_VIDEO_SECONDS = 15;
 
 export function ProofCaptureModal({
   visible,
+  embedded = false,
   initialMode = 'photo',
   onClose,
   onAssetPicked,
@@ -243,14 +245,8 @@ export function ProofCaptureModal({
     }
   }
 
-  return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}
-    >
-      <View style={styles.backdrop}>
+  const captureContent = (
+    <View style={styles.backdrop}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <Pressable style={styles.sheet} onPress={() => {}}>
           <View style={styles.topBar}>
@@ -349,11 +345,30 @@ export function ProofCaptureModal({
           </View>
         </Pressable>
       </View>
+  );
+
+  if (embedded) {
+    return visible ? <View style={styles.embeddedHost}>{captureContent}</View> : null;
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      {captureContent}
     </Modal>
   );
 }
 
 const makeStyles = (colors: Colors) => StyleSheet.create({
+  embeddedHost: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    elevation: 20,
+  },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.65)',

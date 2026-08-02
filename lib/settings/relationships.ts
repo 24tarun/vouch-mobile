@@ -12,6 +12,7 @@ export interface UserSummary {
   username: string;
   email: string;
   initial: string;
+  avatar_path?: string | null;
 }
 
 export interface IncomingFriendRequest {
@@ -32,6 +33,7 @@ export interface SearchCandidate {
   id: string;
   email: string;
   username: string;
+  avatar_path?: string | null;
   already_friends: boolean;
   incoming_request_pending: boolean;
   outgoing_request_pending: boolean;
@@ -43,7 +45,12 @@ export interface BlockedUserOption {
   email: string;
 }
 
-function buildUserSummary(profile: { id?: string; username?: string | null; email?: string | null } | null): UserSummary | null {
+function buildUserSummary(profile: {
+  id?: string;
+  username?: string | null;
+  email?: string | null;
+  avatar_path?: string | null;
+} | null): UserSummary | null {
   if (!profile?.id) return null;
   const username = normalizeAiUsername(profile.id, profile.username, 'Friend');
   const email = normalizeAiEmail(profile.id, profile.email, '');
@@ -52,6 +59,7 @@ function buildUserSummary(profile: { id?: string; username?: string | null; emai
     username,
     email,
     initial: username[0]?.toUpperCase() || '?',
+    avatar_path: profile.avatar_path ?? null,
   };
 }
 
@@ -85,7 +93,8 @@ export async function fetchRelationshipsData(userId: string): Promise<{
         friend:profiles!friendships_friend_id_fkey(
           id,
           username,
-          email
+          email,
+          avatar_path
         )
       `)
       .eq('user_id', userId),
@@ -98,7 +107,8 @@ export async function fetchRelationshipsData(userId: string): Promise<{
         sender:profiles!friend_requests_sender_id_fkey(
           id,
           username,
-          email
+          email,
+          avatar_path
         )
       `)
       .eq('receiver_id', userId)
@@ -113,7 +123,8 @@ export async function fetchRelationshipsData(userId: string): Promise<{
         receiver:profiles!friend_requests_receiver_id_fkey(
           id,
           username,
-          email
+          email,
+          avatar_path
         )
       `)
       .eq('sender_id', userId)
@@ -134,7 +145,7 @@ export async function fetchRelationshipsData(userId: string): Promise<{
 
   const friends = ((friendsRes.data ?? []) as any[])
     .map((row) => {
-      const profile = row.friend as { id?: string; username?: string | null; email?: string | null } | null;
+      const profile = row.friend as { id?: string; username?: string | null; email?: string | null; avatar_path?: string | null } | null;
       if (!profile && isAiProfileId(row.friend_id)) {
         return buildUserSummary({ id: row.friend_id, username: AI_PROFILE_USERNAME, email: AI_PROFILE_EMAIL });
       }
@@ -145,7 +156,7 @@ export async function fetchRelationshipsData(userId: string): Promise<{
 
   const incomingRequests = ((incomingRequestsRes.data ?? []) as any[])
     .map((row) => {
-      const sender = buildUserSummary(row.sender as { id?: string; username?: string | null; email?: string | null } | null);
+      const sender = buildUserSummary(row.sender as { id?: string; username?: string | null; email?: string | null; avatar_path?: string | null } | null);
       if (!sender || !row.id || !row.sender_id) return null;
       return {
         id: row.id as string,
@@ -158,7 +169,7 @@ export async function fetchRelationshipsData(userId: string): Promise<{
 
   const outgoingRequests = ((outgoingRequestsRes.data ?? []) as any[])
     .map((row) => {
-      const receiver = buildUserSummary(row.receiver as { id?: string; username?: string | null; email?: string | null } | null);
+      const receiver = buildUserSummary(row.receiver as { id?: string; username?: string | null; email?: string | null; avatar_path?: string | null } | null);
       if (!receiver || !row.id || !row.receiver_id) return null;
       return {
         id: row.id as string,

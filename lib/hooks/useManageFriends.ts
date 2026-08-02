@@ -29,6 +29,41 @@ function buildUserSummaryFromCandidate(candidate: SearchCandidate): UserSummary 
     username: normalizeAiUsername(candidate.id, candidate.username, 'Friend'),
     email: normalizeAiEmail(candidate.id, candidate.email, ''),
     initial: normalizeAiUsername(candidate.id, candidate.username, 'Friend')[0]?.toUpperCase() || '?',
+    avatar_path: candidate.avatar_path ?? null,
+  };
+}
+
+async function searchFriendCandidates(query: string): Promise<{
+  results: SearchCandidate[];
+  error: string | null;
+}> {
+  const { data, error } = await supabase.rpc('search_users_for_friendship', {
+    p_query: query,
+    p_limit: 20,
+  });
+  if (error) return { results: [], error: error.message };
+
+  const candidates = ((data ?? []) as Omit<SearchCandidate, 'avatar_path'>[])
+    .map((candidate) => normalizeSearchCandidate({ ...candidate, avatar_path: null }));
+  const candidateIds = candidates.map((candidate) => candidate.id);
+  if (candidateIds.length === 0) return { results: [], error: null };
+
+  const { data: profiles, error: profileError } = await supabase
+    .from('profiles')
+    .select('id, avatar_path')
+    .in('id', candidateIds);
+  if (profileError) return { results: [], error: profileError.message };
+
+  const avatarPathById = new Map(
+    ((profiles ?? []) as { id: string; avatar_path: string | null }[])
+      .map((profile) => [profile.id, profile.avatar_path] as const),
+  );
+  return {
+    results: candidates.map((candidate) => ({
+      ...candidate,
+      avatar_path: avatarPathById.get(candidate.id) ?? null,
+    })),
+    error: null,
   };
 }
 
@@ -66,23 +101,19 @@ export function useManageFriends() {
     let cancelled = false;
     const timer = setTimeout(async () => {
       setFriendSearchLoading(true);
-      const { data, error } = await supabase.rpc('search_users_for_friendship', {
-        p_query: query,
-        p_limit: 20,
-      });
+      const result = await searchFriendCandidates(query);
 
       if (cancelled) return;
 
-      if (error) {
+      if (result.error) {
         setFriendSearchResults([]);
-        setFriendSearchError(error.message);
+        setFriendSearchError(result.error);
         setFriendSearchLoading(false);
         return;
       }
 
       setFriendSearchResults(
-        ((data ?? []) as SearchCandidate[])
-          .map((candidate) => normalizeSearchCandidate(candidate))
+        result.results
           .filter((c) => !c.already_friends)
           .sort((a, b) => a.username.localeCompare(b.username)),
       );
@@ -137,20 +168,16 @@ export function useManageFriends() {
     await relationshipsQuery.refetch();
 
     if (friendSearchQuery.trim()) {
-      const { data, error } = await supabase.rpc('search_users_for_friendship', {
-        p_query: friendSearchQuery.trim(),
-        p_limit: 20,
-      });
+      const result = await searchFriendCandidates(friendSearchQuery.trim());
 
-      if (error) {
+      if (result.error) {
         setFriendSearchResults([]);
-        setFriendSearchError(error.message);
+        setFriendSearchError(result.error);
         return;
       }
 
       setFriendSearchResults(
-        ((data ?? []) as SearchCandidate[])
-          .map((candidate) => normalizeSearchCandidate(candidate))
+        result.results
           .filter((c) => !c.already_friends)
           .sort((a, b) => a.username.localeCompare(b.username)),
       );

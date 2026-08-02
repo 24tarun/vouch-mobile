@@ -76,6 +76,42 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     fontWeight: typography.bold,
     color: colors.text,
   },
+  profilePictureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  profilePictureContent: {
+    flex: 1,
+    alignItems: 'flex-start',
+    gap: 4,
+  },
+  profilePictureTitle: {
+    color: colors.text,
+    fontSize: typography.base,
+    fontWeight: typography.semibold,
+  },
+  profilePictureButton: {
+    minHeight: 34,
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.accentCyan,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  profilePictureButtonDisabled: {
+    opacity: 0.55,
+  },
+  profilePictureButtonText: {
+    color: colors.accentCyan,
+    fontSize: typography.sm,
+    fontWeight: typography.semibold,
+  },
   readOnlyField: {
     minHeight: 46,
     borderBottomWidth: 1,
@@ -118,6 +154,9 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
   cardDivider: {
     height: 1,
     backgroundColor: colors.border,
+  },
+  appearanceCards: {
+    gap: spacing.sm,
   },
   row: {
     minHeight: 48,
@@ -343,6 +382,9 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     gap: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+  },
+  standaloneToggleRow: {
+    borderBottomWidth: 0,
   },
   toggleTextWrap: {
     flex: 1,

@@ -16,8 +16,8 @@ import { fetchLedger } from '@/lib/hooks/useLedger';
 import { fetchFriendQueue } from '@/lib/hooks/useFriendQueue';
 import { fetchRelationships } from '@/lib/hooks/useRelationships';
 import { fetchBlockedUsers } from '@/lib/hooks/useBlockedUsers';
-import { fetchSettingsStats } from '@/lib/stats/calculate-stats';
 import { countPendingVouchRequests } from '@/lib/friends-badge';
+import { UserAvatar } from '@/components/UserAvatar';
 
 type FeatherName = React.ComponentProps<typeof Feather>['name'];
 
@@ -29,7 +29,6 @@ interface TabConfig {
 
 const TABS: TabConfig[] = [
   { name: 'tasks/index',       icon: 'check-circle', title: 'Tasks'       },
-  { name: 'history/index',     icon: 'clock',        title: 'History'     },
   { name: 'friends/index',     icon: 'users',        title: 'Friends'     },
   { name: 'commitments/index', icon: 'target',       title: 'Commits'     },
   { name: 'ledger/index',      icon: 'credit-card',  title: 'Ledger'      },
@@ -40,10 +39,16 @@ function TabIcon({
   icon,
   focused,
   badgeCount = 0,
+  username,
+  avatarPath,
+  showAvatar = false,
 }: {
   icon: FeatherName;
   focused: boolean;
   badgeCount?: number;
+  username?: string;
+  avatarPath?: string | null;
+  showAvatar?: boolean;
 }) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
@@ -52,7 +57,18 @@ function TabIcon({
 
   return (
     <View style={styles.tabItem}>
-      <Feather name={icon} size={22} color={tint} />
+      {showAvatar ? (
+        <View style={[styles.settingsAvatar, { borderColor: focused ? '#FFFFFF' : '#7DD3FC' }]}>
+          <UserAvatar
+            username={username ?? 'User'}
+            avatarPath={avatarPath}
+            size={20}
+            accessible={false}
+          />
+        </View>
+      ) : (
+        <Feather name={icon} size={22} color={tint} />
+      )}
       {badgeText ? (
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{badgeText}</Text>
@@ -74,7 +90,7 @@ function AppLayoutContent() {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const taskCreatorHandle = useTaskCreatorHandle();
   const queryClient = useQueryClient();
   const userId = user?.id ?? null;
@@ -84,9 +100,22 @@ function AppLayoutContent() {
     queryFn: ({ signal }) => fetchFriendQueue(userId!, signal),
     enabled: Boolean(userId),
   });
+  const rectificationBadgeQuery = useQuery({
+    queryKey: ['rectification-badge', userId],
+    queryFn: async () => {
+      const { count, error } = await supabase.from('rectification_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('target_voucher_id', userId!)
+        .eq('target_type', 'ORIGINAL_VOUCHER')
+        .eq('state', 'PENDING_HUMAN');
+      if (error) throw error;
+      return count ?? 0;
+    },
+    enabled: Boolean(userId),
+  });
   const friendsBadgeCount = useMemo(
-    () => countPendingVouchRequests(friendQueueQuery.data ?? []),
-    [friendQueueQuery.data],
+    () => countPendingVouchRequests(friendQueueQuery.data ?? []) + (rectificationBadgeQuery.data ?? 0),
+    [friendQueueQuery.data, rectificationBadgeQuery.data],
   );
 
   // Prefetch all tab data on app load so navigation is instant
@@ -112,14 +141,6 @@ function AppLayoutContent() {
     queryClient.prefetchQuery({
       queryKey: queryKeys.blockedUsers(userId),
       queryFn: () => fetchBlockedUsers(userId),
-    });
-    queryClient.prefetchQuery({
-      queryKey: queryKeys.settingsStats(userId),
-      queryFn: async () => {
-        const result = await fetchSettingsStats(userId);
-        if (result.error) throw new Error(result.error);
-        return result.data;
-      },
     });
   }, [queryClient, userId]);
 
@@ -181,6 +202,7 @@ function AppLayoutContent() {
       label: `friends-vouch-request-badge:${userId}`,
       callback: () => {
         void queryClient.invalidateQueries({ queryKey: queueKey });
+        void queryClient.invalidateQueries({ queryKey: ['rectification-badge', userId] });
       },
     });
 
@@ -197,6 +219,11 @@ function AppLayoutContent() {
         () => {
           rateLimiter.trigger();
         },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'rectification_requests', filter: `target_voucher_id=eq.${userId}` },
+        () => { rateLimiter.trigger(); },
       )
       .subscribe();
 
@@ -229,6 +256,9 @@ function AppLayoutContent() {
               <TabIcon
                 icon={icon}
                 focused={focused}
+                showAvatar={name === 'settings'}
+                username={profile?.username}
+                avatarPath={profile?.avatar_path}
                 badgeCount={
                   name === 'settings'
                     ? settingsBadgeCount
@@ -284,6 +314,14 @@ const makeStyles = (colors: Colors, isDark: boolean) => StyleSheet.create({
     position: 'relative',
     minWidth: 28,
     minHeight: 24,
+  },
+  settingsAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   badge: {
     position: 'absolute',

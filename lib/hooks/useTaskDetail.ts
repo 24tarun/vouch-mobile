@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import type { AiVouch, RecurrenceRule, Task, TaskEvent, TaskReminder } from '@/lib/types';
+import type { AiVouch, RecurrenceRule, RectificationRequest, Task, TaskEvent, TaskReminder } from '@/lib/types';
 import { SIGNED_URL_EXPIRY_SECONDS } from '@/lib/constants/timings';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
@@ -24,9 +24,11 @@ export interface TaskDetailData {
   aiVouches: AiVouch[];
   totalFocusedSeconds: number;
   proof: TaskProofData | null;
+  rectificationRequest: RectificationRequest | null;
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const TASK_DETAIL_STALE_TIME_MS = 60_000;
 
 interface CachedProofUrl {
   revision: string;
@@ -79,15 +81,18 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
     throw new Error(taskError?.message ?? 'Task not found');
   }
 
-  const [remindersRes, eventsRes, sessionsRes] = await Promise.all([
+  const [remindersRes, eventsRes, sessionsRes, rectificationRes] = await Promise.all([
     supabase.from('task_reminders').select('*').eq('parent_task_id', taskId).order('reminder_at', { ascending: true }).abortSignal(signal),
     supabase.from('task_events').select('*').eq('task_id', taskId).order('created_at', { ascending: true }).abortSignal(signal),
     supabase.from('pomo_sessions').select('elapsed_seconds').eq('task_id', taskId).neq('status', 'DELETED').abortSignal(signal),
+    supabase.from('rectification_requests').select('*').eq('task_id', taskId)
+      .order('created_at', { ascending: false }).limit(1).abortSignal(signal).maybeSingle(),
   ]);
 
   if (remindersRes.error) throw new Error(remindersRes.error.message);
   if (eventsRes.error) throw new Error(eventsRes.error.message);
   if (sessionsRes.error) throw new Error(sessionsRes.error.message);
+  if (rectificationRes.error) throw new Error(rectificationRes.error.message);
 
   const totalFocusedSeconds = ((sessionsRes.data ?? []) as { elapsed_seconds: number | null }[])
     .reduce((sum, session) => sum + Number(session.elapsed_seconds ?? 0), 0);
@@ -160,7 +165,16 @@ async function fetchTaskDetail(taskId: string, signal: AbortSignal): Promise<Tas
     aiVouches: (((taskData as any)?.ai_vouches ?? []) as AiVouch[]).sort((a, b) => a.attempt_number - b.attempt_number),
     totalFocusedSeconds,
     proof,
+    rectificationRequest: (rectificationRes.data as RectificationRequest | null) ?? null,
   };
+}
+
+export function taskDetailQueryOptions(taskId: string) {
+  return {
+    queryKey: queryKeys.taskDetail(taskId),
+    queryFn: ({ signal }: { signal: AbortSignal }) => fetchTaskDetail(taskId, signal),
+    staleTime: TASK_DETAIL_STALE_TIME_MS,
+  } as const;
 }
 
 export function useTaskDetail(taskId: string | null | undefined) {
@@ -169,15 +183,21 @@ export function useTaskDetail(taskId: string | null | undefined) {
   const queryTaskId = isValidUuid ? normalizedTaskId : null;
 
   const query = useQuery({
-    queryKey: queryKeys.taskDetail(queryTaskId),
-    queryFn: ({ signal }) => fetchTaskDetail(queryTaskId!, signal),
+    ...(queryTaskId
+      ? taskDetailQueryOptions(queryTaskId)
+      : {
+          queryKey: queryKeys.taskDetail(null),
+          queryFn: async () => {
+            throw new Error('A valid task ID is required');
+          },
+          staleTime: TASK_DETAIL_STALE_TIME_MS,
+        }),
     enabled: Boolean(queryTaskId),
-    staleTime: 0,
-    refetchOnMount: 'always',
+    refetchOnMount: true,
     refetchOnWindowFocus: true,
     refetchInterval: (queryState) => {
       const status = (queryState.state.data as TaskDetailData | undefined)?.task?.status;
-      if (status === 'AWAITING_VOUCHER' || status === 'AWAITING_AI') {
+      if (status === 'AWAITING_VOUCHER' || status === 'AWAITING_AI' || status === 'AWAITING_RECTIFICATION') {
         return 5_000;
       }
       return false;
@@ -192,6 +212,7 @@ export function useTaskDetail(taskId: string | null | undefined) {
           { table: 'task_reminders', filter: `parent_task_id=eq.${queryTaskId}` },
           { table: 'task_events', filter: `task_id=eq.${queryTaskId}` },
           { table: 'task_completion_proofs', filter: `task_id=eq.${queryTaskId}` },
+          { table: 'rectification_requests', filter: `task_id=eq.${queryTaskId}` },
           { table: 'pomo_sessions', filter: `task_id=eq.${queryTaskId}` },
           ...(recurrenceRuleId
             ? [{ table: 'recurrence_rules', filter: `id=eq.${recurrenceRuleId}` }]

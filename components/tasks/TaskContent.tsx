@@ -1,34 +1,28 @@
-import type { ReactNode, RefObject } from 'react';
-import { useMemo } from 'react';
+import type { ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { Platform, RefreshControl, ScrollView, Text } from 'react-native';
-import type { ImagePickerAsset } from 'expo-image-picker';
+import { ActivityIndicator, Platform, RefreshControl, ScrollView } from 'react-native';
 import { useTheme } from '@/lib/ThemeContext';
 import { makeStyles } from './styles';
-import { TaskRow, type TaskRowData } from '@/components/TaskRow';
-import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { TaskRow, type TaskCompletionIntentResult, type TaskRowData } from '@/components/TaskRow';
 import { TasksEmptyState } from './TasksEmptyState';
+import { isOptimisticTaskId } from '@/lib/tasks/task-id';
 
 interface TaskContentProps {
   header?: ReactNode;
   dueSoonTasks: TaskRowData[];
   futureTasks: TaskRowData[];
+  pastTasks: TaskRowData[];
+  hasMorePast: boolean;
+  loadingMorePast: boolean;
+  onLoadMorePast: () => void;
   refreshing: boolean;
   onRefresh: () => Promise<void>;
-  onComplete: (taskId: string) => Promise<void>;
-  onProofPicked: (taskId: string, asset: ImagePickerAsset) => Promise<void>;
-  onProofRemoved: (taskId: string) => Promise<void>;
-  onPostpone: (task: TaskRowData) => void;
-  onDelete: (task: TaskRowData) => Promise<void>;
-  onSurrender: (task: TaskRowData) => Promise<void>;
-  defaultPomoDurationMinutes: number;
-  scrollRef?: RefObject<ScrollView | null>;
-  onScrollOffsetChange?: (offsetY: number) => void;
-  keyboardBottomInset?: number;
+  onCompletionIntent: (task: TaskRowData) => TaskCompletionIntentResult;
+  onPostponeIntent: (task: TaskRowData) => void;
+  onPrefetchTask: (taskId: string) => void;
   bottomInsetOffset?: number;
-  onSubtaskComposerFocus?: (inputBottomY: number) => void;
-  proofActionTaskIds?: readonly string[];
-  hasPastTasks?: boolean;
+  completionTaskIds?: readonly string[];
   initialLoading?: boolean;
   alwaysShowActiveTasks?: boolean;
 }
@@ -37,35 +31,55 @@ export function TaskContent({
   header,
   dueSoonTasks,
   futureTasks,
+  pastTasks,
+  hasMorePast,
+  loadingMorePast,
+  onLoadMorePast,
   refreshing,
   onRefresh,
-  onComplete,
-  onProofPicked,
-  onProofRemoved,
-  onPostpone,
-  onDelete,
-  onSurrender,
-  defaultPomoDurationMinutes,
-  scrollRef,
-  onScrollOffsetChange,
-  keyboardBottomInset = 0,
+  onCompletionIntent,
+  onPostponeIntent,
+  onPrefetchTask,
   bottomInsetOffset = 0,
-  onSubtaskComposerFocus,
-  proofActionTaskIds = [],
-  hasPastTasks = false,
+  completionTaskIds = [],
   initialLoading = false,
   alwaysShowActiveTasks = false,
 }: TaskContentProps) {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
-  const baseInset = bottomInsetOffset + 24;
-  const computedBottomInset = keyboardBottomInset > 0
-    ? Math.max(keyboardBottomInset + 24, baseInset)
-    : baseInset;
+  const computedBottomInset = bottomInsetOffset + 24;
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
+  const lastAutoLoadLengthRef = useRef<number | null>(null);
+  const hasAnyTasks = dueSoonTasks.length > 0 || futureTasks.length > 0 || pastTasks.length > 0;
+
+  useEffect(() => {
+    const visibleActiveTasks = [...dueSoonTasks, ...futureTasks];
+    visibleActiveTasks
+      .filter((task) => !isOptimisticTaskId(task.id))
+      .slice(0, 5)
+      .forEach((task) => onPrefetchTask(task.id));
+  }, [dueSoonTasks, futureTasks, onPrefetchTask]);
+
+  const requestNextPastPage = useCallback(() => {
+    if (!hasMorePast || loadingMorePast) return;
+    if (lastAutoLoadLengthRef.current === pastTasks.length) return;
+    lastAutoLoadLengthRef.current = pastTasks.length;
+    onLoadMorePast();
+  }, [hasMorePast, loadingMorePast, onLoadMorePast, pastTasks.length]);
+
+  useEffect(() => {
+    if (!hasMorePast) {
+      lastAutoLoadLengthRef.current = null;
+      return;
+    }
+    if (viewportHeight > 0 && contentHeight > 0 && contentHeight <= viewportHeight + 320) {
+      requestNextPastPage();
+    }
+  }, [contentHeight, hasMorePast, requestNextPastPage, viewportHeight]);
 
   return (
     <ScrollView
-      ref={scrollRef}
       style={styles.body}
       contentContainerStyle={[
         styles.taskList,
@@ -74,7 +88,13 @@ export function TaskContent({
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
       automaticallyAdjustKeyboardInsets
-      onScroll={(event) => onScrollOffsetChange?.(event.nativeEvent.contentOffset.y)}
+      onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
+      onContentSizeChange={(_width, height) => setContentHeight(height)}
+      onScroll={(event) => {
+        const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+        const remainingDistance = contentSize.height - layoutMeasurement.height - contentOffset.y;
+        if (remainingDistance <= 320) requestNextPastPage();
+      }}
       scrollEventThrottle={16}
       refreshControl={
         <RefreshControl
@@ -86,62 +106,37 @@ export function TaskContent({
       }
     >
       {header}
-      {dueSoonTasks.length === 0 && futureTasks.length === 0 ? (
-        initialLoading ? null : (
-          hasPastTasks ? (
-            <Text style={styles.placeholder}>No active tasks.</Text>
-          ) : (
-            <TasksEmptyState />
-          )
-        )
+      {!hasAnyTasks ? (
+        initialLoading ? null : <TasksEmptyState />
       ) : (
         <>
           {dueSoonTasks.map((task) => (
             <TaskRow
               key={task.id}
               task={task}
-              onComplete={onComplete}
-              onProofPicked={onProofPicked}
-              onProofRemoved={onProofRemoved}
-              onPostpone={onPostpone}
-              onDelete={onDelete}
-              onSurrender={onSurrender}
-              defaultPomoDurationMinutes={defaultPomoDurationMinutes}
-              onSubtaskComposerFocus={onSubtaskComposerFocus}
-              proofActionInProgress={proofActionTaskIds.includes(task.id)}
+              onCompletionIntent={onCompletionIntent}
+              onPostponeIntent={onPostponeIntent}
+              onPrefetch={onPrefetchTask}
+              completionInProgress={completionTaskIds.includes(task.id)}
             />
           ))}
-          {alwaysShowActiveTasks ? (
-            futureTasks.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                onComplete={onComplete}
-                onProofPicked={onProofPicked}
-                onProofRemoved={onProofRemoved}
-                onPostpone={onPostpone}
-                onDelete={onDelete}
-                onSurrender={onSurrender}
-                defaultPomoDurationMinutes={defaultPomoDurationMinutes}
-                onSubtaskComposerFocus={onSubtaskComposerFocus}
-                proofActionInProgress={proofActionTaskIds.includes(task.id)}
-              />
-            ))
-          ) : (
-            <CollapsibleSection
-              title="Future"
-              tasks={futureTasks}
-              onComplete={onComplete}
-              onProofPicked={onProofPicked}
-              onProofRemoved={onProofRemoved}
-              onPostpone={onPostpone}
-              onDelete={onDelete}
-              onSurrender={onSurrender}
-              defaultPomoDurationMinutes={defaultPomoDurationMinutes}
-              onSubtaskComposerFocus={onSubtaskComposerFocus}
-              proofActionTaskIds={proofActionTaskIds}
+          {futureTasks.map((task) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              variant={alwaysShowActiveTasks ? 'default' : 'future-muted'}
+              onCompletionIntent={alwaysShowActiveTasks ? onCompletionIntent : undefined}
+              onPostponeIntent={alwaysShowActiveTasks ? onPostponeIntent : undefined}
+              onPrefetch={onPrefetchTask}
+              completionInProgress={alwaysShowActiveTasks && completionTaskIds.includes(task.id)}
             />
-          )}
+          ))}
+          {pastTasks.map((task) => (
+            <TaskRow key={task.id} task={task} onPrefetch={onPrefetchTask} />
+          ))}
+          {loadingMorePast ? (
+            <ActivityIndicator color={colors.textMuted} style={{ marginVertical: 12 }} />
+          ) : null}
         </>
       )}
     </ScrollView>

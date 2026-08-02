@@ -7,15 +7,20 @@ import { useAuth } from '@/hooks/useAuth';
 import { queryKeys } from '@/lib/query/keys';
 import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
 import { getFutureBoundaryMs } from '@/lib/utils/date-only';
+import {
+  sortDashboardTasks,
+  sortPastTasksLatest,
+  type DashboardSortMode,
+} from '@/lib/tasks/task-dashboard-sort';
+import {
+  DEFAULT_PAST_TASK_PAGE_SIZE,
+  getPastTaskRefreshLimit,
+} from '@/lib/tasks/task-history-pagination';
 
-const PAST_LIMIT = 5;
+export type { DashboardSortMode } from '@/lib/tasks/task-dashboard-sort';
+
+const PAST_LIMIT = DEFAULT_PAST_TASK_PAGE_SIZE;
 const DEFAULT_SORT_MODE = 'deadline_asc' as const;
-
-export type DashboardSortMode =
-  | 'deadline_asc'
-  | 'deadline_desc'
-  | 'created_asc'
-  | 'created_desc';
 
 type RawTask = {
   id: string;
@@ -39,42 +44,6 @@ type TaskRealtimePayload = {
   old?: Partial<RawTask> | null;
 };
 
-function safeTimestamp(value: string): number {
-  const ts = new Date(value).getTime();
-  return Number.isNaN(ts) ? 0 : ts;
-}
-
-function sortActiveTasks(tasks: TaskRowData[], sortMode: DashboardSortMode): TaskRowData[] {
-  return [...tasks].sort((a, b) => {
-    const deadlineA = safeTimestamp(a.deadline);
-    const deadlineB = safeTimestamp(b.deadline);
-    const createdA = safeTimestamp(a.created_at ?? '');
-    const createdB = safeTimestamp(b.created_at ?? '');
-
-    if (sortMode === 'deadline_asc') {
-      if (deadlineA !== deadlineB) return deadlineA - deadlineB;
-      if (createdA !== createdB) return createdB - createdA;
-      return 0;
-    }
-
-    if (sortMode === 'deadline_desc') {
-      if (deadlineA !== deadlineB) return deadlineB - deadlineA;
-      if (createdA !== createdB) return createdB - createdA;
-      return 0;
-    }
-
-    if (sortMode === 'created_asc') {
-      if (createdA !== createdB) return createdA - createdB;
-      if (deadlineA !== deadlineB) return deadlineA - deadlineB;
-      return 0;
-    }
-
-    if (createdA !== createdB) return createdB - createdA;
-    if (deadlineA !== deadlineB) return deadlineA - deadlineB;
-    return 0;
-  });
-}
-
 function toPastRowData(row: RawTask): TaskRowData {
   return {
     id: row.id,
@@ -86,6 +55,8 @@ function toPastRowData(row: RawTask): TaskRowData {
     postponed_at: row.postponed_at ?? null,
     recurrence_rule_id: row.recurrence_rule_id ?? null,
     recurrence_paused_at: row.recurrence_rule?.paused_at ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
   };
 }
 
@@ -111,7 +82,19 @@ interface TaskBucketsData {
 const TASK_ACTIVE_STATUS_SET = new Set<string>(TASK_ACTIVE_STATUSES);
 const TASK_PAST_STATUS_SET = new Set<string>(TASK_PAST_STATUSES);
 
-async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Promise<TaskBucketsData> {
+async function fetchTaskBuckets(
+  userId: string,
+  sortMode: DashboardSortMode,
+  pastLimit = PAST_LIMIT,
+): Promise<TaskBucketsData> {
+  const pastQuery = supabase
+    .from('tasks')
+    .select('id, title, deadline, status, has_proof, requires_proof, created_at, updated_at, postponed_at, recurrence_rule_id, recurrence_rule:recurrence_rules(paused_at)')
+    .eq('user_id', userId)
+    .in('status', TASK_PAST_STATUSES)
+    .order('updated_at', { ascending: false })
+    .order('id', { ascending: true });
+
   const [activeRes, pastRes] = await Promise.all([
     supabase
       .from('tasks')
@@ -119,13 +102,7 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
       .eq('user_id', userId)
       .in('status', TASK_ACTIVE_STATUSES)
       .order('deadline', { ascending: true }),
-    supabase
-      .from('tasks')
-      .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id, recurrence_rule:recurrence_rules(paused_at)')
-      .eq('user_id', userId)
-      .in('status', TASK_PAST_STATUSES)
-      .order('updated_at', { ascending: false })
-      .limit(PAST_LIMIT + 1),
+    pastQuery.limit(pastLimit + 1),
   ]);
 
   if (activeRes.error) throw new Error(activeRes.error.message);
@@ -186,12 +163,12 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
   }
 
   const pastData = (pastRes.data ?? []) as RawTask[];
-  const hasMorePast = pastData.length > PAST_LIMIT;
+  const hasMorePast = pastData.length > pastLimit;
 
   return {
-    dueSoonTasks: sortActiveTasks(dueSoon, sortMode),
-    futureTasks: sortActiveTasks(future, sortMode),
-    pastTasks: pastData.slice(0, PAST_LIMIT).map(toPastRowData),
+    dueSoonTasks: sortDashboardTasks(dueSoon, sortMode),
+    futureTasks: sortDashboardTasks(future, sortMode),
+    pastTasks: sortPastTasksLatest(pastData.slice(0, pastLimit).map(toPastRowData)),
     hasMorePast,
   };
 }
@@ -199,10 +176,15 @@ async function fetchTaskBuckets(userId: string, sortMode: DashboardSortMode): Pr
 function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuckets {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const taskListKey = queryKeys.taskLists(user?.id, sortMode);
 
   const query = useQuery({
-    queryKey: queryKeys.taskLists(user?.id, sortMode),
-    queryFn: () => fetchTaskBuckets(user!.id, sortMode),
+    queryKey: taskListKey,
+    queryFn: () => {
+      const cached = queryClient.getQueryData<TaskBucketsData>(taskListKey);
+      const pastLimit = getPastTaskRefreshLimit(cached?.pastTasks.length);
+      return fetchTaskBuckets(user!.id, sortMode, pastLimit);
+    },
     enabled: Boolean(user?.id),
   });
   // Stable ref to pastTasks.length so loadMorePastTasks doesn't need it as a dep
@@ -219,19 +201,23 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(loadingMore);
   loadingMoreRef.current = loadingMore;
+  const hasMorePastRef = useRef(query.data?.hasMorePast ?? false);
+  hasMorePastRef.current = query.data?.hasMorePast ?? false;
 
   const loadMorePastTasks = useCallback(async () => {
-    if (!user?.id || loadingMoreRef.current) return;
+    if (!user?.id || loadingMoreRef.current || !hasMorePastRef.current) return;
     const offset = pastTasksLenRef.current;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      const { data, error } = await supabase
+      const query = supabase
         .from('tasks')
-        .select('id, title, deadline, status, has_proof, requires_proof, created_at, postponed_at, recurrence_rule_id, recurrence_rule:recurrence_rules(paused_at)')
+        .select('id, title, deadline, status, has_proof, requires_proof, created_at, updated_at, postponed_at, recurrence_rule_id, recurrence_rule:recurrence_rules(paused_at)')
         .eq('user_id', user.id)
         .in('status', TASK_PAST_STATUSES)
         .order('updated_at', { ascending: false })
-        .range(offset, offset + PAST_LIMIT);
+        .order('id', { ascending: true });
+      const { data, error } = await query.range(offset, offset + PAST_LIMIT);
 
       if (error || !data) return;
       queryClient.setQueryData<TaskBucketsData>(
@@ -249,12 +235,13 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
 
           return {
             ...current,
-            pastTasks: nextPastTasks,
+            pastTasks: sortPastTasksLatest(nextPastTasks),
             hasMorePast,
           };
         },
       );
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   }, [queryClient, sortMode, user?.id]);
@@ -315,6 +302,7 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
         const recurrenceRuleId = row.recurrence_rule_id ?? existing?.recurrence_rule_id ?? null;
         const recurrencePausedAt = existing?.recurrence_paused_at ?? null;
         const createdAt = row.created_at ?? existing?.created_at;
+        const updatedAt = row.updated_at ?? existing?.updated_at;
 
         if (!deadline || !title) {
           return current;
@@ -332,6 +320,7 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
             recurrence_rule_id: recurrenceRuleId,
             recurrence_paused_at: recurrencePausedAt,
             created_at: createdAt,
+            updated_at: updatedAt,
             subtaskTotal: existing?.subtaskTotal,
             subtaskCompleted: existing?.subtaskCompleted,
           };
@@ -342,11 +331,11 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
 
           return {
             ...current,
-            dueSoonTasks: sortActiveTasks(
+            dueSoonTasks: sortDashboardTasks(
               isDueSoon ? [...dueSoonWithout, activeTask] : dueSoonWithout,
               sortMode,
             ),
-            futureTasks: sortActiveTasks(
+            futureTasks: sortDashboardTasks(
               isDueSoon ? futureWithout : [...futureWithout, activeTask],
               sortMode,
             ),
@@ -365,13 +354,15 @@ function useTaskLists(sortMode: DashboardSortMode = DEFAULT_SORT_MODE): TaskBuck
             postponed_at: postponedAt,
             recurrence_rule_id: recurrenceRuleId,
             recurrence_paused_at: recurrencePausedAt,
+            created_at: createdAt,
+            updated_at: updatedAt,
           };
 
           return {
             ...current,
             dueSoonTasks: dueSoonWithout,
             futureTasks: futureWithout,
-            pastTasks: [pastTask, ...pastWithout],
+            pastTasks: sortPastTasksLatest([pastTask, ...pastWithout]),
           };
         }
 

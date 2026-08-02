@@ -4,7 +4,6 @@ export const queryKeys = {
   currentProfile: (userId: string | null | undefined): QueryKey => ['current-profile', userId ?? null],
   relationships: (userId: string | null | undefined): QueryKey => ['relationships', userId ?? null],
   blockedUsers: (userId: string | null | undefined): QueryKey => ['blocked-users', userId ?? null],
-  settingsStats: (userId: string | null | undefined): QueryKey => ['settings-stats', userId ?? null],
   taskLists: (userId: string | null | undefined, sortMode: string): QueryKey => ['task-lists', userId ?? null, sortMode],
   taskDetail: (taskId: string | null | undefined): QueryKey => ['task-detail', taskId ?? null],
   friendQueue: (userId: string | null | undefined): QueryKey => ['friend-queue', userId ?? null],

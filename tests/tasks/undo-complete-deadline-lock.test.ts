@@ -105,6 +105,21 @@ describe('undoCompleteTask deadline lock', () => {
     expect(mockTaskEventsTable.insert).toHaveBeenCalledTimes(1);
   });
 
+  it('allows an accepted task to return to active before its deadline locks', async () => {
+    jest.setSystemTime(new Date('2026-07-19T11:30:00.000Z'));
+    taskSnapshot = { ...taskSnapshot, status: 'ACCEPTED' };
+
+    const result = await undoCompleteTask('task-1', 'ACCEPTED');
+
+    expect(result.success).toBe(true);
+    expect(mockTaskUpdateBuilder.eq).toHaveBeenCalledWith('status', 'ACCEPTED');
+    expect(mockTaskEventsTable.insert).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: 'UNDO_COMPLETE',
+      from_status: 'ACCEPTED',
+      to_status: 'ACTIVE',
+    }));
+  });
+
   it('rejects undo after the inclusive minute without updating or logging an event', async () => {
     jest.setSystemTime(new Date('2026-07-19T12:01:00.000Z'));
 

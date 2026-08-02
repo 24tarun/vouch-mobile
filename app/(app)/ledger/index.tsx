@@ -17,8 +17,7 @@ import { useTheme } from '@/lib/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { PageHeader } from '@/components/PageHeader';
 import { useLedger } from '@/lib/hooks/useLedger';
-import { WEBSITE_URL } from '@/lib/auth-urls';
-import { supabase } from '@/lib/supabase';
+import { requestCurrentMonthLedgerReport } from '@/lib/ledger-report';
 
 type CurrencyCode = 'USD' | 'EUR' | 'INR';
 type LedgerEntryKind = 'failure' | 'rectified' | 'override' | 'voucher_timeout_penalty' | 'other';
@@ -259,37 +258,16 @@ export default function LedgerScreen() {
 
   const projectedDonationDisplayCents = Math.max(0, month.projectedDonationCents);
 
-  async function handleRequestLedgerTillDate() {
+  async function handleRequestCurrentMonthLedger() {
     if (requestingLedgerSummary) return;
     setRequestingLedgerSummary(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const accessToken = session?.access_token?.trim();
-      if (!accessToken) {
-        Alert.alert('Not authenticated', 'Please sign in again and retry.');
+      const result = await requestCurrentMonthLedgerReport();
+      if (!result.success) {
+        Alert.alert('Could not compile ledger', result.error);
         return;
       }
-
-      const response = await fetch(`${WEBSITE_URL}/api/ledger/till-date`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-
-      const payload = await response.json() as {
-        success?: boolean;
-        error?: string;
-        message?: string;
-      };
-
-      if (!response.ok || !payload.success) {
-        Alert.alert('Could not compile ledger', payload.error ?? 'Request failed.');
-        return;
-      }
-
-      Alert.alert('Email sent', payload.message ?? 'Ledger till date report was sent to your registered email.');
+      Alert.alert('Email sent', result.message);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Request failed.';
       Alert.alert('Could not compile ledger', message);
@@ -352,16 +330,16 @@ export default function LedgerScreen() {
               <Text style={styles.sectionTitle}>{month.label}</Text>
               <TouchableOpacity
                 style={styles.ledgerRequestButton}
-                onPress={() => { void handleRequestLedgerTillDate(); }}
+                onPress={() => { void handleRequestCurrentMonthLedger(); }}
                 disabled={requestingLedgerSummary}
                 activeOpacity={0.82}
                 accessibilityRole="button"
-                accessibilityLabel="Request Ledger Till Date"
+                accessibilityLabel="Request Current Month Ledger"
               >
                 {requestingLedgerSummary ? (
                   <ActivityIndicator size="small" color={colors.text} />
                 ) : (
-                  <Text style={styles.ledgerRequestButtonLabel}>Request Ledger Till Date</Text>
+                  <Text style={styles.ledgerRequestButtonLabel}>Request Current Month Ledger</Text>
                 )}
               </TouchableOpacity>
             </View>

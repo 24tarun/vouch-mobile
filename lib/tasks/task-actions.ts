@@ -221,7 +221,7 @@ export async function undoCompleteTask(taskId: string, fromStatus: string): Prom
     return { success: false, userId, error: 'The task deadline has passed. Proof and completion can no longer be changed.' };
   }
 
-  if (!['MARKED_COMPLETE', 'AWAITING_VOUCHER', 'AWAITING_AI'].includes(taskSnapshot.status)) {
+  if (!['MARKED_COMPLETE', 'AWAITING_VOUCHER', 'AWAITING_AI', 'ACCEPTED'].includes(taskSnapshot.status)) {
     return { success: false, userId, error: `Cannot undo completion from ${taskSnapshot.status} status.` };
   }
 

@@ -5,6 +5,7 @@ import { useTheme } from '@/lib/ThemeContext';
 // Labels — match vouch-web's formatTaskStatusLabel exactly
 const STATUS_LABEL: Record<string, string> = {
   ACTIVE: 'Active',
+  PAUSED: 'Paused',
   POSTPONED: 'Postponed',
   MARKED_COMPLETE: 'Marked Complete',
   AWAITING_VOUCHER: 'Awaiting Voucher',
@@ -12,6 +13,7 @@ const STATUS_LABEL: Record<string, string> = {
   AI_DENIED: 'AI Denied',
   AWAITING_USER: 'Awaiting User',
   ESCALATED: 'Escalated',
+  AWAITING_RECTIFICATION: 'Awaiting Rectification',
   ACCEPTED: 'Accepted',
   AUTO_ACCEPTED: 'Auto Accepted',
   AI_ACCEPTED: 'AI Accepted',
@@ -36,6 +38,11 @@ const STATUS_STYLE: Record<string, StatusStyle> = {
     text: '#93C5FD',        // blue-300
     bg: '#3B82F633',        // blue-500/20
     border: '#3B82F64D',    // blue-500/30
+  },
+  PAUSED: {
+    text: '#93C5FD',        // same blue treatment as ACTIVE
+    bg: '#3B82F633',
+    border: '#3B82F64D',
   },
   POSTPONED: {
     text: '#66A3FF',
@@ -71,6 +78,11 @@ const STATUS_STYLE: Record<string, StatusStyle> = {
     text: '#93C5FD',        // blue-300
     bg: '#3B82F633',        // blue-500/20
     border: '#3B82F64D',    // blue-500/30
+  },
+  AWAITING_RECTIFICATION: {
+    text: '#C4B5FD',
+    bg: '#8B5CF633',
+    border: '#8B5CF666',
   },
   ACCEPTED: {
     text: '#6EE7B7',        // emerald-300
@@ -163,6 +175,7 @@ interface StatusPillProps {
   status?: string;
   label?: string;
   tone?: string;
+  paused?: boolean;
   preserveStatus?: boolean;
   size?: 'small' | 'large';
 }
@@ -175,14 +188,19 @@ export function StatusPill({
   status,
   label,
   tone,
+  paused = false,
   preserveStatus = false,
   size = 'small',
 }: StatusPillProps) {
   // MARKED_COMPLETE is a transient internal state; surface it as AWAITING_VOUCHER everywhere
   const baseStatus = status ?? tone ?? 'NEUTRAL';
-  const resolvedStatus = preserveStatus
+  const normalizedStatus = preserveStatus
     ? baseStatus
     : (baseStatus === 'MARKED_COMPLETE' ? 'AWAITING_VOUCHER' : baseStatus);
+  // A paused recurrence is a presentation state: keep the stored iteration status intact.
+  const resolvedStatus = paused && (baseStatus === 'ACTIVE' || baseStatus === 'POSTPONED')
+    ? 'PAUSED'
+    : normalizedStatus;
   const styleKey = tone ?? resolvedStatus;
   const style = STATUS_STYLE[styleKey];
   const resolvedLabel = label ?? STATUS_LABEL[resolvedStatus] ?? formatFallbackLabel(resolvedStatus);

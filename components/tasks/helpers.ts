@@ -1,24 +1,4 @@
-import type { DraftReminder, TodayParts } from './types';
-
-function getOrdinalSuffix(day: number): string {
-  if (day >= 11 && day <= 13) return 'th';
-  switch (day % 10) {
-    case 1: return 'st';
-    case 2: return 'nd';
-    case 3: return 'rd';
-    default: return 'th';
-  }
-}
-
-export function getTodayParts(): TodayParts {
-  const now = new Date();
-  return {
-    dayName: now.toLocaleDateString('en-GB', { weekday: 'long' }),
-    day: now.getDate(),
-    ordinal: getOrdinalSuffix(now.getDate()),
-    monthName: now.toLocaleDateString('en-GB', { month: 'long' }),
-  };
-}
+import type { DraftReminder } from './types';
 
 export function sortDraftReminders(reminders: DraftReminder[]): DraftReminder[] {
   return [...reminders].sort((a, b) => a.reminderAt.getTime() - b.reminderAt.getTime());

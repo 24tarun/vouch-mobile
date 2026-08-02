@@ -294,6 +294,14 @@ function buildTimelineEntries(event: TaskEvent, aiVouches: AiVouch[], usedAiVouc
       return [makeTimelineEntry(event, 'action', { label: 'Proof Removed', tone: 'PROOF' })];
     case 'PROOF_REQUESTED':
       return [makeTimelineEntry(event, 'action', { label: 'Proof Requested', tone: 'WARNING' })];
+    case 'RECTIFICATION_CANCELLED':
+      return [
+        makeTimelineEntry(event, 'action', {
+          label: 'Cancelled Rectification',
+          tone: 'AWAITING_RECTIFICATION',
+        }),
+        ...statusTransition,
+      ];
     case 'POMO_COMPLETED': {
       const elapsedSeconds = Number(event.metadata?.elapsed_seconds ?? 0);
       const durationLabel = elapsedSeconds > 0 ? ` (${formatPomoEventDuration(elapsedSeconds)})` : '';

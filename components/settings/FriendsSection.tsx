@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { UserAvatar } from '@/components/UserAvatar';
 import { useTheme } from '@/lib/ThemeContext';
 import {
   type IncomingFriendRequest,
@@ -100,9 +101,7 @@ export function FriendsSection({
                   return (
                     <View key={candidate.id} style={styles.friendRow}>
                       <View style={styles.friendMeta}>
-                        <View style={styles.friendAvatar}>
-                          <Text style={styles.friendAvatarText}>{candidate.username?.[0]?.toUpperCase() || '?'}</Text>
-                        </View>
+                        <UserAvatar username={candidate.username} avatarPath={candidate.avatar_path} size={36} />
                         <View style={styles.friendText}>
                           <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{candidate.username}</Text>
                           <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{candidate.email}</Text>
@@ -176,9 +175,7 @@ export function FriendsSection({
                 return (
                   <View key={request.id} style={styles.friendRow}>
                     <View style={styles.friendMeta}>
-                      <View style={styles.friendAvatar}>
-                        <Text style={styles.friendAvatarText}>{request.sender.initial}</Text>
-                      </View>
+                      <UserAvatar username={request.sender.username} avatarPath={request.sender.avatar_path} size={36} />
                       <View style={styles.friendText}>
                         <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{request.sender.username}</Text>
                         <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{request.sender.email}</Text>
@@ -241,9 +238,7 @@ export function FriendsSection({
                 return (
                   <View key={request.id} style={styles.friendRow}>
                     <View style={styles.friendMeta}>
-                      <View style={styles.friendAvatar}>
-                        <Text style={styles.friendAvatarText}>{request.receiver.initial}</Text>
-                      </View>
+                      <UserAvatar username={request.receiver.username} avatarPath={request.receiver.avatar_path} size={36} />
                       <View style={styles.friendText}>
                         <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{request.receiver.username}</Text>
                         <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{request.receiver.email}</Text>
@@ -293,9 +288,7 @@ export function FriendsSection({
                 return (
                   <View key={friend.id} style={styles.friendRow}>
                     <View style={styles.friendMeta}>
-                      <View style={styles.friendAvatar}>
-                        <Text style={styles.friendAvatarText}>{friend.initial}</Text>
-                      </View>
+                      <UserAvatar username={friend.username} avatarPath={friend.avatar_path} size={36} />
                       <View style={styles.friendText}>
                         <Text style={styles.friendName} numberOfLines={1} ellipsizeMode="clip">{friend.username}</Text>
                         <Text style={styles.friendEmail} numberOfLines={1} ellipsizeMode="clip">{friend.email}</Text>

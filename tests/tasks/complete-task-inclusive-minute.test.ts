@@ -3,6 +3,8 @@ let mockDeadlineIso = '2026-05-05T12:00:00.000Z';
 let capturedDeadlineCutoffIso: string | null = null;
 let capturedTaskUpdate: Record<string, unknown> | null = null;
 let mockVoucherId = 'user-1';
+let mockRequiresProof = false;
+let mockProofTimestampIso = '2026-05-05T12:00:58.000Z';
 
 type MockTaskReadBuilder = {
   eq: jest.Mock;
@@ -16,6 +18,12 @@ type MockTaskUpdateBuilder = {
   select: jest.Mock;
 };
 
+type MockProofReadBuilder = {
+  eq: jest.Mock;
+  not: jest.Mock;
+  limit: jest.Mock;
+};
+
 const mockTaskReadBuilder: MockTaskReadBuilder = {
   eq: jest.fn((): MockTaskReadBuilder => mockTaskReadBuilder),
   single: jest.fn(async () => ({
@@ -23,7 +31,8 @@ const mockTaskReadBuilder: MockTaskReadBuilder = {
       id: 'task-1',
       voucher_id: mockVoucherId,
       status: 'ACTIVE',
-      requires_proof: false,
+      deadline: mockDeadlineIso,
+      requires_proof: mockRequiresProof,
       has_proof: false,
     },
     error: null,
@@ -38,7 +47,7 @@ const mockTaskUpdateBuilder: MockTaskUpdateBuilder = {
     return mockTaskUpdateBuilder;
   }),
   select: jest.fn(async () => ({
-    data: Date.parse(mockDeadlineIso) > Date.parse(capturedDeadlineCutoffIso ?? '')
+    data: capturedDeadlineCutoffIso === null || Date.parse(mockDeadlineIso) > Date.parse(capturedDeadlineCutoffIso)
       ? [{ id: 'task-1' }]
       : [],
     error: null,
@@ -57,6 +66,24 @@ const mockTaskEventsTable = {
   insert: jest.fn(async () => ({ error: null })),
 };
 
+const mockProofReadBuilder: MockProofReadBuilder = {
+  eq: jest.fn((): MockProofReadBuilder => mockProofReadBuilder),
+  not: jest.fn((): MockProofReadBuilder => mockProofReadBuilder),
+  limit: jest.fn(async () => ({
+    data: [{
+      id: 'proof-1',
+      proof_origin: 'CAMERA',
+      proof_timestamp_at: mockProofTimestampIso,
+      proof_timestamp_source: 'CAMERA_CAPTURE',
+    }],
+    error: null,
+  })),
+};
+
+const mockTaskProofsTable = {
+  select: jest.fn(() => mockProofReadBuilder),
+};
+
 jest.mock('@/lib/supabase', () => ({
   supabase: {
     auth: {
@@ -67,6 +94,7 @@ jest.mock('@/lib/supabase', () => ({
     from: jest.fn((table: string) => {
       if (table === 'tasks') return mockTasksTable;
       if (table === 'task_events') return mockTaskEventsTable;
+      if (table === 'task_completion_proofs') return mockTaskProofsTable;
       throw new Error(`Unexpected table: ${table}`);
     }),
   },
@@ -109,6 +137,8 @@ describe('completeTask inclusive deadline minute', () => {
     capturedTaskUpdate = null;
     mockDeadlineIso = '2026-05-05T12:00:00.000Z';
     mockVoucherId = 'user-1';
+    mockRequiresProof = false;
+    mockProofTimestampIso = '2026-05-05T12:00:58.000Z';
     mockQueueAiEvalForTask.mockResolvedValue({ success: true });
     jest.useFakeTimers();
   });
@@ -136,6 +166,17 @@ describe('completeTask inclusive deadline minute', () => {
     expect(result.error).toBe('Task can no longer be marked complete. Please refresh.');
     expect(capturedDeadlineCutoffIso).toBe('2026-05-05T12:00:00.000Z');
     expect(mockCancelLocalReminderNotificationsForTaskAsync).not.toHaveBeenCalled();
+  });
+
+  it('allows upload latency after an attested in-app capture within the deadline minute', async () => {
+    jest.setSystemTime(new Date('2026-05-05T12:01:03.000Z'));
+    mockRequiresProof = true;
+
+    const result = await completeTask('task-1');
+
+    expect(result.success).toBe(true);
+    expect(capturedDeadlineCutoffIso).toBeNull();
+    expect(mockCancelLocalReminderNotificationsForTaskAsync).toHaveBeenCalledWith('task-1');
   });
 
   it('gives a human voucher until the end of the second calendar day', async () => {

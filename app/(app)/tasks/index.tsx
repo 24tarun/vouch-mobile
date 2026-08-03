@@ -447,6 +447,7 @@ export default function TasksScreen() {
     <SafeAreaView ref={rootRef} style={styles.safe} edges={['top']}>
       <ProofCaptureModal
         visible={proofTargetTask != null}
+        deadlineAttestationTaskId={proofTargetTask?.id}
         onClose={() => setProofTargetTask(null)}
         onAssetPicked={async (asset) => {
           if (!proofTargetTask) return;

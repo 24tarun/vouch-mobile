@@ -219,7 +219,14 @@ function AuthGuard() {
     if (typeof url !== 'string' || !url.startsWith('vouch:')) return;
 
     const parsed = Linking.parse(url);
-    const path = typeof parsed.path === 'string' ? parsed.path : '';
+    // Accept both the legacy `vouch:/tasks` shape and the canonical
+    // `vouch://tasks` shape used by the AlarmKit App Intent.
+    const hostname = typeof parsed.hostname === 'string' ? parsed.hostname : '';
+    const pathname = typeof parsed.path === 'string' ? parsed.path : '';
+    const path = [hostname, pathname]
+      .filter(Boolean)
+      .join('/')
+      .replace(/^\/+|\/+$/g, '');
     if (path === 'tasks') {
       const alarmId = typeof parsed.queryParams?.alarmId === 'string'
         ? parsed.queryParams.alarmId

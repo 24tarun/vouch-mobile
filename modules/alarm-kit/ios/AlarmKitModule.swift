@@ -82,6 +82,7 @@ struct ScheduleTenMinuteAlarmInput: Record {
   @Field var fireAtISO: String
   @Field var aggregate: Bool?
   @Field var taskCount: Int?
+  @Field var isDemo: Bool?
 }
 
 struct CancelTenMinuteAlarmInput: Record {
@@ -249,6 +250,7 @@ private final class AlarmKitManager {
     }
 
     let isAggregate = input.aggregate ?? false
+    let isDemo = input.isDemo ?? false
     let taskId = input.taskId ?? ""
     if !isAggregate && taskId.isEmpty {
       throw NSError(
@@ -260,24 +262,31 @@ private final class AlarmKitManager {
 
     let id = UUID()
     let taskCount = max(input.taskCount ?? 0, 0)
+    // AlarmKit supplies the system alarm layout. Keep the copy concise so the
+    // task title remains the visual focus, mirroring the hierarchy of an iOS
+    // reminder: urgency first, then the actionable item.
     let alarmTitle: String
-    if isAggregate {
-      alarmTitle = "\(taskCount) tasks need attention"
+    if isDemo {
+      alarmTitle = "Vouch alarm demo"
+    } else if isAggregate {
+      alarmTitle = "\(taskCount) tasks are due now"
     } else {
-      alarmTitle = "10 min reminder | \(input.taskTitle)"
+      alarmTitle = "Due now · \(input.taskTitle)"
     }
     let presentation = AlarmPresentation(
       alert: AlarmPresentation.Alert(
         title: LocalizedStringResource(String.LocalizationValue(alarmTitle)),
-        stopButton: AlarmButton(text: "Dismiss", textColor: .orange, systemImageName: "xmark.circle"),
-        secondaryButton: AlarmButton(text: "Open App", textColor: .white, systemImageName: "arrow.up.forward"),
+        stopButton: AlarmButton(text: "Dismiss", textColor: .white, systemImageName: "xmark"),
+        secondaryButton: AlarmButton(text: "Open Vouch", textColor: .cyan, systemImageName: "arrow.up.forward"),
         secondaryButtonBehavior: .custom
       )
     )
     let attributes = AlarmAttributes(
       presentation: presentation,
       metadata: VouchAlarmMetadata(reminderId: input.reminderId, taskId: taskId, aggregate: isAggregate),
-      tintColor: .orange
+      // AlarmKit uses the tint for the secondary control surface. Pair Vouch's
+      // cyan action label with a deep navy surface for the intended contrast.
+      tintColor: Color(red: 0, green: 0.18, blue: 0.35)
     )
     let intent = VouchOpenTaskAlarmIntent(
       taskId: taskId,
@@ -370,6 +379,8 @@ public struct VouchOpenTaskAlarmIntent: LiveActivityIntent {
       )
     )
 
+    // `openAppWhenRun` foregrounds Vouch. This URL supplies the exact
+    // destination once React Native is ready, including a single task's ID.
     if let url = Self.openTaskURL(taskId: taskId, reminderId: reminderId, nativeAlarmId: nativeAlarmId, aggregate: aggregate) {
       await UIApplication.shared.open(url)
     }
@@ -380,7 +391,8 @@ public struct VouchOpenTaskAlarmIntent: LiveActivityIntent {
   private static func openTaskURL(taskId: String, reminderId: String, nativeAlarmId: String, aggregate: Bool) -> URL? {
     var components = URLComponents()
     components.scheme = "vouch"
-    components.path = aggregate ? "/tasks" : "/tasks/\(taskId)"
+    components.host = "tasks"
+    components.path = aggregate ? "" : "/\(taskId)"
     components.queryItems = [
       URLQueryItem(name: "alarmReminderId", value: reminderId),
       URLQueryItem(name: "alarmId", value: nativeAlarmId),

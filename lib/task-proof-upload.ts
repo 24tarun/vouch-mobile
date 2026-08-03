@@ -1,7 +1,6 @@
-import type { ImagePickerAsset } from 'expo-image-picker';
 import { File } from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
-import { deriveProofTimestampMetadata } from '@/lib/proof-timestamp-mobile';
+import { deriveProofTimestampMetadata, type ProofCaptureAsset } from '@/lib/proof-timestamp-mobile';
 import { prepareTaskProofMedia, type PreparedTaskProofMedia } from '@/lib/proof-media-preparation';
 import { maxTaskProofBytes, taskProofSizeLabel } from '@/lib/proof-media-limits';
 import type { AiVoucherQuota } from '@/lib/types';
@@ -46,6 +45,7 @@ interface TaskProofIntent {
     | 'FILE_MODIFICATION'
     | 'ATTACHED';
   proofTimezone: string;
+  captureAttestation?: string | null;
 }
 
 interface TaskProofMeta extends TaskProofIntent {
@@ -70,6 +70,10 @@ interface TaskProofSimpleResponse {
   error?: string;
   code?: string;
   quota?: AiVoucherQuota;
+}
+
+interface TaskProofCaptureStartResponse extends TaskProofSimpleResponse {
+  captureAttestation?: string;
 }
 
 export type TaskProofUploadResult = ProofUploadSuccess | ProofUploadFailure;
@@ -243,6 +247,25 @@ async function initProofUpload(taskId: string, proofIntent: TaskProofIntent): Pr
   };
 }
 
+export async function beginTaskProofCapture(
+  taskId: string,
+  mediaKind: 'image' | 'video',
+  startedAtMs: number,
+): Promise<{ success: true; captureAttestation: string } | { success: false; error: string }> {
+  const { data, error } = await invokeTaskProofFunction<TaskProofCaptureStartResponse>({
+    action: 'begin-capture',
+    taskId,
+    mediaKind,
+    startedAt: new Date(startedAtMs).toISOString(),
+  });
+
+  if (error) return { success: false, error: await invokeErrorMessage(error) };
+  if (!data?.success || !data.captureAttestation) {
+    return { success: false, error: data?.error || 'Could not start proof capture.' };
+  }
+  return { success: true, captureAttestation: data.captureAttestation };
+}
+
 async function finalizeProofUpload(taskId: string, proofMeta: TaskProofMeta): Promise<{ success: true } | { success: false; error: string }> {
   const { data, error } = await invokeTaskProofFunction<TaskProofSimpleResponse>({
     action: 'finalize',
@@ -385,7 +408,7 @@ export async function removeCurrentTaskProofAsset(taskId: string): Promise<TaskP
   return { success: true };
 }
 
-export async function uploadTaskProofAsset(taskId: string, asset: ImagePickerAsset): Promise<TaskProofUploadResult> {
+export async function uploadTaskProofAsset(taskId: string, asset: ProofCaptureAsset): Promise<TaskProofUploadResult> {
   let preparedMedia: PreparedTaskProofMedia | null = null;
   try {
     if (!asset.uri) {
@@ -464,6 +487,7 @@ export async function uploadTaskProofAsset(taskId: string, asset: ImagePickerAss
       proofTimestampAt: proofTimestamp.timestampAt,
       proofTimestampSource: proofTimestamp.timestampSource,
       proofTimezone: proofTimestamp.timeZone,
+      captureAttestation: asset.proofCaptureAttestation ?? null,
     };
 
     const initResult = await initProofUpload(taskId, proofIntent);

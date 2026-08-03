@@ -94,7 +94,7 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
 
   const { data: task, error: taskError } = await supabase
     .from('tasks')
-    .select('id, voucher_id, status, requires_proof, has_proof')
+    .select('id, voucher_id, status, deadline, requires_proof, has_proof')
     .eq('id', taskId)
     .eq('user_id', userId)
     .single();
@@ -103,10 +103,11 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
     return { success: false, userId, error: taskError?.message ?? 'Task not found.' };
   }
 
+  let hasOnTimeCameraProof = false;
   if ((task as any).requires_proof) {
     const { data: proofRows, error: proofCheckError } = await supabase
       .from('task_completion_proofs')
-      .select('id')
+      .select('id, proof_origin, proof_timestamp_at, proof_timestamp_source')
       .eq('task_id', taskId)
       .eq('upload_state', 'UPLOADED')
       .not('object_path', 'is', null)
@@ -120,6 +121,19 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
     if (!hasUploadedProof) {
       return { success: false, userId, error: 'Please upload proof before marking this task complete.' };
     }
+
+    const proof = proofRows?.[0] as {
+      proof_origin?: string | null;
+      proof_timestamp_at?: string | null;
+      proof_timestamp_source?: string | null;
+    } | undefined;
+    const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : NaN;
+    const proofTimestampMs = proof?.proof_timestamp_at ? new Date(proof.proof_timestamp_at).getTime() : NaN;
+    hasOnTimeCameraProof = proof?.proof_origin === 'CAMERA'
+      && proof?.proof_timestamp_source === 'CAMERA_CAPTURE'
+      && Number.isFinite(deadlineMs)
+      && Number.isFinite(proofTimestampMs)
+      && proofTimestampMs < deadlineMs + 60_000;
   }
 
   const isSelfVouched = task.voucher_id === userId;
@@ -132,7 +146,7 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
     ? null
     : getVoucherResponseDeadlineUtc(new Date(nowIso), userTimeZone).toISOString();
 
-  const { data: updatedRows, error } = await supabase
+  let completionUpdate = supabase
     .from('tasks')
     .update({
       status: nextStatus,
@@ -145,9 +159,13 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
     })
     .eq('id', taskId)
     .eq('user_id', userId)
-    .in('status', ['ACTIVE', 'POSTPONED'])
-    .gt('deadline', completionDeadlineCutoffIso)
-    .select('id');
+    .in('status', ['ACTIVE', 'POSTPONED']);
+
+  if (!hasOnTimeCameraProof) {
+    completionUpdate = completionUpdate.gt('deadline', completionDeadlineCutoffIso);
+  }
+
+  const { data: updatedRows, error } = await completionUpdate.select('id');
 
   if (error) return { success: false, userId, error: error.message };
 

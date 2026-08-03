@@ -54,6 +54,7 @@ export default function SettingsNotificationsScreen() {
   const [deadlineDueReminderEnabled, setDeadlineDueReminderEnabled] = useState(true);
   const [alarmStyleNotificationsEnabled, setAlarmStyleNotificationsEnabled] = useState(false);
   const [alarmKitAvailable, setAlarmKitAvailable] = useState(false);
+  const [testingAlarm, setTestingAlarm] = useState(false);
 
   const [savingNotifications, setSavingNotifications] = useState(false);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
@@ -139,6 +140,45 @@ export default function SettingsNotificationsScreen() {
       setNotificationSoundKey(normalizeNotificationSoundKey(value));
     }
     setActivePicker(null);
+  }
+
+  async function handleTestAlarm() {
+    if (Platform.OS !== 'ios' || !alarmKitAvailable) {
+      Alert.alert('Alarm unavailable', 'Alarm-style notifications require iOS 26 or later.');
+      return;
+    }
+
+    setTestingAlarm(true);
+    try {
+      let authorizationStatus = await AlarmKit.getAlarmAuthorizationStatusAsync();
+      if (authorizationStatus === 'not_determined') {
+        authorizationStatus = await AlarmKit.requestAlarmAuthorizationAsync();
+      }
+
+      if (authorizationStatus !== 'authorized') {
+        Alert.alert(
+          'Allow alarms to test this',
+          'Enable alarm permission for Vouch in Settings, then try again.',
+        );
+        return;
+      }
+
+      await AlarmKit.scheduleTenMinuteAlarmAsync({
+        reminderId: `vouch-alarm-demo-${Date.now()}`,
+        taskId: '',
+        taskTitle: 'Vouch alarm demo',
+        fireAtISO: new Date(Date.now() + 10_000).toISOString(),
+        aggregate: true,
+        taskCount: 1,
+        isDemo: true,
+      });
+      Alert.alert('Demo alarm set', 'Your Vouch alarm will appear in about 10 seconds.');
+    } catch (error) {
+      console.warn('[notifications settings] failed to schedule AlarmKit demo:', error);
+      Alert.alert('Could not set the demo alarm', 'Please try again in a moment.');
+    } finally {
+      setTestingAlarm(false);
+    }
   }
 
   async function handlePreviewNotificationSound(key: NotificationSoundKey) {
@@ -349,6 +389,25 @@ export default function SettingsNotificationsScreen() {
                   />
                 </View>
               </View>
+
+              {alarmStyleNotificationsEnabled && alarmKitAvailable ? (
+                <View style={styles.alarmTestRow}>
+                  <View style={styles.toggleTextWrap}>
+                    <Text style={styles.toggleTitle}>Test alarm</Text>
+                    <Text style={styles.toggleSub}>See the Vouch alarm experience in 10 seconds.</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.alarmTestButton, testingAlarm && styles.alarmTestButtonDisabled]}
+                    onPress={() => { void handleTestAlarm(); }}
+                    activeOpacity={0.75}
+                    disabled={testingAlarm}
+                    accessibilityRole="button"
+                    accessibilityLabel="Test Vouch alarm"
+                  >
+                    <Text style={styles.alarmTestButtonText}>{testingAlarm ? 'Setting…' : 'Test'}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
 
               {notificationsError ? <Text style={styles.errorText}>{notificationsError}</Text> : null}
             </View>

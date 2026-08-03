@@ -11,6 +11,9 @@ const PROOF_TIMESTAMP_PLACEHOLDER = '??:?? ??/??/??';
 const MAX_TASK_PROOF_VIDEO_DURATION_MS = 15_000;
 const MAX_TASK_PROOF_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_TASK_PROOF_VIDEO_BYTES = 30 * 1024 * 1024;
+const CAPTURE_ATTESTATION_TRANSPORT_GRACE_MS = 10_000;
+const CAPTURE_ATTESTATION_MAX_CLOCK_SKEW_MS = 30_000;
+const CAPTURE_ATTESTATION_TTL_MS = 10 * 60 * 1000;
 
 const ALLOWED_PROOF_MIME_TYPES = new Set([
   'image/jpeg',
@@ -32,6 +35,13 @@ const ATTACHABLE_PROOF_STATUSES = new Set([
   'AWAITING_USER',
   'ESCALATED',
   'AWAITING_RECTIFICATION',
+]);
+const CAPTURE_DEADLINE_STATUSES = new Set([
+  'ACTIVE',
+  'POSTPONED',
+  'MARKED_COMPLETE',
+  'AWAITING_VOUCHER',
+  'AWAITING_AI',
 ]);
 
 const FINAL_TASK_STATUSES = new Set([
@@ -80,6 +90,7 @@ interface ProofIntent {
     | 'ATTACHED'
     | 'UNKNOWN';
   proofTimezone?: string | null;
+  captureAttestation?: string | null;
 }
 
 interface ProofMeta extends ProofIntent {
@@ -108,6 +119,13 @@ interface InitRequestBody {
   action: 'init';
   taskId: string;
   proofIntent: ProofIntent;
+}
+
+interface BeginCaptureRequestBody {
+  action: 'begin-capture';
+  taskId: string;
+  mediaKind: MediaKind;
+  startedAt: string;
 }
 
 interface FinalizeRequestBody {
@@ -154,6 +172,7 @@ interface QueueRectificationNotificationRequestBody {
 }
 
 type RequestBody =
+  | BeginCaptureRequestBody
   | InitRequestBody
   | FinalizeRequestBody
   | FailRequestBody
@@ -171,6 +190,69 @@ function json(status: number, payload: Record<string, unknown>) {
       'Content-Type': 'application/json',
     },
   });
+}
+
+interface CaptureAttestationPayload {
+  version: 1;
+  taskId: string;
+  ownerId: string;
+  mediaKind: MediaKind;
+  startedAt: string;
+  expiresAt: string;
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlDecode(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function hmacSha256(value: string, secret: string): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(value)));
+}
+
+async function signCaptureAttestation(payload: CaptureAttestationPayload, secret: string): Promise<string> {
+  const encodedPayload = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
+  const signature = base64UrlEncode(await hmacSha256(encodedPayload, secret));
+  return `${encodedPayload}.${signature}`;
+}
+
+async function verifyCaptureAttestation(
+  token: string,
+  secret: string,
+): Promise<CaptureAttestationPayload | null> {
+  try {
+    const [encodedPayload, suppliedSignature, extra] = token.split('.');
+    if (!encodedPayload || !suppliedSignature || extra) return null;
+    const expectedSignature = await hmacSha256(encodedPayload, secret);
+    const suppliedBytes = base64UrlDecode(suppliedSignature);
+    if (expectedSignature.length !== suppliedBytes.length) return null;
+    let mismatch = 0;
+    for (let index = 0; index < expectedSignature.length; index += 1) {
+      mismatch |= expectedSignature[index] ^ suppliedBytes[index];
+    }
+    if (mismatch !== 0) return null;
+    const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(encodedPayload))) as CaptureAttestationPayload;
+    if (payload.version !== 1 || new Date(payload.expiresAt).getTime() <= Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeProofTimestampText(value: unknown): string {
@@ -301,6 +383,9 @@ function normalizeProofIntent(raw: unknown): { value?: ProofIntent; error?: stri
   const sizeBytes = Number(candidate.sizeBytes);
   const durationMsRaw = candidate.durationMs == null ? null : Number(candidate.durationMs);
   const overlayTimestampText = normalizeProofTimestampText(candidate.overlayTimestampText);
+  const captureAttestation = typeof candidate.captureAttestation === 'string'
+    ? candidate.captureAttestation.trim()
+    : null;
   const timestampMetadata = normalizeProofTimestampMetadata(candidate, overlayTimestampText);
 
   if (timestampMetadata.error || !timestampMetadata.value) {
@@ -336,6 +421,7 @@ function normalizeProofIntent(raw: unknown): { value?: ProofIntent; error?: stri
       sizeBytes: Math.round(sizeBytes),
       durationMs: mediaKind === 'video' ? Math.round(Number(durationMsRaw)) : null,
       overlayTimestampText,
+      captureAttestation: captureAttestation || null,
       ...timestampMetadata.value,
     },
   };
@@ -462,7 +548,7 @@ Deno.serve(async (request) => {
   }
 
   if (
-    (action === 'init' || action === 'finalize')
+    (action === 'begin-capture' || action === 'init' || action === 'finalize')
     && !ATTACHABLE_PROOF_STATUSES.has((task as { status: string }).status)
   ) {
     return json(400, { success: false, error: 'Proof can only be attached to active or awaiting tasks.' });
@@ -471,11 +557,52 @@ Deno.serve(async (request) => {
   const taskStatus = (task as { status: string }).status;
   const taskDeadline = (task as { deadline?: string | null }).deadline;
   if (
-    (action === 'init' || action === 'remove-current')
+    action === 'remove-current'
     && taskStatus !== 'AWAITING_RECTIFICATION'
     && isCompletionEditingLocked(taskStatus, taskDeadline)
   ) {
     return json(409, { success: false, error: COMPLETION_EDIT_LOCKED_ERROR });
+  }
+
+  if (action === 'begin-capture') {
+    const candidate = body as BeginCaptureRequestBody;
+    const mediaKind = candidate.mediaKind === 'image' || candidate.mediaKind === 'video'
+      ? candidate.mediaKind
+      : null;
+    const startedAt = new Date(candidate.startedAt);
+    const startedAtMs = startedAt.getTime();
+    const receivedAtMs = Date.now();
+    if (!mediaKind || !Number.isFinite(startedAtMs)) {
+      return json(400, { success: false, error: 'Could not verify when proof capture started.' });
+    }
+    if (Math.abs(receivedAtMs - startedAtMs) > CAPTURE_ATTESTATION_MAX_CLOCK_SKEW_MS) {
+      return json(400, { success: false, error: 'Your device clock could not be verified. Check Date & Time settings and retry.' });
+    }
+
+    if (CAPTURE_DEADLINE_STATUSES.has(taskStatus)) {
+      const deadlineMs = taskDeadline ? new Date(taskDeadline).getTime() : NaN;
+      const cutoffMs = deadlineMs + 60_000;
+      if (
+        !Number.isFinite(deadlineMs)
+        || startedAtMs >= cutoffMs
+        || receivedAtMs >= cutoffMs + CAPTURE_ATTESTATION_TRANSPORT_GRACE_MS
+      ) {
+        return json(409, { success: false, error: COMPLETION_EDIT_LOCKED_ERROR });
+      }
+    }
+
+    const payload: CaptureAttestationPayload = {
+      version: 1,
+      taskId,
+      ownerId: user.id,
+      mediaKind,
+      startedAt: startedAt.toISOString(),
+      expiresAt: new Date(receivedAtMs + CAPTURE_ATTESTATION_TTL_MS).toISOString(),
+    };
+    return json(200, {
+      success: true,
+      captureAttestation: await signCaptureAttestation(payload, env.serviceRoleKey),
+    });
   }
 
   if (action === 'init') {
@@ -485,6 +612,35 @@ Deno.serve(async (request) => {
     }
 
     const proofIntent = parsed.value;
+    let deadlineAttestedAt: string | null = null;
+    if (proofIntent.captureAttestation) {
+      const attestation = await verifyCaptureAttestation(proofIntent.captureAttestation, env.serviceRoleKey);
+      const proofTimestampMs = proofIntent.proofTimestampAt
+        ? new Date(proofIntent.proofTimestampAt).getTime()
+        : NaN;
+      const attestedTimestampMs = attestation ? new Date(attestation.startedAt).getTime() : NaN;
+      if (
+        !attestation
+        || attestation.taskId !== taskId
+        || attestation.ownerId !== user.id
+        || attestation.mediaKind !== proofIntent.mediaKind
+        || proofIntent.proofOrigin !== 'CAMERA'
+        || proofIntent.proofTimestampSource !== 'CAMERA_CAPTURE'
+        || !Number.isFinite(proofTimestampMs)
+        || Math.abs(proofTimestampMs - attestedTimestampMs) > 1_000
+      ) {
+        return json(400, { success: false, error: 'Proof capture timing could not be verified.' });
+      }
+      deadlineAttestedAt = attestation.startedAt;
+    }
+
+    if (
+      CAPTURE_DEADLINE_STATUSES.has(taskStatus)
+      && isCompletionEditingLocked(taskStatus, taskDeadline)
+      && !deadlineAttestedAt
+    ) {
+      return json(409, { success: false, error: COMPLETION_EDIT_LOCKED_ERROR });
+    }
 
     const { data: existingProof, error: existingProofError } = await adminClient
       .from('task_completion_proofs')
@@ -526,6 +682,7 @@ Deno.serve(async (request) => {
         proof_timestamp_source: proofIntent.proofTimestampSource,
         proof_timezone: proofIntent.proofTimezone,
         upload_state: 'PENDING',
+        updated_at: deadlineAttestedAt || new Date().toISOString(),
       }, { onConflict: 'task_id' });
 
     if (upsertError) {
@@ -583,15 +740,57 @@ Deno.serve(async (request) => {
       return json(400, { success: false, error: 'Proof record not found.' });
     }
 
+    const storedProofBucket = String((proofRow as { bucket?: string }).bucket || TASK_PROOFS_BUCKET);
+    const storedProofObjectPath = String((proofRow as { object_path?: string }).object_path || '');
     const proofStagedAt = String(
       (proofRow as { updated_at?: string | null }).updated_at
       || (proofRow as { created_at?: string | null }).created_at
       || '',
     );
+    const discardPendingProof = async () => {
+      let failQuery = adminClient
+        .from('task_completion_proofs')
+        .update({ upload_state: 'FAILED', updated_at: new Date().toISOString() })
+        .eq('id', String((proofRow as { id: string }).id))
+        .eq('owner_id', user.id)
+        .eq('upload_state', 'PENDING');
+      if (proofStagedAt) failQuery = failQuery.eq('updated_at', proofStagedAt);
+
+      const { data: failedProof, error: failError } = await failQuery
+        .select('id')
+        .maybeSingle();
+      if (failError) {
+        console.error(`Could not mark rejected proof failed for task ${taskId}:`, failError);
+        return;
+      }
+      // If finalization committed or another upload replaced this one, do not
+      // remove the shared immutable object path.
+      if (!failedProof) return;
+
+      if (storedProofObjectPath) {
+        const { error: removeError } = await adminClient.storage
+          .from(storedProofBucket)
+          .remove([storedProofObjectPath]);
+        if (removeError) {
+          console.error(`Could not remove rejected proof object for task ${taskId}:`, removeError);
+        }
+      }
+
+      const { error: taskProofError } = await adminClient
+        .from('tasks')
+        .update({ has_proof: false, updated_at: new Date().toISOString() })
+        .eq('id', taskId)
+        .eq('user_id', user.id);
+      if (taskProofError) {
+        console.error(`Could not clear rejected proof state for task ${taskId}:`, taskProofError);
+      }
+    };
+
     if (
       isCompletionEditingLocked(taskStatus, taskDeadline)
       && !wasProofStagedBeforeCompletionLock(taskDeadline, proofStagedAt)
     ) {
+      await discardPendingProof();
       return json(409, { success: false, error: COMPLETION_EDIT_LOCKED_ERROR });
     }
 
@@ -653,6 +852,7 @@ Deno.serve(async (request) => {
       });
 
     if (finalizeError) {
+      await discardPendingProof();
       return json(400, { success: false, error: finalizeError.message });
     }
 
@@ -661,7 +861,9 @@ Deno.serve(async (request) => {
       : (finalizeData as FinalizeProofAtomicResult | null);
 
     if (!finalizeRow?.success) {
-      return json(400, { success: false, error: finalizeRow?.error || 'Could not finalize proof upload.' });
+      await discardPendingProof();
+      const error = finalizeRow?.error || 'Could not finalize proof upload.';
+      return json(error === COMPLETION_EDIT_LOCKED_ERROR ? 409 : 400, { success: false, error });
     }
 
     return json(200, { success: true });

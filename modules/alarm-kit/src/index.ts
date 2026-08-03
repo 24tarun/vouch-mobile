@@ -9,6 +9,7 @@ export type ScheduleTenMinuteAlarmInput = {
   fireAtISO: string;
   aggregate?: boolean;
   taskCount?: number;
+  isDemo?: boolean;
 };
 
 export type ScheduleTenMinuteAlarmResult = {

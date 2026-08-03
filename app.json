@@ -23,6 +23,7 @@
           "remote-notification",
           "remote-notification"
         ],
+        "NSAlarmKitUsageDescription": "Vouch uses alarms to alert you when an important task is due.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },

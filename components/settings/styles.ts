@@ -404,6 +404,32 @@ const makeStyles = (colors: Colors) => StyleSheet.create({
     color: colors.textMuted,
     lineHeight: 18,
   },
+  alarmTestRow: {
+    minHeight: 64,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  alarmTestButton: {
+    minHeight: 34,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.accentCyan,
+    backgroundColor: `${colors.accentCyan}1F`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  alarmTestButtonDisabled: {
+    opacity: 0.55,
+  },
+  alarmTestButtonText: {
+    fontSize: typography.sm,
+    color: colors.accentCyan,
+    fontWeight: typography.semibold,
+  },
   errorText: {
     fontSize: typography.sm,
     color: colors.destructive,

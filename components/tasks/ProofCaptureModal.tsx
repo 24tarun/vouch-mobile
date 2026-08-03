@@ -16,6 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import type { ProofCaptureAsset } from '@/lib/proof-timestamp-mobile';
+import { beginTaskProofCapture } from '@/lib/task-proof-upload';
 
 type CaptureMode = 'photo' | 'video';
 
@@ -25,6 +26,7 @@ interface ProofCaptureModalProps {
   initialMode?: CaptureMode;
   onClose: () => void;
   onAssetPicked: (asset: ProofCaptureAsset) => Promise<void> | void;
+  deadlineAttestationTaskId?: string;
 }
 
 const MAX_VIDEO_SECONDS = 15;
@@ -35,6 +37,7 @@ export function ProofCaptureModal({
   initialMode = 'photo',
   onClose,
   onAssetPicked,
+  deadlineAttestationTaskId,
 }: ProofCaptureModalProps) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -106,13 +109,22 @@ export function ProofCaptureModal({
 
     if (mode === 'photo') {
       try {
+        const captureStartedAt = Date.now();
+        const attestationPromise = deadlineAttestationTaskId
+          ? beginTaskProofCapture(deadlineAttestationTaskId, 'image', captureStartedAt)
+          : Promise.resolve(null);
         const photo = await cameraRef.current.takePictureAsync({
           quality: 1,
           exif: true,
         });
+        const attestation = await attestationPromise;
 
         if (!photo?.uri) {
           Alert.alert('Could not capture photo', 'Please try again.');
+          return;
+        }
+        if (attestation && !attestation.success) {
+          Alert.alert('Could not attach proof', attestation.error);
           return;
         }
 
@@ -127,8 +139,9 @@ export function ProofCaptureModal({
           exif: photo.exif as any,
           duration: null,
           proofOrigin: 'CAMERA',
-          proofCapturedAtMs: Date.now(),
+          proofCapturedAtMs: captureStartedAt,
           proofAttachedAtMs: Date.now(),
+          proofCaptureAttestation: attestation?.captureAttestation ?? null,
         });
       } catch {
         Alert.alert('Could not capture photo', 'Please try again.');
@@ -140,12 +153,20 @@ export function ProofCaptureModal({
       try {
         setIsRecording(true);
         recordingStartedAtRef.current = Date.now();
+        const attestationPromise = deadlineAttestationTaskId
+          ? beginTaskProofCapture(deadlineAttestationTaskId, 'video', recordingStartedAtRef.current)
+          : Promise.resolve(null);
         const video = await cameraRef.current.recordAsync({
           maxDuration: MAX_VIDEO_SECONDS,
         });
+        const attestation = await attestationPromise;
 
         if (!video?.uri) {
           setIsRecording(false);
+          return;
+        }
+        if (attestation && !attestation.success) {
+          Alert.alert('Could not attach proof', attestation.error);
           return;
         }
 
@@ -161,6 +182,7 @@ export function ProofCaptureModal({
           proofOrigin: 'CAMERA',
           proofCapturedAtMs: recordingStartedAtRef.current,
           proofAttachedAtMs: Date.now(),
+          proofCaptureAttestation: attestation?.captureAttestation ?? null,
         });
       } catch {
         Alert.alert('Could not record video', 'Please try again.');

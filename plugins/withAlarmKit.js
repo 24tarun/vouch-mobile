@@ -3,10 +3,13 @@ const fs = require('fs');
 const path = require('path');
 
 const APP_INTENTS_PACKAGE_FILE = 'VouchAlarmKitAppIntentsPackage.swift';
+const ALARM_KIT_USAGE_DESCRIPTION = 'Vouch uses alarms to alert you when an important task is due.';
 
 function withAlarmKitInfoPlist(config) {
   return withInfoPlist(config, (nextConfig) => {
-    delete nextConfig.modResults.NSAlarmKitUsageDescription;
+    // AlarmKit refuses to schedule alarms without this non-empty privacy
+    // description. iOS presents it in the per-app alarm authorization prompt.
+    nextConfig.modResults.NSAlarmKitUsageDescription = ALARM_KIT_USAGE_DESCRIPTION;
     return nextConfig;
   });
 }
@@ -34,17 +37,41 @@ function withAlarmKitAppIntentsPackage(config) {
       });
     }
 
-    // Enable AppIntents metadata extraction from dependent static libraries
-    const buildConfigs = project.pbxXCBuildConfigurationSection();
-    for (const key in buildConfigs) {
-      const config = buildConfigs[key];
-      if (config.buildSettings && config.buildSettings.PRODUCT_NAME === projectName) {
-        config.buildSettings.GENERATE_APPINTENTS_METADATA_FOR_DEPENDENCIES = 'YES';
-      }
-    }
+    // Enable AppIntents metadata extraction from dependent static libraries.
+    // Without this, `VouchOpenTaskAlarmIntent` — which lives in the VouchAlarmKit
+    // pod rather than the app target — is missing from the app's AppIntents
+    // metadata, so tapping the alarm's secondary button never runs the intent.
+    applyAppIntentsMetadataSetting(project, projectName);
 
     return nextConfig;
   });
+}
+
+// pbxproj values keep their surrounding quotes when parsed (`"Vouch"`), so any
+// comparison against a plain name has to strip them first.
+function unquote(value) {
+  return typeof value === 'string' ? value.replace(/^"|"$/g, '') : value;
+}
+
+function applyAppIntentsMetadataSetting(project, projectName) {
+  const buildConfigs = project.pbxXCBuildConfigurationSection();
+  let applied = false;
+
+  for (const key in buildConfigs) {
+    const buildConfig = buildConfigs[key];
+    const settings = buildConfig && buildConfig.buildSettings;
+    if (!settings) continue;
+    if (unquote(settings.PRODUCT_NAME) !== projectName) continue;
+
+    settings.GENERATE_APPINTENTS_METADATA_FOR_DEPENDENCIES = 'YES';
+    applied = true;
+  }
+
+  if (!applied) {
+    throw new Error(
+      `[withAlarmKit] Unable to find build configurations for the "${projectName}" app target.`,
+    );
+  }
 }
 
 function withMinimumIosPodTarget(config) {

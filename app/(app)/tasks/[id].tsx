@@ -2250,6 +2250,7 @@ export default function TaskDetailScreen() {
         </Modal>
         <ProofCaptureModal
           visible={proofCaptureOpen && proofCaptureDestination !== 'rectification'}
+          deadlineAttestationTaskId={proofCaptureDestination === 'task' ? task.id : undefined}
           onClose={() => setProofCaptureOpen(false)}
           onAssetPicked={async (asset) => {
             if (proofCaptureDestination === 'rectification-appeal') {

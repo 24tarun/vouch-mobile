@@ -16,7 +16,11 @@ import * as ImagePicker from 'expo-image-picker';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import { useTheme } from '@/lib/ThemeContext';
 import type { ProofCaptureAsset } from '@/lib/proof-timestamp-mobile';
-import { beginTaskProofCapture } from '@/lib/task-proof-upload';
+import {
+  beginTaskProofCapture,
+  ensureTaskProofCaptureLicense,
+  readTaskProofCaptureLicense,
+} from '@/lib/task-proof-upload';
 
 type CaptureMode = 'photo' | 'video';
 
@@ -50,6 +54,41 @@ export function ProofCaptureModal({
   const [facing, setFacing] = useState<'front' | 'back'>('back');
   const [pictureSize, setPictureSize] = useState<string | undefined>(undefined);
   const recordingStartedAtRef = useRef<number | null>(null);
+
+  // Fetched as soon as the camera opens, while the device is presumably still
+  // online. If the network drops before the shutter fires, this is what lets a
+  // capture still count against the deadline.
+  useEffect(() => {
+    if (!visible || !deadlineAttestationTaskId) return;
+    void ensureTaskProofCaptureLicense(deadlineAttestationTaskId);
+  }, [visible, deadlineAttestationTaskId]);
+
+  /**
+   * Resolves the deadline evidence for a capture.
+   *
+   * The server attestation is authoritative and preferred. When the round trip
+   * fails — no signal at the deadline is exactly when this matters — fall back
+   * to a license fetched earlier rather than refusing the capture outright.
+   */
+  async function resolveCaptureProof(
+    attestationPromise: Promise<Awaited<ReturnType<typeof beginTaskProofCapture>> | null>,
+  ): Promise<
+    | { ok: true; captureAttestation: string | null; captureLicense: string | null }
+    | { ok: false; error: string }
+  > {
+    const attestation = await attestationPromise;
+    if (!attestation) return { ok: true, captureAttestation: null, captureLicense: null };
+    if (attestation.success) {
+      return { ok: true, captureAttestation: attestation.captureAttestation, captureLicense: null };
+    }
+
+    const license = deadlineAttestationTaskId
+      ? await readTaskProofCaptureLicense(deadlineAttestationTaskId)
+      : null;
+    if (license) return { ok: true, captureAttestation: null, captureLicense: license };
+
+    return { ok: false, error: attestation.error };
+  }
 
   useEffect(() => {
     if (!visible) return;
@@ -117,14 +156,14 @@ export function ProofCaptureModal({
           quality: 1,
           exif: true,
         });
-        const attestation = await attestationPromise;
+        const captureProof = await resolveCaptureProof(attestationPromise);
 
         if (!photo?.uri) {
           Alert.alert('Could not capture photo', 'Please try again.');
           return;
         }
-        if (attestation && !attestation.success) {
-          Alert.alert('Could not attach proof', attestation.error);
+        if (!captureProof.ok) {
+          Alert.alert('Could not attach proof', captureProof.error);
           return;
         }
 
@@ -141,7 +180,8 @@ export function ProofCaptureModal({
           proofOrigin: 'CAMERA',
           proofCapturedAtMs: captureStartedAt,
           proofAttachedAtMs: Date.now(),
-          proofCaptureAttestation: attestation?.captureAttestation ?? null,
+          proofCaptureAttestation: captureProof.captureAttestation,
+          proofCaptureLicense: captureProof.captureLicense,
         });
       } catch {
         Alert.alert('Could not capture photo', 'Please try again.');
@@ -159,14 +199,14 @@ export function ProofCaptureModal({
         const video = await cameraRef.current.recordAsync({
           maxDuration: MAX_VIDEO_SECONDS,
         });
-        const attestation = await attestationPromise;
+        const captureProof = await resolveCaptureProof(attestationPromise);
 
         if (!video?.uri) {
           setIsRecording(false);
           return;
         }
-        if (attestation && !attestation.success) {
-          Alert.alert('Could not attach proof', attestation.error);
+        if (!captureProof.ok) {
+          Alert.alert('Could not attach proof', captureProof.error);
           return;
         }
 
@@ -182,7 +222,8 @@ export function ProofCaptureModal({
           proofOrigin: 'CAMERA',
           proofCapturedAtMs: recordingStartedAtRef.current,
           proofAttachedAtMs: Date.now(),
-          proofCaptureAttestation: attestation?.captureAttestation ?? null,
+          proofCaptureAttestation: captureProof.captureAttestation,
+          proofCaptureLicense: captureProof.captureLicense,
         });
       } catch {
         Alert.alert('Could not record video', 'Please try again.');

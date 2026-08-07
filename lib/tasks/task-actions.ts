@@ -82,13 +82,23 @@ async function getAuthenticatedUserId(): Promise<string | null> {
   return session?.user?.id ?? null;
 }
 
-export async function completeTask(taskId: string): Promise<TaskMutationResult> {
+/**
+ * @param actionAt When the user actually pressed Complete. Pass this from the
+ *   press handler, not from inside this function: by the time execution reaches
+ *   here the session lookup and task read have already happened, which on a cold
+ *   token refresh is seconds. The server judges the deadline against this
+ *   timestamp, so those seconds are exactly what a user racing the inclusive
+ *   minute cannot afford to lose.
+ */
+export async function completeTask(
+  taskId: string,
+  actionAt: Date = new Date(),
+): Promise<TaskMutationResult> {
   const userId = await getAuthenticatedUserId();
   if (!userId) return { success: false, error: 'Please sign in again and retry.' };
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const completionDeadlineCutoffIso = getTaskDeadlineCutoffIso(now);
   const actorUserClientInstanceId = await resolveUserClientInstanceId(userId);
   const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -103,11 +113,25 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
     return { success: false, userId, error: taskError?.message ?? 'Task not found.' };
   }
 
-  let hasOnTimeCameraProof = false;
+  const { data: incompleteSubtask, error: subtaskError } = await supabase
+    .from('task_subtasks')
+    .select('id')
+    .eq('parent_task_id', taskId)
+    .eq('is_completed', false)
+    .limit(1);
+
+  if (subtaskError) {
+    return { success: false, userId, error: subtaskError.message };
+  }
+
+  if (incompleteSubtask && incompleteSubtask.length > 0) {
+    return { success: false, userId, error: 'All subtasks must be completed before marking this task complete.' };
+  }
+
   if ((task as any).requires_proof) {
     const { data: proofRows, error: proofCheckError } = await supabase
       .from('task_completion_proofs')
-      .select('id, proof_origin, proof_timestamp_at, proof_timestamp_source')
+      .select('id')
       .eq('task_id', taskId)
       .eq('upload_state', 'UPLOADED')
       .not('object_path', 'is', null)
@@ -117,23 +141,9 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
       return { success: false, userId, error: proofCheckError.message };
     }
 
-    const hasUploadedProof = Boolean(proofRows && proofRows.length > 0);
-    if (!hasUploadedProof) {
+    if (!proofRows || proofRows.length === 0) {
       return { success: false, userId, error: 'Please upload proof before marking this task complete.' };
     }
-
-    const proof = proofRows?.[0] as {
-      proof_origin?: string | null;
-      proof_timestamp_at?: string | null;
-      proof_timestamp_source?: string | null;
-    } | undefined;
-    const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : NaN;
-    const proofTimestampMs = proof?.proof_timestamp_at ? new Date(proof.proof_timestamp_at).getTime() : NaN;
-    hasOnTimeCameraProof = proof?.proof_origin === 'CAMERA'
-      && proof?.proof_timestamp_source === 'CAMERA_CAPTURE'
-      && Number.isFinite(deadlineMs)
-      && Number.isFinite(proofTimestampMs)
-      && proofTimestampMs < deadlineMs + 60_000;
   }
 
   const isSelfVouched = task.voucher_id === userId;
@@ -146,31 +156,26 @@ export async function completeTask(taskId: string): Promise<TaskMutationResult> 
     ? null
     : getVoucherResponseDeadlineUtc(new Date(nowIso), userTimeZone).toISOString();
 
-  let completionUpdate = supabase
-    .from('tasks')
-    .update({
-      status: nextStatus,
-      marked_completed_at: nowIso,
-      voucher_response_deadline: voucherResponseDeadline,
-      proof_request_open: false,
-      proof_requested_at: null,
-      proof_requested_by: null,
-      updated_at: nowIso,
-    })
-    .eq('id', taskId)
-    .eq('user_id', userId)
-    .in('status', ['ACTIVE', 'POSTPONED']);
-
-  if (!hasOnTimeCameraProof) {
-    completionUpdate = completionUpdate.gt('deadline', completionDeadlineCutoffIso);
-  }
-
-  const { data: updatedRows, error } = await completionUpdate.select('id');
+  // Server-side so the deadline decision rests on server time plus a bounded
+  // client action timestamp, rather than on a cutoff the device computes and
+  // sends as a filter. The RPC also derives the on-time camera-proof exemption
+  // itself instead of trusting the caller to assert it.
+  const { data: completionResult, error } = await supabase.rpc('complete_task_at_client_time', {
+    p_task_id: taskId,
+    p_client_action_at: actionAt.toISOString(),
+    p_next_status: nextStatus,
+    p_voucher_response_deadline: voucherResponseDeadline,
+  } as any);
 
   if (error) return { success: false, userId, error: error.message };
 
-  if (!updatedRows || updatedRows.length === 0) {
-    return { success: false, userId, error: 'Task can no longer be marked complete. Please refresh.' };
+  const completion = completionResult as { success?: boolean; error?: string } | null;
+  if (!completion?.success) {
+    return {
+      success: false,
+      userId,
+      error: completion?.error ?? 'Task can no longer be marked complete. Please refresh.',
+    };
   }
 
   // Cancel native schedules before any later refetch/reconciliation work. If
@@ -305,6 +310,14 @@ export async function deleteTask(taskId: string): Promise<TaskMutationResult> {
     return { success: false, userId, error: `Cannot delete task in ${task.status} status.` };
   }
 
+  if (task.recurrence_rule_id) {
+    return {
+      success: false,
+      userId,
+      error: 'Recurring task instances cannot be deleted. Pause or stop the repetition instead.',
+    };
+  }
+
   if (!isTaskWithinDeleteWindow(task.created_at)) {
     return { success: false, userId, error: 'Delete window expired. Tasks can only be deleted within 1 hour.' };
   }
@@ -321,18 +334,6 @@ export async function deleteTask(taskId: string): Promise<TaskMutationResult> {
       taskId,
       message: googleLinkError.message,
     });
-  }
-
-  if (task.recurrence_rule_id) {
-    const { error: ruleDeleteError } = await supabase
-      .from('recurrence_rules')
-      .delete()
-      .eq('id', task.recurrence_rule_id)
-      .eq('user_id', userId);
-
-    if (ruleDeleteError) {
-      return { success: false, userId, error: ruleDeleteError.message };
-    }
   }
 
   const { data: deletedRows, error } = await supabase

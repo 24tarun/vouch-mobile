@@ -14,6 +14,16 @@ function firstRow<T>(data: T | T[] | null): T | null {
   return Array.isArray(data) ? data[0] ?? null : data;
 }
 
+/**
+ * Supabase RPC failures are plain PostgREST objects rather than native Errors.
+ * Normalize them here so every rectification surface can show the reason the
+ * database provided instead of falling back to a generic retry prompt.
+ */
+function throwRpcError(error: { message?: string; details?: string; hint?: string }): never {
+  const message = error.message?.trim() || error.details?.trim() || error.hint?.trim();
+  throw new Error(message || 'The rectification request could not be completed.');
+}
+
 export async function requestTaskRectification(
   taskId: string,
   target: RectificationTarget,
@@ -26,7 +36,7 @@ export async function requestTaskRectification(
     p_reason: reason?.trim() || null,
     p_actor_user_client_instance_id: instanceId,
   });
-  if (error) throw error;
+  if (error) throwRpcError(error);
   const request = firstRow(data as RectificationRequest[] | null);
   if (!request) throw new Error('Could not create rectification request');
   return request;
@@ -39,7 +49,7 @@ export async function updateTaskRectification(requestId: string, reason?: string
     p_reason: reason?.trim() || null,
     p_actor_user_client_instance_id: instanceId,
   });
-  if (error) throw error;
+  if (error) throwRpcError(error);
   return firstRow(data as RectificationRequest[] | null);
 }
 
@@ -49,7 +59,7 @@ export async function cancelTaskRectification(requestId: string) {
     p_request_id: requestId,
     p_actor_user_client_instance_id: instanceId,
   });
-  if (error) throw error;
+  if (error) throwRpcError(error);
   return firstRow(data as RectificationRequest[] | null);
 }
 
@@ -59,7 +69,7 @@ export async function requestRectificationProof(requestId: string) {
     p_request_id: requestId,
     p_actor_user_client_instance_id: instanceId,
   });
-  if (error) throw error;
+  if (error) throwRpcError(error);
   return firstRow(data as RectificationRequest[] | null);
 }
 
@@ -75,7 +85,7 @@ export async function decideTaskRectification(
     p_reason: reason?.trim() || null,
     p_actor_user_client_instance_id: instanceId,
   });
-  if (error) throw error;
+  if (error) throwRpcError(error);
   return firstRow(data as { task_id: string; owner_id: string; resolution: string }[] | null);
 }
 
@@ -85,7 +95,7 @@ export async function authorizeTaskRectification(taskId: string) {
     p_task_id: taskId,
     p_actor_user_client_instance_id: instanceId,
   });
-  if (error) throw error;
+  if (error) throwRpcError(error);
   return firstRow(data as { task_id: string; owner_id: string }[] | null);
 }
 
@@ -96,7 +106,7 @@ export async function appealAiRectification(requestId: string, reason?: string |
     p_reason: reason?.trim() || null,
     p_actor_user_client_instance_id: instanceId,
   });
-  if (error) throw error;
+  if (error) throwRpcError(error);
   return firstRow(data as RectificationRequest[] | null);
 }
 
@@ -106,6 +116,6 @@ export async function escalateRectificationToOriginalVoucher(requestId: string) 
     p_request_id: requestId,
     p_actor_user_client_instance_id: instanceId,
   });
-  if (error) throw error;
+  if (error) throwRpcError(error);
   return firstRow(data as RectificationRequest[] | null);
 }

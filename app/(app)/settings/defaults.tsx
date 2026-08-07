@@ -21,7 +21,7 @@ import { useManageFriends } from '@/lib/hooks/useManageFriends';
 import { queryKeys } from '@/lib/query/keys';
 import { supabase } from '@/lib/supabase';
 import { type Currency } from '@/lib/types';
-import { getFailureCostBounds } from '@/lib/domain/failure-cost';
+import { getFailureCostBounds, isValidFailureCostCents } from '@/lib/domain/failure-cost';
 import { normalizePomoDurationMinutes } from '@/lib/constants/timings';
 import { formatTimeZoneLabel, getTimeZoneOptions } from '@/lib/timezones';
 import { normalizeVoucherOption } from '@/lib/settings/relationships';
@@ -69,6 +69,7 @@ export default function SettingsDefaultsScreen() {
 
   const [defaultPomoInput, setDefaultPomoInput] = useState('25');
   const [defaultEventDurationInput, setDefaultEventDurationInput] = useState(String(EVENT_DURATION_FALLBACK_MINUTES));
+  const [defaultTaskDeadlineTimeInput, setDefaultTaskDeadlineTimeInput] = useState('23:00');
   const [defaultFailureCostInput, setDefaultFailureCostInput] = useState('10');
   const [defaultVoucherId, setDefaultVoucherId] = useState<string | null>(null);
   const [currency, setCurrency] = useState<Currency>('USD');
@@ -111,6 +112,9 @@ export default function SettingsDefaultsScreen() {
       && profile.default_event_duration_minutes <= EVENT_DURATION_MAX_MIN_MINUTES
       ? profile.default_event_duration_minutes
       : EVENT_DURATION_FALLBACK_MINUTES;
+    const nextTaskDeadlineTime = /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(profile.default_task_deadline_time ?? '')
+      ? profile.default_task_deadline_time
+      : '23:00';
     const nextFailureCostCents = profile.default_failure_cost_cents ?? 1000;
     const nextFailureCostMajor = nextFailureCostCents / 100;
     const nextVoucherId = profile.default_voucher_id ?? user.id;
@@ -121,6 +125,7 @@ export default function SettingsDefaultsScreen() {
     setUsernameDraft(nextUsername);
     setDefaultPomoInput(String(nextPomo));
     setDefaultEventDurationInput(String(nextEventDuration));
+    setDefaultTaskDeadlineTimeInput(nextTaskDeadlineTime);
     setDefaultFailureCostInput(
       nextCurrency === 'INR'
         ? String(Math.round(nextFailureCostMajor))
@@ -135,6 +140,7 @@ export default function SettingsDefaultsScreen() {
     defaultsSavedRef.current = JSON.stringify({
       defaultPomoMinutes: nextPomo,
       defaultEventDurationMinutes: nextEventDuration,
+      defaultTaskDeadlineTime: nextTaskDeadlineTime,
       defaultFailureCostCents: nextFailureCostCents,
       defaultVoucherId: nextVoucherId,
       currency: nextCurrency,
@@ -151,6 +157,7 @@ export default function SettingsDefaultsScreen() {
   const normalizedPomoInput = defaultPomoInput.trim();
   const parsedPomoMinutes = Number(normalizedPomoInput);
   const normalizedEventDurationInput = defaultEventDurationInput.trim();
+  const normalizedDefaultTaskDeadlineTime = defaultTaskDeadlineTimeInput.trim();
   const parsedEventDurationMinutes = Number(normalizedEventDurationInput);
   const normalizedFailureCostInput = defaultFailureCostInput.trim();
   const parsedFailureCostMajor = Number(normalizedFailureCostInput);
@@ -182,11 +189,17 @@ export default function SettingsDefaultsScreen() {
     return null;
   }, [normalizedEventDurationInput, parsedEventDurationMinutes]);
 
+  const defaultTaskDeadlineTimeValidationError = useMemo(() => (
+    /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(normalizedDefaultTaskDeadlineTime)
+      ? null
+      : 'Default task deadline must be a valid 24-hour time (for example, 23:00).'
+  ), [normalizedDefaultTaskDeadlineTime]);
+
   const failureCostValidationError = useMemo(() => {
     if (!normalizedFailureCostInput) return 'Default failure cost is required.';
     if (parsedFailureCostCents === null) return 'Default failure cost is invalid.';
-    if (parsedFailureCostCents < failureCostBounds.minCents || parsedFailureCostCents > failureCostBounds.maxCents) {
-      return `Default failure cost must be between ${currencySymbol}${failureCostBounds.minMajor} and ${currencySymbol}${failureCostBounds.maxMajor}.`;
+    if (!isValidFailureCostCents(parsedFailureCostCents, failureCostBounds)) {
+      return `Default failure cost must be between ${currencySymbol}${failureCostBounds.minMajor} and ${currencySymbol}${failureCostBounds.maxMajor}, in ${currencySymbol}${failureCostBounds.stepMajor} increments.`;
     }
     return null;
   }, [normalizedFailureCostInput, parsedFailureCostCents, failureCostBounds, currencySymbol]);
@@ -234,6 +247,7 @@ export default function SettingsDefaultsScreen() {
     () => JSON.stringify({
       defaultPomoMinutes: parsedPomoMinutes,
       defaultEventDurationMinutes: parsedEventDurationMinutes,
+      defaultTaskDeadlineTime: normalizedDefaultTaskDeadlineTime,
       defaultFailureCostCents: parsedFailureCostCents,
       defaultVoucherId: resolvedDefaultVoucherId,
       currency,
@@ -243,6 +257,7 @@ export default function SettingsDefaultsScreen() {
     [
       parsedPomoMinutes,
       parsedEventDurationMinutes,
+      normalizedDefaultTaskDeadlineTime,
       parsedFailureCostCents,
       resolvedDefaultVoucherId,
       currency,
@@ -330,6 +345,10 @@ export default function SettingsDefaultsScreen() {
       setDefaultsError(eventDurationValidationError);
       return;
     }
+    if (defaultTaskDeadlineTimeValidationError) {
+      setDefaultsError(defaultTaskDeadlineTimeValidationError);
+      return;
+    }
     if (!timeZone || !timeZoneOptions.includes(timeZone)) {
       setDefaultsError('Timezone is invalid.');
       return;
@@ -344,6 +363,7 @@ export default function SettingsDefaultsScreen() {
         ...current,
         default_pomo_duration_minutes: parsedPomoMinutes,
         default_event_duration_minutes: parsedEventDurationMinutes,
+        default_task_deadline_time: normalizedDefaultTaskDeadlineTime,
         default_failure_cost_cents: parsedFailureCostCents,
         default_voucher_id: resolvedDefaultVoucherId,
         currency,
@@ -354,6 +374,7 @@ export default function SettingsDefaultsScreen() {
       const { error } = await supabase.from('profiles').update({
         default_pomo_duration_minutes: parsedPomoMinutes,
         default_event_duration_minutes: parsedEventDurationMinutes,
+        default_task_deadline_time: normalizedDefaultTaskDeadlineTime,
         default_failure_cost_cents: parsedFailureCostCents,
         default_voucher_id: resolvedDefaultVoucherId,
         currency,
@@ -384,6 +405,7 @@ export default function SettingsDefaultsScreen() {
     defaultsSnapshot,
     parsedPomoMinutes,
     parsedEventDurationMinutes,
+    normalizedDefaultTaskDeadlineTime,
     parsedFailureCostCents,
     currency,
     timeZone,
@@ -392,6 +414,7 @@ export default function SettingsDefaultsScreen() {
     pomoValidationError,
     failureCostValidationError,
     eventDurationValidationError,
+    defaultTaskDeadlineTimeValidationError,
     queryClient,
   ]);
 
@@ -510,6 +533,22 @@ export default function SettingsDefaultsScreen() {
                   value={defaultEventDurationInput}
                   onChangeText={(value) => {
                     setDefaultEventDurationInput(value);
+                    setDefaultsError(null);
+                  }}
+                />
+              </View>
+
+              <View style={styles.inlineField}>
+                <Text style={styles.inlineFieldLabel}>Default task deadline (24h)</Text>
+                <TextInput
+                  style={styles.inlineFieldInput}
+                  placeholder="23:00"
+                  placeholderTextColor={colors.textSubtle}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  value={defaultTaskDeadlineTimeInput}
+                  onChangeText={(value) => {
+                    setDefaultTaskDeadlineTimeInput(value);
                     setDefaultsError(null);
                   }}
                 />

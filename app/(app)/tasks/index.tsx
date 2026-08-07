@@ -65,6 +65,7 @@ export default function TasksScreen() {
   const { data: reputationScore } = useReputationScore(user?.id);
   const { data: googleCalendarConnection } = useGoogleCalendarConnection();
   const defaultEventDurationMinutes = normalizeEventDurationMinutes(authProfile?.default_event_duration_minutes);
+  const defaultTaskDeadlineTime = authProfile?.default_task_deadline_time ?? '23:00';
   const defaultGoogleEventColorId = googleCalendarConnection?.defaultEventColorId ?? '9';
   const queryClient = useQueryClient();
   const taskDetailPrefetcherRef = useRef<ReturnType<typeof createTaskDetailPrefetcher> | null>(null);
@@ -288,6 +289,11 @@ export default function TasksScreen() {
 
   const handleCompleteTaskRef = useRef<(taskId: string) => Promise<void>>(undefined);
   handleCompleteTaskRef.current = async (taskId: string) => {
+    // Stamped before any validation, cache work, or network call: the server
+    // judges the deadline against this instant, so it has to be the moment the
+    // user acted rather than whenever the request happens to go out.
+    const actionAt = new Date();
+
     if (taskId.startsWith('optimistic-')) {
       Alert.alert('Please wait', 'Task is still being created.');
       return;
@@ -330,7 +336,7 @@ export default function TasksScreen() {
 
     setConfettiBurstCount((prev) => prev + 1);
 
-    const result = await completeTask(taskId);
+    const result = await completeTask(taskId, actionAt);
     if (!result.success) {
       setOptimisticallyCompletingTaskIds((prev) => prev.filter((id) => id !== taskId));
       if (task) {
@@ -467,6 +473,7 @@ export default function TasksScreen() {
         refetchTasks={refetchTasks}
         queryClient={queryClient}
         defaultEventDurationMinutes={defaultEventDurationMinutes}
+        defaultTaskDeadlineTime={defaultTaskDeadlineTime}
         defaultGoogleEventColorId={defaultGoogleEventColorId}
         defaultRequiresProofForAllTasks={defaultRequiresProofForAllTasks}
         friends={friends}

@@ -1,5 +1,5 @@
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as AlarmKit from 'alarm-kit';
@@ -20,13 +20,22 @@ const LOCAL_REMINDER_ALARMKIT_MAP_KEY = 'vouch_local_reminder_alarmkit_ids_v1';
 const LOCAL_REMINDER_FINGERPRINT_MAP_KEY = 'vouch_local_reminder_fingerprints_v1';
 const LOCAL_REMINDER_SOUND_KEY = 'vouch_local_reminder_sound_key_v1';
 const REMOTE_REMINDER_DELIVERY_ACK_KEY = 'vouch_remote_reminder_delivery_acks_v1';
-const REMOTE_PUSH_REGISTERED_USER_KEY = 'vouch_remote_push_registered_user_v1';
+const LOCAL_REMINDER_CLAIM_SIGNATURE_KEY = 'vouch_local_reminder_claim_signature_v1';
 const ACTIVE_TASK_STATUSES = new Set(['ACTIVE', 'POSTPONED']);
 const DEFAULT_DEADLINE_10M_REMINDER_SOURCE = 'DEFAULT_DEADLINE_10M';
 const DEFAULT_DEADLINE_DUE_REMINDER_SOURCE = 'DEFAULT_DEADLINE_DUE';
-const LOCAL_REMINDER_BACKUP_DELAY_MS = 30 * 1000;
 const REMOTE_REMINDER_ACK_TTL_MS = 24 * 60 * 60 * 1000;
 const REMOTE_REMINDER_DELIVERY_TASK = 'vouch-remote-reminder-delivery';
+
+// iOS keeps only the 64 soonest pending local notifications per app and
+// silently drops the rest. Stay under that so unrelated one-off notifications
+// cannot evict a reminder, and let the server cover whatever does not fit.
+const MAX_LOCAL_SCHEDULED_NOTIFICATIONS = 60;
+
+// How long past its fire time a claim keeps the server from pushing to this
+// device. Long enough to absorb clock skew and a slow app launch; short enough
+// that a device which stops syncing hands delivery back to push quickly.
+const REMINDER_CLAIM_LEASE_MS = 10 * 60 * 1000;
 
 type ReminderRow = {
   id: string;
@@ -112,12 +121,42 @@ function isReminderRemoteDeliveryData(data: unknown): boolean {
   return kind === 'TASK_REMINDER_REMOTE_DELIVERED' || category === 'DEADLINE_REMINDER';
 }
 
+function isReminderInvalidationData(data: unknown): boolean {
+  return findStringValueDeep(data, 'kind') === 'REMINDER_INVALIDATED';
+}
+
+/**
+ * Re-arms this device after a reminder it holds was changed elsewhere.
+ *
+ * iOS will not run app code before firing a scheduled local notification, so a
+ * device that was offline when the user postponed a task from another client
+ * would otherwise fire the old alarm. The server sends a silent data push on
+ * invalidation; handling it here wakes the app in the background just long
+ * enough to cancel the stale schedule and arm the current one.
+ */
+async function handleReminderInvalidationAsync(data: unknown): Promise<boolean> {
+  if (!isReminderInvalidationData(data)) return false;
+
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id;
+    if (!userId) return true;
+
+    await syncLocalReminderNotificationsAsync(userId);
+  } catch (err) {
+    console.warn('[notifications] reminder invalidation sync failed:', err);
+  }
+  return true;
+}
+
 if (!TaskManager.isTaskDefined(REMOTE_REMINDER_DELIVERY_TASK)) {
   TaskManager.defineTask(REMOTE_REMINDER_DELIVERY_TASK, async ({ data, error }) => {
     if (error) {
       console.warn('[notifications] remote reminder delivery task failed:', error);
       return;
     }
+
+    if (await handleReminderInvalidationAsync(data)) return;
 
     await recordRemoteReminderDeliveryAsync(data);
   });
@@ -195,6 +234,18 @@ async function getNotificationSoundKeyForUserAsync(userId: string): Promise<Noti
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const data = (notification.request.content.data as Record<string, unknown> | undefined) ?? undefined;
+
+    // Invalidation wake-ups carry no user-visible content; they only exist to
+    // make the app re-arm its schedules.
+    if (await handleReminderInvalidationAsync(data)) {
+      return {
+        shouldShowBanner: false,
+        shouldShowList: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+
     if (await shouldSuppressLocalReminderBackupAsync(data)) {
       return {
         shouldShowBanner: false,
@@ -268,21 +319,6 @@ async function upsertLegacyPushTokenAsync(
     return false;
   }
   return true;
-}
-
-async function hasRemotePushRegistrationAsync(userId: string): Promise<boolean> {
-  try {
-    return await AsyncStorage.getItem(REMOTE_PUSH_REGISTERED_USER_KEY) === userId;
-  } catch {
-    return false;
-  }
-}
-
-async function markRemotePushRegisteredAsync(userId: string): Promise<void> {
-  await AsyncStorage.setItem(REMOTE_PUSH_REGISTERED_USER_KEY, userId);
-  // Remote delivery is the primary channel. Remove any local backups that may
-  // have been scheduled while registration was still in flight.
-  await clearLocalReminderNotificationsAsync();
 }
 
 async function upsertClientInstancePushTokenAsync(input: {
@@ -523,21 +559,35 @@ export async function cancelLocalReminderNotificationsForTaskAsync(taskId: strin
   if (!normalizedTaskId) return false;
 
   const fingerprintMap = await readLocalReminderFingerprintMapAsync();
-  const matchingScheduleKeys = Object.entries(fingerprintMap)
-    .filter(([, rawFingerprint]) => {
-      try {
-        const parsed = JSON.parse(rawFingerprint) as {
-          reminders?: { taskId?: unknown }[];
-        };
-        return Array.isArray(parsed.reminders)
-          && parsed.reminders.some((reminder) => reminder.taskId === normalizedTaskId);
-      } catch {
-        return false;
-      }
-    })
-    .map(([scheduleKey]) => scheduleKey);
+  const matchingScheduleKeys: string[] = [];
+  // Same-minute reminders share one OS schedule, so cancelling for this task
+  // also tears down the reminders of every task grouped with it. Collect all of
+  // them: each is now unarmed and must be handed back to the server.
+  const releasedReminderIds = new Set<string>();
 
-  return cancelLocalReminderBackupsAsync(matchingScheduleKeys);
+  for (const [scheduleKey, rawFingerprint] of Object.entries(fingerprintMap)) {
+    let parsed: { reminders?: { id?: unknown; taskId?: unknown }[] };
+    try {
+      parsed = JSON.parse(rawFingerprint);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed.reminders)) continue;
+    if (!parsed.reminders.some((reminder) => reminder.taskId === normalizedTaskId)) continue;
+
+    matchingScheduleKeys.push(scheduleKey);
+    for (const reminder of parsed.reminders) {
+      if (typeof reminder.id === 'string' && reminder.id) releasedReminderIds.add(reminder.id);
+    }
+  }
+
+  const canceled = await cancelLocalReminderBackupsAsync(matchingScheduleKeys);
+
+  // Without this the cron keeps treating the device as the owner of a schedule
+  // it no longer holds, and suppresses the push that should cover it.
+  await releaseReminderDeviceClaimsAsync(Array.from(releasedReminderIds));
+
+  return canceled;
 }
 
 export async function recordRemoteReminderDeliveryAsync(data: unknown): Promise<boolean> {
@@ -682,6 +732,32 @@ function groupReminderRows(reminders: ReminderRow[]): ReminderGroup[] {
   return Array.from(groupsByKey.values());
 }
 
+/**
+ * Trims the arm list to what the OS will actually hold.
+ *
+ * iOS keeps the 64 soonest pending local notifications and silently discards
+ * the rest, so a heavy week of reminders could otherwise evict schedules
+ * without any error surfacing. Groups that do not fit are left unarmed and
+ * therefore unclaimed, which routes them to server push instead of dropping
+ * them. Final calls sort ahead of same-minute warnings because they are the
+ * ones whose punctuality cannot be recovered.
+ */
+function applyLocalScheduleBudget(groups: ReminderGroup[]): ReminderGroup[] {
+  if (groups.length <= MAX_LOCAL_SCHEDULED_NOTIFICATIONS) return groups;
+
+  return [...groups]
+    .sort((left, right) => {
+      const fireAtDelta = getReminderGroupFireAtMs(left) - getReminderGroupFireAtMs(right);
+      if (fireAtDelta !== 0) return fireAtDelta;
+
+      const leftIsFinalCall = left.source === DEFAULT_DEADLINE_DUE_REMINDER_SOURCE;
+      const rightIsFinalCall = right.source === DEFAULT_DEADLINE_DUE_REMINDER_SOURCE;
+      if (leftIsFinalCall !== rightIsFinalCall) return leftIsFinalCall ? -1 : 1;
+      return 0;
+    })
+    .slice(0, MAX_LOCAL_SCHEDULED_NOTIFICATIONS);
+}
+
 function getReminderGroupFireAtMs(group: ReminderGroup): number {
   return group.reminders.reduce((earliest, reminder) => {
     const reminderAtMs = new Date(reminder.reminder_at).getTime();
@@ -714,6 +790,106 @@ function getAggregateReminderData(group: ReminderGroup, tasksById: Map<string, A
   };
 }
 
+/**
+ * Records which reminders this device has handed to its OS scheduler.
+ *
+ * The reminder cron reads these claims and skips pushing to any device that
+ * already has the reminder armed, which is what keeps local-first delivery from
+ * double-notifying. `armed_until` is a lease: a device that stops syncing lets
+ * its claims expire and delivery falls back to push.
+ */
+async function writeReminderDeviceClaimsAsync(input: {
+  userId: string;
+  armedReminders: { reminderId: string; fireAtMs: number }[];
+}): Promise<void> {
+  const userClientInstanceId = await resolveUserClientInstanceId(input.userId);
+  if (!userClientInstanceId) return;
+
+  const armedReminderIds = input.armedReminders.map((entry) => entry.reminderId);
+
+  // Reminder sync runs on every realtime change and every foreground, and it
+  // usually finds nothing to re-arm. Skip the round trip unless the armed set
+  // actually moved.
+  const signature = JSON.stringify(
+    input.armedReminders
+      .map((entry) => `${entry.reminderId}@${entry.fireAtMs}`)
+      .sort(),
+  );
+  try {
+    if (await AsyncStorage.getItem(LOCAL_REMINDER_CLAIM_SIGNATURE_KEY) === signature) return;
+  } catch {
+    // Fall through and write; a missing cache only costs one round trip.
+  }
+
+  if (armedReminderIds.length > 0) {
+    const { error } = await supabase
+      .from('reminder_device_claims')
+      .upsert(
+        input.armedReminders.map((entry) => ({
+          reminder_id: entry.reminderId,
+          user_id: input.userId,
+          user_client_instance_id: userClientInstanceId,
+          armed_until: new Date(entry.fireAtMs + REMINDER_CLAIM_LEASE_MS).toISOString(),
+          updated_at: new Date().toISOString(),
+        })) as any,
+        { onConflict: 'reminder_id,user_client_instance_id' },
+      );
+
+    if (error) {
+      console.warn('[notifications] failed to record reminder device claims:', error.message);
+    }
+  }
+
+  // Release anything this device is no longer holding, so the server resumes
+  // covering it. Reminders deleted upstream are cascaded away by the database.
+  let releaseQuery = supabase
+    .from('reminder_device_claims')
+    .delete()
+    .eq('user_id', input.userId)
+    .eq('user_client_instance_id', userClientInstanceId);
+
+  if (armedReminderIds.length > 0) {
+    releaseQuery = releaseQuery.not('reminder_id', 'in', `(${armedReminderIds.join(',')})`);
+  }
+
+  const { error: releaseError } = await releaseQuery;
+  if (releaseError) {
+    console.warn('[notifications] failed to release reminder device claims:', releaseError.message);
+    return;
+  }
+
+  try {
+    await AsyncStorage.setItem(LOCAL_REMINDER_CLAIM_SIGNATURE_KEY, signature);
+  } catch {
+    // Only costs a redundant write next sync.
+  }
+}
+
+async function releaseReminderDeviceClaimsAsync(reminderIds: string[]): Promise<void> {
+  if (reminderIds.length === 0) return;
+
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id;
+    if (!userId) return;
+
+    const userClientInstanceId = await resolveUserClientInstanceId(userId);
+    if (!userClientInstanceId) return;
+
+    await supabase
+      .from('reminder_device_claims')
+      .delete()
+      .eq('user_client_instance_id', userClientInstanceId)
+      .in('reminder_id', reminderIds as any);
+
+    // The armed set changed outside the sync, so the cached signature would
+    // otherwise let the next sync skip rewriting claims.
+    await AsyncStorage.removeItem(LOCAL_REMINDER_CLAIM_SIGNATURE_KEY);
+  } catch (err) {
+    console.warn('[notifications] failed to release reminder claims:', err);
+  }
+}
+
 export async function clearLocalReminderNotificationsAsync(): Promise<void> {
   try {
     const map = await readLocalReminderNotificationMapAsync();
@@ -733,6 +909,7 @@ export async function clearLocalReminderNotificationsAsync(): Promise<void> {
     await AsyncStorage.removeItem(LOCAL_REMINDER_FINGERPRINT_MAP_KEY);
     await AsyncStorage.removeItem(LOCAL_REMINDER_SOUND_KEY);
     await AsyncStorage.removeItem(REMOTE_REMINDER_DELIVERY_ACK_KEY);
+    await AsyncStorage.removeItem(LOCAL_REMINDER_CLAIM_SIGNATURE_KEY);
   } catch (err) {
     console.warn('[notifications] failed to clear local reminders:', err);
   }
@@ -749,22 +926,21 @@ export async function registerRemoteReminderDeliveryTaskAsync(): Promise<void> {
 }
 
 /**
- * Hybrid delivery: mirrors DB-backed task reminders as local on-device
- * notifications for offline resilience while backend push remains the
- * cross-device source of truth.
+ * Local-first delivery: arms DB-backed task reminders directly on this device's
+ * OS scheduler so they fire at the exact reminder second.
+ *
+ * Server push cannot be punctual — the reminder cron only *sees* an 18:00:00
+ * reminder on its 18:00 tick, then still has to claim rows, re-read tasks, and
+ * traverse Expo and APNs. The OS, handed an absolute date ahead of time, fires
+ * on the second. That matters most for the final call, whose entire purpose is
+ * to hand the user the inclusive deadline minute.
+ *
+ * Every reminder armed here is claimed in `reminder_device_claims` so the cron
+ * skips this device and still covers every device that has no claim.
  */
 export async function syncLocalReminderNotificationsAsync(userId: string): Promise<void> {
   try {
     if (!userId) return;
-
-    // Scheduling both channels cannot be made duplicate-proof on iOS because
-    // background delivery markers are best-effort while the app is suspended.
-    // A registered device therefore uses remote push only; local copy remains
-    // a fallback for devices where remote registration is unavailable.
-    if (await hasRemotePushRegistrationAsync(userId)) {
-      await clearLocalReminderNotificationsAsync();
-      return;
-    }
 
     await ensureAndroidNotificationChannelsAsync();
 
@@ -803,6 +979,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     const pendingReminderRows = reminderRows.filter((row) => !row.notified_at);
     if (pendingReminderRows.length === 0) {
       await clearLocalReminderNotificationsAsync();
+      await writeReminderDeviceClaimsAsync({ userId, armedReminders: [] });
       console.log('[notifications] local reminder sync summary', {
         userId,
         fetchedFutureReminderRows: reminderRows.length,
@@ -813,7 +990,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
         canceledExpo: 0,
         canceledAlarmKit: 0,
         skippedPast: 0,
-        skippedAlarmKit: 0,
+        alarmKitFallbackToExpo: 0,
         reusedExpo: 0,
         reusedAlarmKit: 0,
       });
@@ -863,7 +1040,12 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
         return 'unavailable' as const;
       });
 
-      if (alarmKitAuthorizationStatus === 'not_determined') {
+      // Only ask while the app is actually on screen. AlarmKit authorization is
+      // one-shot: if the request lands when iOS cannot present the prompt, it
+      // resolves to denied and never asks again. This sync runs from realtime
+      // events and from the background push handler, so most invocations are
+      // the wrong moment to spend that single chance.
+      if (alarmKitAuthorizationStatus === 'not_determined' && AppState.currentState === 'active') {
         alarmKitAuthorizationStatus = await AlarmKit.requestAlarmAuthorizationAsync().catch((err) => {
           console.warn('[notifications] failed to request AlarmKit authorization:', err);
           return 'denied' as const;
@@ -871,7 +1053,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       }
 
       if (alarmKitAuthorizationStatus !== 'authorized') {
-        console.warn('[notifications] skipping iOS 26 serious reminders because AlarmKit is not authorized:', {
+        console.warn('[notifications] falling back to standard notifications because AlarmKit is not authorized:', {
           userId,
           authorizationStatus: alarmKitAuthorizationStatus,
         });
@@ -881,12 +1063,15 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     const canScheduleAlarmKit = alarmKitAvailable && alarmKitAuthorizationStatus === 'authorized';
     const candidateExpoReminderRows = validReminders.filter((row) => {
       if (!shouldUseIOSAlarmKit(row.source)) return true;
-      return !alarmKitAvailable;
+      // Hand the reminder to Expo unless AlarmKit will genuinely take it.
+      // Keying this on availability alone dropped the ten-minute reminder from
+      // both channels on any iOS 26 device that had not authorized alarms.
+      return !canScheduleAlarmKit;
     });
     const alarmKitReminderRows = validReminders.filter((row) =>
       shouldUseIOSAlarmKit(row.source) && canScheduleAlarmKit
     );
-    const skippedAlarmKitCount = validReminders.filter((row) =>
+    const alarmKitFallbackCount = validReminders.filter((row) =>
       shouldUseIOSAlarmKit(row.source) && alarmKitAvailable && !canScheduleAlarmKit
     ).length;
 
@@ -908,7 +1093,9 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
 
     const remoteDeliveryAcks = await readRemoteReminderDeliveryAcksAsync(nowMs);
     const isUnacknowledgedGroup = (group: ReminderGroup) => !remoteDeliveryAcks[getReminderScheduleKey(group)];
-    const expoReminderGroups = groupReminderRows(expoReminderRows).filter(isUnacknowledgedGroup);
+    const expoReminderGroups = applyLocalScheduleBudget(
+      groupReminderRows(expoReminderRows).filter(isUnacknowledgedGroup),
+    );
     const alarmKitReminderGroups = groupReminderRows(alarmKitReminderRows).filter(isUnacknowledgedGroup);
     const desiredExpoScheduleKeys = new Set(expoReminderGroups.map(getReminderScheduleKey));
     const desiredAlarmKitScheduleKeys = new Set(alarmKitReminderGroups.map(getReminderScheduleKey));
@@ -982,8 +1169,8 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       const scheduleKey = getReminderScheduleKey(group);
       if (nextExpoMap[scheduleKey]) continue;
 
-      const delayMs = getReminderGroupFireAtMs(group) + LOCAL_REMINDER_BACKUP_DELAY_MS - nowMs;
-      if (!Number.isFinite(delayMs) || delayMs <= 0) {
+      const fireAtMs = getReminderGroupFireAtMs(group);
+      if (!Number.isFinite(fireAtMs) || fireAtMs <= Date.now()) {
         skippedPastCount += 1;
         continue;
       }
@@ -1021,10 +1208,12 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
                 local_schedule: true,
               },
         },
+        // Absolute DATE trigger, not TIME_INTERVAL: an interval is counted from the
+        // moment the OS accepts the schedule, so every awaited native call between
+        // here and the reminder's own timestamp would push delivery later.
         trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-          seconds: Math.max(1, Math.floor(delayMs / 1000)),
-          repeats: false,
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: fireAtMs,
           ...(Platform.OS === 'android'
             ? { channelId: resolveAndroidChannelId(notificationSoundKey) }
             : {}),
@@ -1040,7 +1229,7 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       const scheduleKey = getReminderScheduleKey(group);
       if (nextAlarmKitMap[scheduleKey]) continue;
 
-      const reminderAtMs = getReminderGroupFireAtMs(group) + LOCAL_REMINDER_BACKUP_DELAY_MS;
+      const reminderAtMs = getReminderGroupFireAtMs(group);
       if (!Number.isFinite(reminderAtMs) || reminderAtMs <= nowMs) {
         skippedPastCount += 1;
         continue;
@@ -1078,6 +1267,23 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
     if (expoReminderRows.length > 0) {
       await writeLocalReminderSoundKeyAsync(notificationSoundKey);
     }
+
+    // Claim exactly what ended up armed — reused schedules included, since a
+    // reused schedule is still live on the OS and must keep suppressing push.
+    const groupsByScheduleKey = new Map(
+      [...expoReminderGroups, ...alarmKitReminderGroups]
+        .map((group) => [getReminderScheduleKey(group), group] as const),
+    );
+    const armedReminders = Object.keys({ ...nextExpoMap, ...nextAlarmKitMap })
+      .flatMap((scheduleKey) => {
+        const group = groupsByScheduleKey.get(scheduleKey);
+        if (!group) return [];
+        const fireAtMs = getReminderGroupFireAtMs(group);
+        if (!Number.isFinite(fireAtMs)) return [];
+        return group.reminders.map((row) => ({ reminderId: row.id, fireAtMs }));
+      });
+
+    await writeReminderDeviceClaimsAsync({ userId, armedReminders });
     console.log('[notifications] local reminder sync summary', {
       userId,
       fetchedFutureReminderRows: reminderRows.length,
@@ -1088,10 +1294,11 @@ export async function syncLocalReminderNotificationsAsync(userId: string): Promi
       reusedAlarmKit: reusedAlarmKitCount,
       scheduledExpo: scheduledExpoCount,
       scheduledAlarmKit: scheduledAlarmKitCount,
+      armedReminderClaims: armedReminders.length,
       canceledExpo: canceledExpoCount,
       canceledAlarmKit: canceledAlarmKitCount,
       skippedPast: skippedPastCount,
-      skippedAlarmKit: skippedAlarmKitCount,
+      alarmKitFallbackToExpo: alarmKitFallbackCount,
       alarmKitAvailable,
       alarmKitAuthorizationStatus,
     });
@@ -1137,15 +1344,10 @@ export async function registerForPushNotificationsAsync(
         userClientInstanceId,
         updatedAt,
       });
-      if (handled) {
-        await markRemotePushRegisteredAsync(userId);
-        return;
-      }
+      if (handled) return;
     }
 
-    if (await upsertLegacyPushTokenAsync(userId, token, updatedAt)) {
-      await markRemotePushRegisteredAsync(userId);
-    }
+    await upsertLegacyPushTokenAsync(userId, token, updatedAt);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return;
     console.warn('[notifications] registration failed:', err);
@@ -1167,7 +1369,6 @@ export async function unregisterForPushNotificationsAsync(userId: string): Promi
       console.warn('[notifications] deregistration failed:', error.message);
       return;
     }
-    await AsyncStorage.removeItem(REMOTE_PUSH_REGISTERED_USER_KEY);
   } catch (err) {
     console.warn('[notifications] deregistration failed:', err);
   }

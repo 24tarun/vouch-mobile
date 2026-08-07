@@ -15,6 +15,7 @@ export type ProofCaptureAsset = ImagePickerAsset & {
   proofCapturedAtMs?: number | null;
   proofAttachedAtMs?: number | null;
   proofCaptureAttestation?: string | null;
+  proofCaptureLicense?: string | null;
 };
 
 export interface ProofTimestampMetadata {

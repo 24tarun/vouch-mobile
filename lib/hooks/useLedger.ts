@@ -7,7 +7,15 @@ import { useRealtimeInvalidation } from '@/lib/query/useRealtimeInvalidation';
 import type { Currency } from '@/lib/types';
 
 export type CurrencyCode = Currency;
-export type LedgerEntryKind = 'failure' | 'rectified' | 'override' | 'voucher_timeout_penalty' | 'other';
+export type LedgerEntryKind =
+  | 'failure'
+  | 'denied'
+  | 'missed'
+  | 'surrendered'
+  | 'rectified'
+  | 'override'
+  | 'voucher_timeout_penalty'
+  | 'other';
 
 export interface LedgerEntryRowData {
   id: string;
@@ -74,6 +82,9 @@ function parsePeriodFromCreatedAt(createdAt: string | null | undefined, fallback
 
 function normalizeEntryKind(raw: string): LedgerEntryKind {
   if (raw === 'failure') return 'failure';
+  if (raw === 'denied') return 'denied';
+  if (raw === 'missed') return 'missed';
+  if (raw === 'surrendered') return 'surrendered';
   if (raw === 'rectified') return 'rectified';
   if (raw === 'override') return 'override';
   if (raw === 'voucher_timeout_penalty') return 'voucher_timeout_penalty';
@@ -91,7 +102,9 @@ function monthTotals(entries: LedgerEntryRowData[]): { totalCents: number; failu
   return entries.reduce(
     (acc, entry) => {
       acc.totalCents += entry.amountCents;
-      if (entry.kind === 'failure') acc.failures += 1;
+      if (entry.kind === 'failure' || entry.kind === 'denied' || entry.kind === 'missed' || entry.kind === 'surrendered') {
+        acc.failures += 1;
+      }
       return acc;
     },
     { totalCents: 0, failures: 0 },

@@ -302,6 +302,31 @@ function buildTimelineEntries(event: TaskEvent, aiVouches: AiVouch[], usedAiVouc
         }),
         ...statusTransition,
       ];
+    case 'RECTIFICATION_APPROVED':
+    case 'RECTIFICATION_AUTO_APPROVED':
+      return [
+        makeTimelineEntry(event, 'status', {
+          status: event.to_status,
+          preserveStatus: true,
+          detail: getEventReason(event) ?? undefined,
+        }),
+      ];
+    case 'RECTIFICATION_AI_DENIED':
+      return [
+        makeTimelineEntry(event, 'action', {
+          label: 'AI Rectification Denied',
+          tone: 'DANGER',
+          detail: getEventReason(event) ?? undefined,
+        }),
+      ];
+    case 'RECTIFICATION_DECLINED':
+      return [
+        makeTimelineEntry(event, 'status', {
+          status: event.to_status,
+          preserveStatus: true,
+          detail: getEventReason(event) ?? undefined,
+        }),
+      ];
     case 'POMO_COMPLETED': {
       const elapsedSeconds = Number(event.metadata?.elapsed_seconds ?? 0);
       const durationLabel = elapsedSeconds > 0 ? ` (${formatPomoEventDuration(elapsedSeconds)})` : '';

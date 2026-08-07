@@ -16,7 +16,7 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '@/lib/ThemeContext';
 import { type Colors, radius, spacing, typography } from '@/lib/theme';
 import type { Currency, RecurrenceRule } from '@/lib/types';
-import { getFailureCostBounds } from '@/lib/domain/failure-cost';
+import { getFailureCostBounds, isValidFailureCostCents } from '@/lib/domain/failure-cost';
 import { useFriends } from '@/lib/hooks/useFriends';
 import {
   buildVoucherPillOptions,
@@ -125,8 +125,8 @@ export function PausedRecurrenceEditorSheet({
       const major = Number(failureCost.trim());
       const cents = Math.round(major * 100);
       const bounds = getFailureCostBounds(currency);
-      if (!Number.isFinite(major) || cents < bounds.minCents || cents > bounds.maxCents) {
-        setError(`Enter an amount between ${currencySymbol}${bounds.minMajor} and ${currencySymbol}${bounds.maxMajor}.`);
+      if (!Number.isFinite(major) || !isValidFailureCostCents(cents, bounds)) {
+        setError(`Enter an amount between ${currencySymbol}${bounds.minMajor} and ${currencySymbol}${bounds.maxMajor}, in ${currencySymbol}${bounds.stepMajor} increments.`);
         return;
       }
       patch = { failureCostCents: cents };

@@ -24,7 +24,7 @@ import {
   resolveTaskDeadline,
   titleHasDeadlineToken,
 } from '@/lib/task-title-parser';
-import { formatFailureCostFromCents, getFailureCostBounds } from '@/lib/domain/failure-cost';
+import { formatFailureCostFromCents, getFailureCostBounds, isValidFailureCostCents } from '@/lib/domain/failure-cost';
 import { sortDraftReminders } from '@/components/tasks/helpers';
 import {
   type DraftReminder,
@@ -57,6 +57,7 @@ interface FriendProfileShape {
   default_failure_cost_cents: number | null;
   default_voucher_id: string | null;
   default_requires_proof_for_all_tasks: boolean | null;
+  default_task_deadline_time: string | null;
   deadline_one_hour_warning_enabled: boolean | null;
   deadline_final_warning_enabled: boolean | null;
   deadline_due_warning_enabled: boolean | null;
@@ -75,6 +76,7 @@ interface Props {
   refetchTasks: () => void;
   queryClient: QueryClient;
   defaultEventDurationMinutes: number;
+  defaultTaskDeadlineTime: string;
   defaultGoogleEventColorId: GoogleEventColorId;
   defaultRequiresProofForAllTasks: boolean;
   friends: FriendOption[];
@@ -85,9 +87,11 @@ interface Props {
   updateOptimisticTaskId: (oldId: string, newId: string, recurrenceRuleId: string | null) => void;
 }
 
-function buildDefaultDeadlineDate(now: Date = new Date()): Date {
+function buildDefaultDeadlineDate(defaultTime: string, now: Date = new Date()): Date {
   const candidate = new Date(now);
-  candidate.setHours(23, 0, 0, 0);
+  const match = /^(?:[01]\d|2[0-3]):[0-5]\d$/.exec(defaultTime);
+  const [hours, minutes] = match ? defaultTime.split(':').map(Number) : [23, 0];
+  candidate.setHours(hours, minutes, 0, 0);
   if (candidate.getTime() <= now.getTime()) {
     candidate.setDate(candidate.getDate() + 1);
   }
@@ -193,6 +197,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   refetchTasks,
   queryClient,
   defaultEventDurationMinutes,
+  defaultTaskDeadlineTime,
   defaultGoogleEventColorId,
   defaultRequiresProofForAllTasks,
   friends,
@@ -208,8 +213,8 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   const hasInitializedFailureCostRef = useRef(false);
 
   const [title, setTitle] = useState('');
-  const [deadlineDate, setDeadlineDate] = useState<Date>(() => buildDefaultDeadlineDate());
-  const [customDeadlineDate, setCustomDeadlineDate] = useState<Date>(() => buildDefaultDeadlineDate());
+  const [deadlineDate, setDeadlineDate] = useState<Date>(() => buildDefaultDeadlineDate(defaultTaskDeadlineTime));
+  const [customDeadlineDate, setCustomDeadlineDate] = useState<Date>(() => buildDefaultDeadlineDate(defaultTaskDeadlineTime));
   const [isDeadlineCustomized, setIsDeadlineCustomized] = useState(false);
   const [customDeadlinePickerMode, setCustomDeadlinePickerMode] = useState<'date' | 'time'>('date');
   const [showCustomDeadlineAndroidPicker, setShowCustomDeadlineAndroidPicker] = useState(false);
@@ -297,7 +302,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
 
   function resetCreateDraftState() {
     setTitle('');
-    const nextDeadline = buildDefaultDeadlineDate();
+    const nextDeadline = buildDefaultDeadlineDate(defaultTaskDeadlineTime);
     setDeadlineDate(nextDeadline);
     setRemovedPresetSources([]);
     setDraftReminders([]);
@@ -336,7 +341,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     setRequiresProof(defaultRequiresProofForAllTasks);
     titleInputRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, defaultRequiresProofForAllTasks]);
+  }, [visible, defaultRequiresProofForAllTasks, defaultTaskDeadlineTime]);
 
   useEffect(() => {
     if (!visible) {
@@ -587,7 +592,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
   }
 
   function resetDeadlineAndRecurrenceSelection() {
-    const nextDeadline = buildDefaultDeadlineDate();
+    const nextDeadline = buildDefaultDeadlineDate(defaultTaskDeadlineTime);
     setDeadlineDate(nextDeadline);
     setCustomDeadlineDate(nextDeadline);
     clearRecurrenceSelection();
@@ -676,11 +681,11 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     const failureCostCents = Math.round(parsedFailureCostMajor * 100);
     const activeCurrency: Currency = friendProfile?.currency ?? 'USD';
     const failureBounds = getFailureCostBounds(activeCurrency);
-    if (failureCostCents < failureBounds.minCents || failureCostCents > failureBounds.maxCents) {
+    if (!isValidFailureCostCents(failureCostCents, failureBounds)) {
       const symbol = activeCurrency === 'EUR' ? '\u20AC' : activeCurrency === 'INR' ? '\u20B9' : '$';
       Alert.alert(
         'Invalid failure cost',
-        `Failure cost must be between ${symbol}${failureBounds.minMajor} and ${symbol}${failureBounds.maxMajor}.`,
+        `Failure cost must be between ${symbol}${failureBounds.minMajor} and ${symbol}${failureBounds.maxMajor}, in ${symbol}${failureBounds.stepMajor} increments.`,
       );
       return;
     }
@@ -731,7 +736,7 @@ export const TasksScreenCreatorOverlay = memo(function TasksScreenCreatorOverlay
     let deadlineToCreate = new Date(deadlineOverride ?? deadlineDate);
     deadlineToCreate.setSeconds(0, 0);
     if (!isDeadlineCustomized && deadlineToCreate.getTime() <= Date.now()) {
-      deadlineToCreate = buildDefaultDeadlineDate();
+      deadlineToCreate = buildDefaultDeadlineDate(defaultTaskDeadlineTime);
       setDeadlineDate(deadlineToCreate);
       setCustomDeadlineDate(deadlineToCreate);
     }

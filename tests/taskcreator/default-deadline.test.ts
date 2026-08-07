@@ -22,4 +22,13 @@ describe('getDefaultDeadline', () => {
     expect(deadline.getHours()).toBe(23);
     expect(deadline.getMinutes()).toBe(0);
   });
+
+  it('uses the configured deadline time and rolls midnight to the next day', () => {
+    const now = new Date(2026, 5, 10, 17, 27, 36);
+    const deadline = getDefaultDeadline(now, '00:00');
+
+    expect(deadline.getDate()).toBe(11);
+    expect(deadline.getHours()).toBe(0);
+    expect(deadline.getMinutes()).toBe(0);
+  });
 });

@@ -20,7 +20,15 @@ import { useLedger } from '@/lib/hooks/useLedger';
 import { requestCurrentMonthLedgerReport } from '@/lib/ledger-report';
 
 type CurrencyCode = 'USD' | 'EUR' | 'INR';
-type LedgerEntryKind = 'failure' | 'rectified' | 'override' | 'voucher_timeout_penalty' | 'other';
+type LedgerEntryKind =
+  | 'failure'
+  | 'denied'
+  | 'missed'
+  | 'surrendered'
+  | 'rectified'
+  | 'override'
+  | 'voucher_timeout_penalty'
+  | 'other';
 
 interface LedgerEntry {
   id: string;
@@ -86,13 +94,18 @@ function formatCurrency(cents: number, currency: CurrencyCode): string {
 function badgeForKind(kind: LedgerEntryKind, colors: Colors, taskStatus?: string | null): { label: string; fg: string; bg: string } {
   switch (kind) {
     case 'failure':
+    case 'denied':
       if (taskStatus === 'AWAITING_RECTIFICATION') {
         return { label: 'AWAITING RECTIFICATION', fg: '#C4B5FD', bg: 'rgba(139,92,246,0.20)' };
       }
-      if (taskStatus === 'SURRENDERED') {
-        return { label: 'SURRENDERED', fg: '#EF4444', bg: 'rgba(239,68,68,0.18)' };
+      return { label: 'DENIED', fg: '#EF4444', bg: 'rgba(239,68,68,0.18)' };
+    case 'missed':
+      if (taskStatus === 'AWAITING_RECTIFICATION') {
+        return { label: 'AWAITING RECTIFICATION', fg: '#C4B5FD', bg: 'rgba(139,92,246,0.20)' };
       }
       return { label: 'MISSED', fg: '#EF4444', bg: 'rgba(239,68,68,0.18)' };
+    case 'surrendered':
+      return { label: 'SURRENDERED', fg: '#EF4444', bg: 'rgba(239,68,68,0.18)' };
     case 'rectified':
       return { label: 'RECTIFIED', fg: '#22C55E', bg: 'rgba(34,197,94,0.18)' };
     case 'override':

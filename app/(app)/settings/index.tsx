@@ -29,7 +29,7 @@ import {
   normalizeAiUsername,
   normalizeAiEmail,
 } from '@/lib/constants/ai-profile';
-import { getFailureCostBounds } from '@/lib/domain/failure-cost';
+import { getFailureCostBounds, isValidFailureCostCents } from '@/lib/domain/failure-cost';
 import { ACTIVE_VOUCHER_TASK_STATUSES } from '@/lib/constants/task-status';
 import { normalizePomoDurationMinutes } from '@/lib/constants/timings';
 import { CalendarSyncSection } from '@/components/settings/CalendarSyncSection';
@@ -1083,10 +1083,9 @@ export default function SettingsScreen() {
     if (!normalizedFailureCostInput) return 'Default failure cost is required.';
     if (parsedFailureCostCents === null) return 'Default failure cost is invalid.';
     if (
-      parsedFailureCostCents < failureCostBounds.minCents ||
-      parsedFailureCostCents > failureCostBounds.maxCents
+      !isValidFailureCostCents(parsedFailureCostCents, failureCostBounds)
     ) {
-      return `Default failure cost must be between ${currencySymbol}${failureCostBounds.minMajor} and ${currencySymbol}${failureCostBounds.maxMajor}.`;
+      return `Default failure cost must be between ${currencySymbol}${failureCostBounds.minMajor} and ${currencySymbol}${failureCostBounds.maxMajor}, in ${currencySymbol}${failureCostBounds.stepMajor} increments.`;
     }
     return null;
   }, [

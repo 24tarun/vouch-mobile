@@ -102,6 +102,7 @@ export interface Profile {
   currency: Currency;
   default_pomo_duration_minutes: number;
   default_event_duration_minutes: number;
+  default_task_deadline_time: string;
   default_failure_cost_cents: number;
   default_voucher_id: string | null;
   default_requires_proof_for_all_tasks: boolean;

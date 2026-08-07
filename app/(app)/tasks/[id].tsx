@@ -190,6 +190,7 @@ function buildRecurrenceSummary(task: Task, recurrenceRule: RecurrenceRule | nul
       const days = (config?.days_of_week ?? [])
         .map((day) => Number(day))
         .filter((day) => Number.isFinite(day))
+        .sort((a, b) => (a === 0 ? 7 : a) - (b === 0 ? 7 : b))
         .map((day) => weekdayName(day));
 
       if (days.length > 0) {
@@ -308,6 +309,7 @@ export default function TaskDetailScreen() {
   }, [id, queryClient]);
 
   const [subtasks, setSubtasks] = useState<Subtask[]>(() => getCachedSubtasks() ?? []);
+  const [subtasksLoaded, setSubtasksLoaded] = useState(() => getCachedSubtasks() !== undefined);
   const [newSubtaskDraft, setNewSubtaskDraft] = useState('');
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [isSavingDescription, setIsSavingDescription] = useState(false);
@@ -320,18 +322,25 @@ export default function TaskDetailScreen() {
     const cached = getCachedSubtasks();
     if (cached) {
       setSubtasks(cached);
+      setSubtasksLoaded(true);
       return;
     }
     let cancelled = false;
     setSubtasks([]);
+    setSubtasksLoaded(false);
     supabase
       .from('task_subtasks')
       .select('id, title, is_completed, completed_at')
       .eq('parent_task_id', id)
       .order('created_at', { ascending: true })
       .then(({ data, error }) => {
-        if (cancelled || error || !data) return;
+        if (cancelled) return;
+        if (error || !data) {
+          setSubtasksLoaded(false);
+          return;
+        }
         setSubtasks(data as Subtask[]);
+        setSubtasksLoaded(true);
       });
     return () => { cancelled = true; };
   }, [id, getCachedSubtasks]);
@@ -974,7 +983,6 @@ export default function TaskDetailScreen() {
         return;
       }
 
-      const period = new Date().toISOString().slice(0, 7);
       const nowIso = new Date().toISOString();
       const actorUserClientInstanceId = await resolveUserClientInstanceId(user.id);
 
@@ -995,27 +1003,17 @@ export default function TaskDetailScreen() {
         return;
       }
 
-      const [ledgerRes, eventRes] = await Promise.all([
-        supabase.from('ledger_entries').insert({
-          user_id: user.id,
-          task_id: task.id,
-          period,
-          amount_cents: task.failure_cost_cents,
-          entry_type: 'failure',
-        } as any),
-        supabase.from('task_events').insert({
+      const { error: eventError } = await supabase.from('task_events').insert({
           task_id: task.id,
           event_type: 'ACCEPT_DENIAL',
           actor_id: user.id,
           actor_user_client_instance_id: actorUserClientInstanceId,
           from_status: 'AWAITING_USER',
           to_status: 'DENIED',
-        } as any),
-      ]);
+        } as any);
 
-      if (ledgerRes.error || eventRes.error) {
-        const firstError = ledgerRes.error ?? eventRes.error;
-        Alert.alert('Denial finalized', `Task is denied, but follow-up logging failed: ${firstError?.message ?? 'Unknown error'}`);
+      if (eventError) {
+        Alert.alert('Denial finalized', `Task is denied, but event logging failed: ${eventError.message}`);
       }
 
       await Promise.resolve(detail.refetch());
@@ -1404,11 +1402,20 @@ export default function TaskDetailScreen() {
 
   // ── Complete task ──────────────────────────────────────────────────────────
   async function handleMarkComplete() {
+    // Stamped before validation and the network round trip — the server judges
+    // the deadline against when the user pressed, not when the write lands.
+    const actionAt = new Date();
+
     if (!task || isCompleting) return;
+
+    if (subtasks.some((subtask) => !subtask.is_completed)) {
+      Alert.alert('All subtasks must be completed', 'Complete every subtask before marking this task complete.');
+      return;
+    }
 
     setIsCompleting(true);
     try {
-      const result = await completeTask(task.id);
+      const result = await completeTask(task.id, actionAt);
       if (!result.success) {
         Alert.alert('Could not complete task', result.error ?? 'Unknown error');
         return;
@@ -1545,6 +1552,10 @@ export default function TaskDetailScreen() {
 
   async function handleDeletePress() {
     if (!task || isDeleting) return;
+    if (task.recurrence_rule_id) {
+      Alert.alert('Delete unavailable', 'Recurring task instances cannot be deleted. Pause or stop the repetition instead.');
+      return;
+    }
     if (!isTaskWithinDeleteWindow(task.created_at)) {
       Alert.alert('Delete unavailable', 'Tasks can only be deleted within 1 hour of creation.');
       return;
@@ -1809,6 +1820,7 @@ export default function TaskDetailScreen() {
   const isActiveOrPostponed = s === 'ACTIVE' || s === 'POSTPONED';
   const isMissedOrDenied = s === 'MISSED' || s === 'DENIED' || s === 'SURRENDERED';
   const isOwnTask = task.user_id === user?.id;
+  const hasIncompleteSubtasks = subtasks.some((subtask) => !subtask.is_completed);
   const isAiVouched = task.voucher_id === AI_PROFILE_ID;
   const isAwaitingUserAi = isOwnTask && isAiVouched && s === 'AWAITING_USER';
   const aiResubmitCount = Number(task.resubmit_count ?? 0);
@@ -1818,7 +1830,7 @@ export default function TaskDetailScreen() {
   const latestAiDenialReason = getLatestAiDenialReason(aiVouches, events);
 
   const canPomo          = isOwnTask && isActiveOrPostponed;
-  const canComplete      = isOwnTask && isActiveOrPostponed && !isCompleting;
+  const canComplete      = isOwnTask && isActiveOrPostponed && subtasksLoaded && !hasIncompleteSubtasks && !isCompleting;
   const completionEditingLocked = isTaskCompletionLocked(task.status, task.deadline, taskActionNowMs);
   const canProof         = isOwnTask && s !== 'AWAITING_RECTIFICATION' && (isActiveOrPostponed || (!completionEditingLocked && (s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI' || s === 'MARKED_COMPLETE')));
   const canManageRepetitions = isOwnTask && !!task.recurrence_rule_id && !!recurrenceRule;
@@ -1827,8 +1839,8 @@ export default function TaskDetailScreen() {
   const canUndoComplete  = isOwnTask && !completionEditingLocked && (s === 'MARKED_COMPLETE' || s === 'AWAITING_VOUCHER' || s === 'AWAITING_AI' || s === 'ACCEPTED') && !isUndoingComplete;
   const canPostpone      = isOwnTask && s === 'ACTIVE' && !task.postponed_at && !isPostponing;
   const hasValidCreatedAt = Number.isFinite(new Date(task.created_at).getTime());
-  const canDelete        = isOwnTask && isActiveOrPostponed && isTaskWithinDeleteWindow(task.created_at, taskActionNowMs) && !isDeleting;
-  const canSurrender     = isOwnTask && isActiveOrPostponed && hasValidCreatedAt && !canDelete && !isDeleting;
+  const canDelete        = isOwnTask && isActiveOrPostponed && !task.recurrence_rule_id && isTaskWithinDeleteWindow(task.created_at, taskActionNowMs) && !isDeleting;
+  const canSurrender     = isOwnTask && isActiveOrPostponed && hasValidCreatedAt && !isTaskWithinDeleteWindow(task.created_at, taskActionNowMs) && !isDeleting;
 
   const isSelfVouch = task.voucher_id === task.user_id;
   const isCurrentTaskPomo = activePomoSession?.task_id === task.id;

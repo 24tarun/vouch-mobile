@@ -353,7 +353,8 @@ BEGIN
   v_request_period := to_char(now() AT TIME ZONE v_timezone, 'YYYY-MM');
   SELECT period, created_at INTO v_period, v_failure_at
   FROM public.ledger_entries
-  WHERE task_id = v_task.id AND user_id = v_actor AND entry_type = 'failure'
+  WHERE task_id = v_task.id AND user_id = v_actor
+    AND entry_type IN ('denied', 'missed', 'surrendered')
   ORDER BY created_at DESC
   LIMIT 1;
   IF v_period IS NULL THEN
@@ -590,7 +591,8 @@ BEGIN
   v_request_period := to_char(now() AT TIME ZONE v_timezone, 'YYYY-MM');
   SELECT period, created_at INTO v_period, v_failure_at
   FROM public.ledger_entries
-  WHERE task_id = v_task.id AND user_id = v_task.user_id AND entry_type = 'failure'
+  WHERE task_id = v_task.id AND user_id = v_task.user_id
+    AND entry_type IN ('denied', 'missed', 'surrendered')
   ORDER BY created_at DESC
   LIMIT 1;
   IF v_period IS NULL THEN RAISE EXCEPTION 'Original failure ledger entry was not found'; END IF;

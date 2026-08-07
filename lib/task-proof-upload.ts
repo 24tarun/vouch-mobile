@@ -1,4 +1,5 @@
 import { File } from 'expo-file-system';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
 import { deriveProofTimestampMetadata, type ProofCaptureAsset } from '@/lib/proof-timestamp-mobile';
 import { prepareTaskProofMedia, type PreparedTaskProofMedia } from '@/lib/proof-media-preparation';
@@ -46,6 +47,7 @@ interface TaskProofIntent {
     | 'ATTACHED';
   proofTimezone: string;
   captureAttestation?: string | null;
+  captureLicense?: string | null;
 }
 
 interface TaskProofMeta extends TaskProofIntent {
@@ -74,6 +76,11 @@ interface TaskProofSimpleResponse {
 
 interface TaskProofCaptureStartResponse extends TaskProofSimpleResponse {
   captureAttestation?: string;
+}
+
+interface TaskProofCaptureLicenseResponse extends TaskProofSimpleResponse {
+  captureLicense?: string;
+  expiresAt?: string;
 }
 
 export type TaskProofUploadResult = ProofUploadSuccess | ProofUploadFailure;
@@ -264,6 +271,67 @@ export async function beginTaskProofCapture(
     return { success: false, error: data?.error || 'Could not start proof capture.' };
   }
   return { success: true, captureAttestation: data.captureAttestation };
+}
+
+const CAPTURE_LICENSE_STORAGE_KEY = 'vouch_capture_licenses_v1';
+
+type StoredCaptureLicense = { captureLicense: string; expiresAt: string };
+
+async function readCaptureLicensesAsync(): Promise<Record<string, StoredCaptureLicense>> {
+  try {
+    const raw = await AsyncStorage.getItem(CAPTURE_LICENSE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    return parsed as Record<string, StoredCaptureLicense>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Fetches and caches permission to start a proof capture without connectivity.
+ *
+ * `begin-capture` needs a live round trip at the moment the shutter fires, so a
+ * user with no signal at 18:00:55 could not start a qualifying capture at all.
+ * A license obtained earlier — while the app was online — closes that gap: the
+ * device records the capture instant locally and presents both at upload time.
+ * Safe to call opportunistically; expired entries are simply replaced.
+ */
+export async function ensureTaskProofCaptureLicense(taskId: string): Promise<string | null> {
+  const licenses = await readCaptureLicensesAsync();
+  const cached = licenses[taskId];
+  if (cached && Date.parse(cached.expiresAt) > Date.now()) {
+    return cached.captureLicense;
+  }
+
+  const { data, error } = await invokeTaskProofFunction<TaskProofCaptureLicenseResponse>({
+    action: 'issue-capture-license',
+    taskId,
+  });
+
+  if (error || !data?.success || !data.captureLicense || !data.expiresAt) return null;
+
+  const next = { ...licenses, [taskId]: { captureLicense: data.captureLicense, expiresAt: data.expiresAt } };
+  // Drop anything already expired so this map cannot grow without bound.
+  for (const [key, value] of Object.entries(next)) {
+    if (!(Date.parse(value?.expiresAt ?? '') > Date.now())) delete next[key];
+  }
+
+  try {
+    await AsyncStorage.setItem(CAPTURE_LICENSE_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // A cache write failure only costs the offline fallback, not the capture.
+  }
+
+  return data.captureLicense;
+}
+
+export async function readTaskProofCaptureLicense(taskId: string): Promise<string | null> {
+  const licenses = await readCaptureLicensesAsync();
+  const cached = licenses[taskId];
+  if (!cached || !(Date.parse(cached.expiresAt) > Date.now())) return null;
+  return cached.captureLicense;
 }
 
 async function finalizeProofUpload(taskId: string, proofMeta: TaskProofMeta): Promise<{ success: true } | { success: false; error: string }> {
@@ -488,6 +556,9 @@ export async function uploadTaskProofAsset(taskId: string, asset: ProofCaptureAs
       proofTimestampSource: proofTimestamp.timestampSource,
       proofTimezone: proofTimestamp.timeZone,
       captureAttestation: asset.proofCaptureAttestation ?? null,
+      // Only consulted by the server when there is no server attestation, i.e.
+      // when the device was offline at capture time.
+      captureLicense: asset.proofCaptureLicense ?? null,
     };
 
     const initResult = await initProofUpload(taskId, proofIntent);

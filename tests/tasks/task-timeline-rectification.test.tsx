@@ -71,3 +71,24 @@ describe('TaskTimeline rectification cancellation', () => {
     expect(tree.indexOf('Cancelled Rectification')).toBeLessThan(tree.indexOf('Missed'));
   });
 });
+
+describe('TaskTimeline AI rectification decisions', () => {
+  it('renders the AI approval reason below the rectified status', () => {
+    const approvalReason = 'The uploaded proof confirms the task was completed.';
+    const approvalEvent: TaskEvent = {
+      id: 'ai-approved',
+      task_id: task.id,
+      event_type: 'RECTIFICATION_APPROVED',
+      actor_id: '11111111-1111-1111-1111-111111111111',
+      from_status: 'AWAITING_RECTIFICATION',
+      to_status: 'RECTIFIED',
+      metadata: { reason: approvalReason },
+      created_at: '2026-08-02T11:05:00.000Z',
+    };
+
+    const { getByText } = render(<TaskTimeline task={task} events={[approvalEvent]} />);
+
+    expect(getByText('Rectified')).toBeTruthy();
+    expect(getByText(approvalReason)).toBeTruthy();
+  });
+});

@@ -1417,6 +1417,10 @@ export default function TaskDetailScreen() {
     try {
       const result = await completeTask(task.id, actionAt);
       if (!result.success) {
+        if (result.errorCode === 'PROOF_REQUIRED') {
+          openTaskProofCapture();
+          return;
+        }
         Alert.alert('Could not complete task', result.error ?? 'Unknown error');
         return;
       }

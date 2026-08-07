@@ -14,6 +14,7 @@ interface TaskMutationResult {
   success: boolean;
   userId?: string;
   error?: string;
+  errorCode?: 'PROOF_REQUIRED';
   warningMessage?: string;
   recurrenceRuleId?: string;
   pausedAt?: string | null;
@@ -142,7 +143,12 @@ export async function completeTask(
     }
 
     if (!proofRows || proofRows.length === 0) {
-      return { success: false, userId, error: 'Please upload proof before marking this task complete.' };
+      return {
+        success: false,
+        userId,
+        errorCode: 'PROOF_REQUIRED',
+        error: 'Please upload proof before marking this task complete.',
+      };
     }
   }
 

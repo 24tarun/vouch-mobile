@@ -36,9 +36,9 @@ import { queryKeys } from '@/lib/query/keys';
 import { sendProofRequestedPushNotificationAsync } from '@/lib/notifications';
 import { purgeTaskProofForFinalState, queueRectificationNotification } from '@/lib/task-proof-upload';
 import { VOUCHER_ACTIONABLE_STATUSES, VOUCHER_ACTIVE_VIEW_STATUSES } from '@/lib/constants/task-status';
-import { useFriendQueue, type VoucherTaskRow, type VouchHistoryTaskRow } from '@/lib/hooks/useFriendQueue';
+import { useFriendQueue, type VoucherTaskRow } from '@/lib/hooks/useFriendQueue';
 import type { TaskDetailData } from '@/lib/hooks/useTaskDetail';
-import { authorizeTaskRectification, decideTaskRectification, requestRectificationProof } from '@/lib/rectification';
+import { decideTaskRectification, requestRectificationProof } from '@/lib/rectification';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -58,7 +58,7 @@ function scheduleDeckLayoutAnimation() {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type DecisionAction = 'accept' | 'deny' | 'proof';
-type TabView = 'pending' | 'active' | 'history';
+type TabView = 'pending' | 'active';
 type DeckIntent = 'accept' | 'deny' | 'next';
 
 interface TaskProof {
@@ -539,54 +539,6 @@ function FriendDeck({
   );
 }
 
-// ─── History row ──────────────────────────────────────────────────────────────
-
-const HistoryRow = memo(function HistoryRow({
-  task,
-  isRectifying,
-  canRectify,
-  onPress,
-  onRectify,
-}: {
-  task: VouchHistoryTaskRow;
-  isRectifying: boolean;
-  canRectify: boolean;
-  onPress: () => void;
-  onRectify: () => void;
-}) {
-  const { colors, isDark } = useTheme();
-  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
-  const username = task.user?.username ?? 'Unknown';
-  return (
-    <TouchableOpacity style={styles.historyRow} activeOpacity={0.75} onPress={onPress} accessibilityRole="button">
-      <UserAvatar username={username} avatarPath={task.user?.avatar_path} size={28} />
-      <View style={styles.historyRowBody}>
-        <Text style={styles.historyTaskTitle} numberOfLines={1}>{task.title}</Text>
-        <View style={styles.historyRowPillRow}>
-          <StatusPill status={task.status} />
-          <Text style={styles.historyTaskMeta} numberOfLines={1}>
-            {username.toLowerCase()} · {timeAgo(task.updated_at)}
-          </Text>
-        </View>
-      </View>
-      {canRectify ? (
-        <TouchableOpacity
-          style={[styles.rectifyBtn, isRectifying && { opacity: 0.55 }]}
-          onPress={(e) => { e.stopPropagation(); onRectify(); }}
-          disabled={isRectifying}
-          activeOpacity={0.75}
-        >
-          {isRectifying
-            ? <ActivityIndicator size="small" color="#22C55E" />
-            : <Text style={styles.rectifyBtnText}>Rectify</Text>}
-        </TouchableOpacity>
-      ) : (
-        <Feather name="external-link" size={14} color={colors.textSubtle} />
-      )}
-    </TouchableOpacity>
-  );
-});
-
 const ActiveRow = memo(function ActiveRow({ task }: { task: VoucherTaskRow }) {
   const { colors: c, isDark: dk } = useTheme();
   const styles = makeStyles(c, dk);
@@ -595,8 +547,8 @@ const ActiveRow = memo(function ActiveRow({ task }: { task: VoucherTaskRow }) {
     <View style={styles.activeRow}>
       <UserAvatar username={username} avatarPath={task.user?.avatar_path} size={28} />
       <View style={styles.activeRowBody}>
-        <Text style={styles.historyTaskTitle} numberOfLines={1}>{task.title}</Text>
-        <Text style={styles.historyTaskMeta} numberOfLines={1}>
+        <Text style={styles.activeTaskTitle} numberOfLines={1}>{task.title}</Text>
+        <Text style={styles.activeTaskMeta} numberOfLines={1}>
           {username.toLowerCase()} · due {formatActiveDeadline(task.deadline)}
         </Text>
       </View>
@@ -616,30 +568,22 @@ export default function FriendsScreen() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const { width: screenWidth } = useWindowDimensions();
-  const [searchQuery] = useState('');
-  const friendQueue = useFriendQueue(user?.id, searchQuery);
+  const friendQueue = useFriendQueue(user?.id);
   const [refreshing, setRefreshing] = useState(false);
   const [inFlightByTaskId, setInFlightByTaskId] = useState<Record<string, DecisionAction | null>>({});
-  const [inFlightRectifyByTaskId, setInFlightRectifyByTaskId] = useState<Record<string, boolean>>({});
   // Ids the user has optimistically accepted/denied. Kept separate from
   // inFlightByTaskId because rapid clicks trigger concurrent realtime refetches;
-  // an intermediate refetch that started before the second click can return the
-  // second task still in an actionable status, re-injecting it into the cache
-  // and ghosting it into the deck. Filter until history confirms terminal state.
+  // an intermediate refetch can still return an actionable task and ghost it
+  // back into the deck. The short guard keeps the resolved card hidden.
   const [resolvedTaskIds, setResolvedTaskIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<TabView>('pending');
   const [pendingFocusAutoTabToken, setPendingFocusAutoTabToken] = useState(0);
   const [lightboxProof, setLightboxProof] = useState<TaskProof | null>(null);
 
   const tasks = friendQueue.tasks;
-  const historyTasks = friendQueue.historyTasks;
   const rectificationRequests = friendQueue.rectificationRequests;
   const loading = friendQueue.loading || friendQueue.rectificationLoading;
-  const historyLoading = friendQueue.historyLoading;
-  const historyHasMore = friendQueue.historyHasMore;
-  const historyLoadingMore = friendQueue.historyLoadingMore;
   const error = friendQueue.error;
-  const historyError = friendQueue.historyError;
 
   const resolvedIdSet = useMemo(() => new Set(resolvedTaskIds), [resolvedTaskIds]);
   const awaitingVoucherTasks = useMemo(
@@ -667,14 +611,13 @@ export default function FriendsScreen() {
   // Safety net: realtime can drop events during reconnect, app backgrounding,
   // or when the screen was unmounted. Refetch on focus so the list always
   // reflects server state the moment the user lands here.
-  const { refetchQueue, refetchHistory, refetchRectifications } = friendQueue;
+  const { refetchQueue, refetchRectifications } = friendQueue;
   useFocusEffect(
     useCallback(() => {
       setPendingFocusAutoTabToken((prev) => prev + 1);
       void refetchQueue();
-      void refetchHistory();
       void refetchRectifications();
-    }, [refetchQueue, refetchHistory, refetchRectifications]),
+    }, [refetchQueue, refetchRectifications]),
   );
 
   async function handleRectificationDecision(requestId: string, taskId: string, decision: 'APPROVE' | 'DECLINE') {
@@ -690,7 +633,6 @@ export default function FriendsScreen() {
       void queueRectificationNotification(taskId, requestId, decision === 'APPROVE' ? 'APPROVED' : 'DECLINED');
       await purgeTaskProofForFinalState(taskId);
       friendQueue.refetchRectifications();
-      friendQueue.refetchHistory();
     } catch (decisionError) {
       Alert.alert('Decision failed', decisionError instanceof Error ? decisionError.message : 'Please try again.');
     }
@@ -706,17 +648,6 @@ export default function FriendsScreen() {
       Alert.alert('Could not request proof', proofError instanceof Error ? proofError.message : 'Please try again.');
     }
   }
-
-  // Release the resolved guard once history confirms the task has landed in a
-  // terminal status — server has fully committed and no refetch can ghost it back.
-  useEffect(() => {
-    if (resolvedTaskIds.length === 0) return;
-    const historyIds = new Set(historyTasks.map((t) => t.id));
-    setResolvedTaskIds((prev) => {
-      const next = prev.filter((id) => !historyIds.has(id));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [historyTasks, resolvedTaskIds.length]);
 
   // Safety net for dropped realtime / offline: force-release after 6s so guard
   // never strands even if the confirmation signal never arrives.
@@ -756,14 +687,6 @@ export default function FriendsScreen() {
     );
   }
 
-  function patchFriendHistory(updater: (current: VouchHistoryTaskRow[]) => VouchHistoryTaskRow[]) {
-    if (!user) return;
-    queryClient.setQueryData<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }>(
-      queryKeys.friendHistory(user.id, searchQuery),
-      (current) => ({ tasks: updater(current?.tasks ?? []), hasMore: current?.hasMore ?? false }),
-    );
-  }
-
   function patchTaskDetail(taskId: string, updater: (current: TaskDetailData) => TaskDetailData) {
     queryClient.setQueryData<TaskDetailData>(
       queryKeys.taskDetail(taskId),
@@ -776,23 +699,13 @@ export default function FriendsScreen() {
     updateInFlight(task.id, 'accept');
     const nextUpdatedAt = new Date().toISOString();
     const queueKey = queryKeys.friendQueue(user.id);
-    const historyKey = queryKeys.friendHistory(user.id, searchQuery);
     const detailKey = queryKeys.taskDetail(task.id);
     const prevQueue = queryClient.getQueryData<VoucherTaskRow[]>(queueKey);
-    const prevHistory = queryClient.getQueryData<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }>(historyKey);
     const prevDetail = queryClient.getQueryData<TaskDetailData>(detailKey);
 
     scheduleDeckLayoutAnimation();
     markTaskResolved(task.id);
     patchFriendQueue((c) => c.filter((t) => t.id !== task.id));
-    patchFriendHistory((c) => {
-      const next: VouchHistoryTaskRow = {
-        id: task.id, title: task.title, status: 'ACCEPTED', updated_at: nextUpdatedAt,
-        failure_cost_cents: task.failure_cost_cents,
-        user: task.user ? { id: task.user.id, username: task.user.username, avatar_path: task.user.avatar_path } : null,
-      };
-      return [next, ...c.filter((t) => t.id !== task.id)].slice(0, 10);
-    });
     patchTaskDetail(task.id, (c) => ({
       ...c,
       task: c.task ? { ...c.task, status: 'ACCEPTED', has_proof: false, proof_request_open: false, proof_requested_at: null, proof_requested_by: null, updated_at: nextUpdatedAt } : c.task,
@@ -809,13 +722,11 @@ export default function FriendsScreen() {
 
       if (updateError) {
         if (prevQueue) queryClient.setQueryData(queueKey, prevQueue);
-        if (prevHistory) queryClient.setQueryData(historyKey, prevHistory);
         if (prevDetail) queryClient.setQueryData(detailKey, prevDetail);
         Alert.alert('Could not accept task', updateError.message); return;
       }
       if (!rows || rows.length === 0) {
         if (prevQueue) queryClient.setQueryData(queueKey, prevQueue);
-        if (prevHistory) queryClient.setQueryData(historyKey, prevHistory);
         if (prevDetail) queryClient.setQueryData(detailKey, prevDetail);
         Alert.alert('Task changed', 'This task is no longer waiting for your review.');
         await Promise.resolve(friendQueue.refetchQueue()); return;
@@ -841,23 +752,13 @@ export default function FriendsScreen() {
     updateInFlight(task.id, 'deny');
     const nextUpdatedAt = new Date().toISOString();
     const queueKey = queryKeys.friendQueue(user.id);
-    const historyKey = queryKeys.friendHistory(user.id, searchQuery);
     const detailKey = queryKeys.taskDetail(task.id);
     const prevQueue = queryClient.getQueryData<VoucherTaskRow[]>(queueKey);
-    const prevHistory = queryClient.getQueryData<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }>(historyKey);
     const prevDetail = queryClient.getQueryData<TaskDetailData>(detailKey);
 
     scheduleDeckLayoutAnimation();
     markTaskResolved(task.id);
     patchFriendQueue((c) => c.filter((t) => t.id !== task.id));
-    patchFriendHistory((c) => {
-      const next: VouchHistoryTaskRow = {
-        id: task.id, title: task.title, status: 'DENIED', updated_at: nextUpdatedAt,
-        failure_cost_cents: task.failure_cost_cents,
-        user: task.user ? { id: task.user.id, username: task.user.username, avatar_path: task.user.avatar_path } : null,
-      };
-      return [next, ...c.filter((t) => t.id !== task.id)].slice(0, 10);
-    });
     patchTaskDetail(task.id, (c) => ({
       ...c,
       task: c.task ? { ...c.task, status: 'DENIED', has_proof: false, proof_request_open: false, proof_requested_at: null, proof_requested_by: null, updated_at: nextUpdatedAt } : c.task,
@@ -874,13 +775,11 @@ export default function FriendsScreen() {
 
       if (updateError) {
         if (prevQueue) queryClient.setQueryData(queueKey, prevQueue);
-        if (prevHistory) queryClient.setQueryData(historyKey, prevHistory);
         if (prevDetail) queryClient.setQueryData(detailKey, prevDetail);
         Alert.alert('Could not deny task', updateError.message); return;
       }
       if (!rows || rows.length === 0) {
         if (prevQueue) queryClient.setQueryData(queueKey, prevQueue);
-        if (prevHistory) queryClient.setQueryData(historyKey, prevHistory);
         if (prevDetail) queryClient.setQueryData(detailKey, prevDetail);
         Alert.alert('Task changed', 'This task is no longer waiting for your review.');
         await Promise.resolve(friendQueue.refetchQueue()); return;
@@ -964,56 +863,6 @@ export default function FriendsScreen() {
     }
   }
 
-  async function handleRectify(task: VouchHistoryTaskRow) {
-    if (!user || inFlightRectifyByTaskId[task.id]) return;
-
-    const { data: summaryRows } = await supabase.rpc('get_task_rectification_pass_summary', {
-      p_task_id: task.id,
-    });
-    const summary = Array.isArray(summaryRows) ? summaryRows[0] : summaryRows;
-    const passesUsed = Number(summary?.used ?? 0) + Number(summary?.reserved ?? 0);
-
-    const cost = (task.failure_cost_cents / 100).toFixed(2);
-    Alert.alert(
-      'Authorise Rectify?',
-      `This will rectify "${task.title}" and reverse its €${cost} charge. ${task.user?.username ?? 'User'} has used ${passesUsed}/5 passes this month.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Rectify',
-          onPress: async () => {
-            setInFlightRectifyByTaskId((prev) => ({ ...prev, [task.id]: true }));
-            try {
-              try {
-                await authorizeTaskRectification(task.id);
-                void queueRectificationNotification(task.id, null, 'DIRECT_APPROVED');
-              } catch (error) {
-                Alert.alert('Rectify failed', error instanceof Error ? error.message : 'Please try again.');
-                return;
-              }
-
-              const purge = await purgeTaskProofForFinalState(task.id);
-              if (!purge.success) Toast.show({ type: 'proofError', text1: `Rectified, but proof cleanup failed: ${purge.error}`, position: 'bottom' });
-
-              const nextUpdatedAt = new Date().toISOString();
-              patchFriendHistory((c) => {
-                const next: VouchHistoryTaskRow = { ...task, status: 'RECTIFIED', updated_at: nextUpdatedAt };
-                return [next, ...c.filter((t) => t.id !== task.id)].slice(0, 10);
-              });
-              patchTaskDetail(task.id, (c) => ({
-                ...c,
-                task: c.task ? { ...c.task, status: 'RECTIFIED', has_proof: false, updated_at: nextUpdatedAt } : c.task,
-                proof: null,
-              }));
-            } finally {
-              setInFlightRectifyByTaskId((prev) => ({ ...prev, [task.id]: false }));
-            }
-          },
-        },
-      ],
-    );
-  }
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* ── Header ── */}
@@ -1023,16 +872,9 @@ export default function FriendsScreen() {
           items={[
             { key: 'active', label: 'Active', badgeCount: activeTasks.length, color: colors.destructive },
             { key: 'pending', label: 'Pending', badgeCount: awaitingVoucherTasks.length, color: colors.warning },
-            { key: 'history', label: 'History', showBadge: false, color: colors.success },
           ]}
           activeKey={activeTab}
-          onChange={(key) => {
-            const tab = key as TabView;
-            setActiveTab(tab);
-            if (tab === 'history' && historyTasks.length === 0 && !historyLoading) {
-              void friendQueue.refetchHistory();
-            }
-          }}
+          onChange={(key) => setActiveTab(key as TabView)}
         />
       </View>
 
@@ -1053,7 +895,6 @@ export default function FriendsScreen() {
                 Promise.all([
                   friendQueue.refetchQueue(),
                   friendQueue.refetchRectifications(),
-                  activeTab === 'history' ? friendQueue.refetchHistory() : Promise.resolve(),
                 ]).finally(() => setRefreshing(false));
               }}
               tintColor={colors.accentCyan}
@@ -1129,7 +970,7 @@ export default function FriendsScreen() {
               </View>
             )
 
-          ) : activeTab === 'active' ? (
+          ) : (
             activeTasks.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyTitle}>No Activity from friends...</Text>
@@ -1139,50 +980,6 @@ export default function FriendsScreen() {
                 {activeTasks.map((task) => (
                   <ActiveRow key={task.id} task={task} />
                 ))}
-              </View>
-            )
-          ) : (
-            /* ── History tab ── */
-            historyLoading ? (
-              <View style={styles.centerState}>
-                <ActivityIndicator size="small" color={colors.accentCyan} />
-                <Text style={styles.helperText}>Loading vouch history…</Text>
-              </View>
-            ) : historyError ? (
-              <View style={styles.centerState}>
-                <Text style={styles.errorText}>{historyError}</Text>
-              </View>
-            ) : historyTasks.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyTitle}>No History yet</Text>
-              </View>
-            ) : (
-              <View style={styles.historyList}>
-                {historyTasks.map((task) => {
-                  const canRectify = task.status === 'DENIED' || task.status === 'MISSED' || task.status === 'SURRENDERED';
-                  return (
-                    <HistoryRow
-                      key={task.id}
-                      task={task}
-                      canRectify={canRectify}
-                      isRectifying={Boolean(inFlightRectifyByTaskId[task.id])}
-                      onPress={() => router.push({ pathname: '/tasks/[id]' as any, params: { id: task.id, back: 'friends' } })}
-                      onRectify={() => { void handleRectify(task); }}
-                    />
-                  );
-                })}
-                {historyHasMore ? (
-                  <TouchableOpacity
-                    style={styles.loadMoreBtn}
-                    onPress={() => { void friendQueue.loadMoreHistory(); }}
-                    disabled={historyLoadingMore}
-                    activeOpacity={0.8}
-                  >
-                    {historyLoadingMore
-                      ? <ActivityIndicator size="small" color={colors.textMuted} />
-                      : <Text style={styles.loadMoreText}>Load more</Text>}
-                  </TouchableOpacity>
-                ) : null}
               </View>
             )
           )}
@@ -1655,10 +1452,6 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
   rectificationApproveButton: { borderColor: '#22C55E59', backgroundColor: '#22C55E1A' },
   rectificationApproveText: { color: '#22C55E', fontSize: typography.xs, fontWeight: typography.semibold },
 
-  // History
-  historyList: {
-    gap: 1,
-  },
   activeList: {
     gap: 1,
   },
@@ -1680,65 +1473,16 @@ const makeStyles = (colors: Colors, isDark = true) => StyleSheet.create({
     gap: spacing.sm,
     flexShrink: 0,
   },
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  historyRowBody: {
-    flex: 1,
-    minWidth: 0,
-  },
-  historyTaskTitle: {
+  activeTaskTitle: {
     fontSize: typography.base,
     fontWeight: typography.medium,
     color: colors.text,
     marginBottom: 4,
   },
-  historyRowPillRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  historyTaskMeta: {
+  activeTaskMeta: {
     fontSize: typography.xs,
     color: colors.textMuted,
     flexShrink: 1,
-  },
-  rectifyBtn: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.4)',
-    backgroundColor: 'rgba(34,197,94,0.10)',
-    minWidth: 62,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rectifyBtnText: {
-    fontSize: typography.xs,
-    fontWeight: typography.semibold,
-    color: '#22C55E',
-  },
-  loadMoreBtn: {
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.sm,
-  },
-  loadMoreText: {
-    fontSize: typography.sm,
-    color: colors.text,
-    fontWeight: typography.semibold,
   },
 
   // Lightbox

@@ -7,7 +7,6 @@ export const queryKeys = {
   taskLists: (userId: string | null | undefined, sortMode: string): QueryKey => ['task-lists', userId ?? null, sortMode],
   taskDetail: (taskId: string | null | undefined): QueryKey => ['task-detail', taskId ?? null],
   friendQueue: (userId: string | null | undefined): QueryKey => ['friend-queue', userId ?? null],
-  friendHistory: (userId: string | null | undefined, search: string): QueryKey => ['friend-history', userId ?? null, search],
   commitments: (userId: string | null | undefined): QueryKey => ['commitments', userId ?? null],
   commitmentLinks: (commitmentId: string | null | undefined): QueryKey => ['commitment-links', commitmentId ?? null],
   ledger: (userId: string | null | undefined): QueryKey => ['ledger', userId ?? null],

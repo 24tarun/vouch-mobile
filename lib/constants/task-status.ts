@@ -52,20 +52,6 @@ export const VOUCHER_VISIBLE_STATUSES: TaskStatus[] = [
   ...VOUCHER_ACTIONABLE_STATUSES,
 ];
 
-export const VOUCHER_HISTORY_STATUSES: TaskStatus[] = [
-  'AWAITING_AI',
-  'AWAITING_USER',
-  'ESCALATED',
-  'ACCEPTED',
-  'AUTO_ACCEPTED',
-  'AI_ACCEPTED',
-  'DENIED',
-  'MISSED',
-  'SURRENDERED',
-  'RECTIFIED',
-  'SETTLED',
-];
-
 export const ACTIVE_VOUCHER_TASK_STATUSES: TaskStatus[] = [
   'ACTIVE',
   'POSTPONED',

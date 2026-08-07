@@ -271,6 +271,7 @@ describe('completeTask inclusive deadline minute', () => {
     const result = await completeTask('task-1');
 
     expect(result.success).toBe(false);
+    expect(result.errorCode).toBe('PROOF_REQUIRED');
     expect(result.error).toBe('Please upload proof before marking this task complete.');
     expect(mockRpc).not.toHaveBeenCalled();
   });

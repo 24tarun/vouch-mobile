@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useMemo, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { formatProofTimestampOverlay } from '@/lib/proof-timestamp-mobile';
 import { queryKeys } from '@/lib/query/keys';
@@ -9,7 +9,6 @@ import { SIGNED_URL_EXPIRY_SECONDS } from '@/lib/constants/timings';
 import {
   VOUCHER_ACTIONABLE_STATUSES,
   VOUCHER_ACTIVE_VIEW_STATUSES,
-  VOUCHER_HISTORY_STATUSES,
   VOUCHER_VISIBLE_STATUSES,
 } from '@/lib/constants/task-status';
 
@@ -47,19 +46,6 @@ export interface VoucherTaskRow {
   } | null;
 }
 
-export interface VouchHistoryTaskRow {
-  id: string;
-  title: string;
-  status: TaskStatus;
-  updated_at: string;
-  failure_cost_cents: number;
-  user: {
-    id: string;
-    username: string;
-    avatar_path: string | null;
-  } | null;
-}
-
 export interface RectificationVoucherRow extends RectificationRequest {
   task: {
     id: string;
@@ -70,8 +56,6 @@ export interface RectificationVoucherRow extends RectificationRequest {
   } | null;
   proof: TaskProof | null;
 }
-
-const HISTORY_PAGE_SIZE = 10;
 
 function getActiveVisibilityWindow(reference: Date = new Date()): { startOfTodayMs: number; startOfDayAfterTomorrowMs: number } {
   const startOfToday = new Date(reference);
@@ -232,72 +216,11 @@ async function fetchRectificationQueue(userId: string, signal?: AbortSignal): Pr
   return rows.map((row) => ({ ...row, proof: proofs[row.task_id] ?? null }));
 }
 
-async function fetchFriendHistory(userId: string, searchQuery: string, offset = 0): Promise<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }> {
-  let query = supabase
-    .from('tasks')
-    .select(`
-      id,
-      title,
-      status,
-      updated_at,
-      failure_cost_cents,
-      user:profiles!tasks_user_id_fkey(
-        id,
-        username,
-        avatar_path
-      )
-    `)
-    .eq('voucher_id', userId)
-    .neq('user_id', userId)
-    .in('status', VOUCHER_HISTORY_STATUSES)
-    .order('updated_at', { ascending: false })
-    .range(offset, offset + HISTORY_PAGE_SIZE);
-
-  if (searchQuery.trim().length > 0) {
-    query = query.ilike('title', `%${searchQuery.trim()}%`);
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  const rawBatch = ((data ?? []) as any[]).map((row) => {
-    const owner = row.user as { id?: string; username?: string; avatar_path?: string | null } | null;
-    return {
-      id: row.id as string,
-      title: (row.title as string) || 'Untitled task',
-      status: row.status as TaskStatus,
-      updated_at: row.updated_at as string,
-      failure_cost_cents: Number(row.failure_cost_cents ?? 0),
-      user: owner?.id
-        ? {
-            id: owner.id,
-            username: owner.username ?? 'Unknown owner',
-            avatar_path: owner.avatar_path ?? null,
-          }
-        : null,
-    } satisfies VouchHistoryTaskRow;
-  });
-
-  return {
-    tasks: rawBatch.slice(0, HISTORY_PAGE_SIZE),
-    hasMore: rawBatch.length > HISTORY_PAGE_SIZE,
-  };
-}
-
-export function useFriendQueue(userId: string | null | undefined, searchQuery: string) {
-  const queryClient = useQueryClient();
+export function useFriendQueue(userId: string | null | undefined) {
 
   const queueQuery = useQuery({
     queryKey: queryKeys.friendQueue(userId),
     queryFn: ({ signal }) => fetchFriendQueue(userId!, signal),
-    enabled: Boolean(userId),
-  });
-
-  const historyQuery = useQuery({
-    queryKey: queryKeys.friendHistory(userId, searchQuery),
-    queryFn: () => fetchFriendHistory(userId!, searchQuery, 0),
     enabled: Boolean(userId),
   });
 
@@ -315,37 +238,6 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
   const rectificationRefetchRef = useRef(rectificationQuery.refetch);
   rectificationRefetchRef.current = rectificationQuery.refetch;
   const refetchRectifications = useCallback(() => { void rectificationRefetchRef.current(); }, []);
-
-  const historyRefetchRef = useRef(historyQuery.refetch);
-  historyRefetchRef.current = historyQuery.refetch;
-  const refetchHistory = useCallback(() => { void historyRefetchRef.current(); }, []);
-
-  const historyLenRef = useRef((historyQuery.data?.tasks ?? []).length);
-  historyLenRef.current = (historyQuery.data?.tasks ?? []).length;
-
-  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
-
-  const loadMoreHistory = useCallback(async () => {
-    if (!userId || historyLoadingMore) return;
-    const offset = historyLenRef.current;
-    setHistoryLoadingMore(true);
-    try {
-      const result = await fetchFriendHistory(userId, searchQuery, offset);
-      queryClient.setQueryData<{ tasks: VouchHistoryTaskRow[]; hasMore: boolean }>(
-        queryKeys.friendHistory(userId, searchQuery),
-        (current) => {
-          if (!current) return current;
-          const existingIds = new Set(current.tasks.map((t) => t.id));
-          return {
-            tasks: [...current.tasks, ...result.tasks.filter((t) => !existingIds.has(t.id))],
-            hasMore: result.hasMore,
-          };
-        },
-      );
-    } finally {
-      setHistoryLoadingMore(false);
-    }
-  }, [historyLoadingMore, userId, searchQuery, queryClient]);
 
   const subscriptions = useMemo(
     () => userId
@@ -371,7 +263,6 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
       void queueRefetchRef.current();
       void rectificationRefetchRef.current();
     } : undefined,
-    invalidateKeys: [queryKeys.friendHistory(userId, searchQuery)],
   });
 
   return {
@@ -383,12 +274,5 @@ export function useFriendQueue(userId: string | null | undefined, searchQuery: s
     rectificationLoading: rectificationQuery.isLoading,
     rectificationError: rectificationQuery.error instanceof Error ? rectificationQuery.error.message : null,
     refetchRectifications,
-    historyTasks: historyQuery.data?.tasks ?? [],
-    historyHasMore: historyQuery.data?.hasMore ?? false,
-    historyLoading: historyQuery.isLoading,
-    historyLoadingMore,
-    historyError: historyQuery.error instanceof Error ? historyQuery.error.message : null,
-    refetchHistory,
-    loadMoreHistory,
   };
 }

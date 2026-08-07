@@ -151,7 +151,7 @@ export const TaskRow = memo(function TaskRow({
         : translateX.value < 0
           ? colors.warning
           : 'transparent',
-      opacity: Math.min(swipeDistance / spacing.lg, 1),
+      opacity: Math.min(swipeDistance / (spacing.lg * 2), 1),
     };
   });
 
@@ -283,7 +283,9 @@ const makeStyles = (colors: Colors, isDark: boolean) => StyleSheet.create({
   },
   container: {
     borderRadius: radius.md,
-    backgroundColor: highlightedRowBackground(colors, isDark),
+    // This row moves during a swipe, so it needs an opaque surface to prevent
+    // the opposite swipe action from showing through the task card.
+    backgroundColor: colors.surface,
     borderWidth: isDark ? 0 : 1,
     borderColor: isDark ? 'transparent' : colors.border,
     shadowColor: '#0F172A',
